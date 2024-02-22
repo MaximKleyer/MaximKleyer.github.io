@@ -1,17 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
+        <!-- Meta tags for responsiveness and character encoding -->
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Maxim Kleyer Portfolio</title>
+        <!-- Bootstrap CSS -->
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+        <style>
+            .navbar {
+                    background-color: #4f0000 !important;
+                    margin-bottom: 20px;
+                
+                }
+    
+            .navbar .nav-item .nav-link.active {
+                    background-color :#610000;
+                }
+            
+            .navbar a:link,
+                    .navbar a:visited {
+                    color: rgb(255, 120, 120); /* Unvisited link color */
+                    padding: 10px 20px;
+                    text-decoration: none;
+                    display: inline-block;
+                }
+        
+            .navbar a:hover {
+                    color: rgb(255, 0, 0); /* Hovered link color */
+                }
+        </style>
     </head>
-    <!-- <style>
-        body {
-            background-image: url(https://gifdb.com/images/high/what-meme-498-x-331-gif-8fan6upx3ftaahul.gif);
-            background-repeat: no-repeat;
-            background-size: 1000px 500px;
-            background-position: 450px 0px;
-        } -->
-    </style>
     <body>
+        <!-- Navigation Bar -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+            <a class="navbar-brand" href="index.html">Home</a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item active">
+                        <a class="nav-link" href="lab3.html">Lab 3<span class="sr-only">(current)</span></a>
+                    </li>
+                </ul>
+            </div>
+        </nav>
         <h1><u>Maxim Kleyer</u></h1>
         <h2>About Me</h2>
         <p>
@@ -24,5 +58,7 @@
             <a href="https://www.swimcloud.com/swimmer/507483/">Swim Times</a>
             <hr> February 8, 2024<br/>Maxim Kleyer
         </p>
+        <!-- Bootstrap JS -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
     </body>
 </html>
