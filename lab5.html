@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Page</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #000000c0;
+            color: white;
+            font-family:'Times New Roman', Times, serif
+        }
+
+        .jumbotron {
+            margin: 0 auto;
+            text-align: center;
+            background-color: #000000c0;
+            color: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .item-button {
+            width: 150px; /* Set the width of the button */
+            height: 150px; /* Set the height of the button */
+            margin: 5px; /* Add margin between buttons */
+        }
+
+        .item-button.active {
+            background-color: rgb(255, 144, 144); /* Change the background color to green when active */
+            border-color: #ff1f1f; /* Change the border color to green when active */
+        }
+
+        .custom-img {
+            width: 200px; /* Set a specific width */
+            height: 200px; /* Set a specific height */
+            object-fit: cover; /* Maintain aspect ratio and fill container */
+            object-position: 50% 0%; /* Center the image inside the circle */
+            display: block; /* Remove any default inline styles */
+            margin-left: 10px; /* Adjust the left margin */
+            margin-right: auto; /* Center the image horizontally */
+            margin-top: 20px; /* Adjust the top margin */
+        }
+
+        .centered-paragraph {
+            text-align: center; /* Center the text */
+            margin-top: 20px; /* Add space between the image/list and the paragraph */
+        }
+
+        .navbar {
+                background-color: #4f0000 !important;
+                margin-bottom: 20px;
+            
+        }
+
+        .navbar .nav-item .nav-link.active {
+                background-color :#610000;
+        }
+        
+        .navbar a:link,
+                .navbar a:visited {
+                color: rgb(255, 120, 120); /* Unvisited link color */
+                padding: 10px 20px;
+                text-decoration: none;
+                display: inline-block;
+        }
+
+        .navbar a:hover {
+                color: rgb(255, 0, 0); /* Hovered link color */
+        }
+    </style>
+</head>
+
+<body>
+<div class="container mt-5">
+    <h2>Registration Form</h2>
+    <form id="registrationForm">
+        <div class="form-group">
+            <label for="firstName">First Name</label>
+            <input type="text" class="form-control" id="firstName" required>
+        </div>
+        <div class="form-group">
+            <label for="lastName">Last Name</label>
+            <input type="text" class="form-control" id="lastName" required>
+        </div>
+        <div class="form-group">
+            <label for="email">Email Address</label>
+            <input type="email" class="form-control" id="email" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" class="form-control" id="password" required>
+        </div>
+        <div class="form-group">
+            <label for="dob">Date of Birth</label>
+            <input type="date" class="form-control" id="dob" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Register</button>
+    </form>
+    <div id="result"></div>
+</div>
+    <script>
+        document.getElementById('registrationForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            // Creates a user object and populates it with the values entered in the form
+            // Each property of the user object corresponds to one of the form inputs
+            const user = {
+                firstName: document.getElementById('firstName').value, // First Name
+                lastName: document.getElementById('lastName').value, // Last Name
+                email: document.getElementById('email').value, // Email
+                password: document.getElementById('password').value, // Password
+                dob: document.getElementById('dob').value // Date of Birth
+            };
+            
+            // Validate input by going through each field one by one
+            // If there is an issue then the following if statement is called on the earliest empty text box
+            if (!user.firstName || !user.lastName || !user.email || !user.password || !user.dob) {
+                document.getElementById('result').innerHTML = "<p class='text-danger'>Please fill in all fields.</p>";
+                return;
+            }
+            
+            // Validate input of the password by ensuring that at least one special character is used
+            // This regex matches any character that is not a letter, digit, whitespace, or underscore (figured it is easier then brute forcing)
+            // ^ -- negates the set, matches any character that is not in the set
+            // \w -- matches any word character (such as lowercase a-z, uppercase A-Z, and numbers 0-9)
+            // \s -- matches any spaces and tabs
+            // .test() searches for a match between the regex and string and returns true or false depending on if a match is found
+            if (!/[^\w\s]/.test(user.password)) {
+                document.getElementById('result').innerHTML = "<p class='text-danger'>Password must contain at least one special character.</p>";
+                return;
+            }
+            
+            // Updates password to Asteriks so no one can steal your password B)
+            user.password = "*".repeat(user.password.length);
+            
+            // Write to the DOM
+            document.getElementById('result').innerHTML = `
+                <p class="text-success">Registration Successful!</p>
+                <p>First Name: ${user.firstName}</p>
+                <p>Last Name: ${user.lastName}</p>
+                <p>Email: ${user.email}</p>
+                <p>Password: ${user.password}</p>
+                <p>Date of Birth: ${user.dob}</p>
+            `;
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
