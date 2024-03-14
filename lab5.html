@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Page</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #005da486;
+            color: rgb(255, 255, 255);
+            font-family:'Times New Roman', Times, serif
+        }
+
+        .jumbotron {
+            margin: 0 auto;
+            text-align: center;
+            background-color: #000000c0;
+            color: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .custom-img {
+            width: 200px; /* Set a specific width */
+            height: 200px; /* Set a specific height */
+            object-fit: cover; /* Maintain aspect ratio and fill container */
+            object-position: 50% 0%; /* Center the image inside the circle */
+            display: block; /* Remove any default inline styles */
+            margin-left: 10px; /* Adjust the left margin */
+            margin-right: auto; /* Center the image horizontally */
+            margin-top: 20px; /* Adjust the top margin */
+        }
+
+        .centered-paragraph {
+            text-align: center; /* Center the text */
+            margin-top: 20px; /* Add space between the image/list and the paragraph */
+        }
+
+        .navbar {
+                background-color: #4f0000 !important;
+                margin-bottom: 20px;
+            
+        }
+
+        .navbar .nav-item .nav-link.active {
+                background-color :#610000;
+        }
+        
+        .navbar a:link,
+                .navbar a:visited {
+                color: rgb(255, 120, 120); /* Unvisited link color */
+                padding: 10px 20px;
+                text-decoration: none;
+                display: inline-block;
+        }
+
+        .navbar a:hover {
+                color: rgb(255, 0, 0); /* Hovered link color */
+        }
+
+        .registration-success {
+            margin: 20px auto;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #f0f4f8;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            max-width: 600px;
+            font-family: 'Arial', sans-serif;
+        }
+        .registration-success h2 {
+            color: #4CAF50;
+            font-size: 24px;
+        }
+
+        .user-info {
+            background-color: #ffffff;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .user-info p {
+            margin: 10px 0;
+            color: #333;
+        }
+        .user-info p span {
+            font-weight: bold;
+        }
+
+        input[type=text], input[type=password], input[type=email], input[type=date], select.form-control {
+            background-color: #ffffff;
+            border: none;
+            outline: none;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .img-right {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .my-text-style {
+            color: rgb(0, 72, 136);
+            font-weight: bold;
+          }
+    </style>
+</head>
+
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="index.html">Home</a>
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a class="nav-link btn btn-dark me-2" href="lab3.html">Lab 3</a>
+                </li>
+                <li class="nav-item">
+                    <a class = "nav-link btn btn-dark me-2" href = "lab4.html">Lab 4</a> 
+                </li>
+                <li class="nav-item active">
+                    <a class="nav-link btn btn-dark me-2" href="lab5.html">Lab 5</a>
+                </li>
+                <li class ="nav-item">
+                    <a class = "nav-link btn btn-dark me-2" href = "https://github.com/MaximKleyer/MaximKleyer.github.io">Github</a> 
+                </li>
+            </ul>
+        </div>
+    </nav>
+    
+    <!-- Lab5 (Registration Form)-->
+    <div class="container mt-5">
+        <div class="centered-paragraph">
+            <h1><b>Registration For CSI Esports</b></h1>
+        </div>
+        <form id="registrationForm">
+            <div class="form-row">
+                <div class="form-group col-md-6">
+                    <label for="firstName">First Name</label>
+                    <input type="text" class="form-control my-text-style" id="firstName" required>
+                </div>
+                <div class="form-group col-md-6">
+                    <label for="lastName">Last Name</label>
+                    <input type="text" class="form-control my-text-style" id="lastName" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group col-md-2">
+                    <label for="age">Age</label>
+                    <input type="text" class="form-control my-text-style" id="age" required>
+                </div>
+                <div class="form-group col-md-5">
+                    <label for="dob">Date of Birth</label>
+                    <input type="date" class="form-control my-text-style" id="dob" required>
+                </div>
+                <div class="form-group col-md-5">
+                    <label for="collegeYear">College Year</label>
+                    <select class="form-control my-text-style" id="collegeYear" required>
+                        <option value=""></option>
+                        <option value="Freshman">Freshman</option>
+                        <option value="Sophomore">Sophomore</option>
+                        <option value="Junior">Junior</option>
+                        <option value="Senior">Senior</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group col-md-12">
+                    <label for="email">Email Address</label>
+                    <input type="email" class="form-control my-text-style" id="email" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group col-md-6">
+                    <label for="password">Password</label>
+                    <input type="password" class="form-control my-text-style" id="password" required>
+                </div>
+                <div class="form-group col-md-6">
+                    <label for="confirmPassword">Confirm Password</label>
+                    <input type="password" class="form-control my-text-style" id="confirmPassword" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group col-md-6">
+                    <label for="esports">Esports Programs</label>
+                    <select class="form-control my-text-style" id="esports" required>
+                        <option value=""></option>
+                        <option value="Rocket League">Rocket League</option>
+                        <option value="Overwatch 2">Overwatch 2</option>
+                        <option value="Valorant">Valorant</option>
+                        <option value="League of Legends">League of Legends</option>
+                        <option value="Call of Duty">Call of Duty</option>
+                    </select>
+                </div>
+                <img id="esportsImage" src="" class="img-fluid rounded-circle centered-paragraph" alt="Esports Image" style="display:none; margin-top:20px; margin-left: 20px;" />
+            </div>
+            <button type="submit" class="btn btn-primary">Register</button>
+        </form>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        // Function to set the esports image based on the dropdown selection
+        function setEsportsImage(esport) {
+            const imageMap = {
+                "Rocket League": "RL.gif",
+                "Overwatch 2": "OW2.gif",
+                "Valorant": "Valorant.gif",
+                "League of Legends": "LoL.gif",
+                "Call of Duty": "COD.gif"
+            };
+
+            const esportsImage = document.getElementById('esportsImage');
+            if (imageMap[esport]) {
+                esportsImage.src = imageMap[esport];
+                esportsImage.style.display = 'block';
+            } 
+            else {
+                esportsImage.style.display = 'none';
+            }
+        }
+
+        document.getElementById('registrationForm').addEventListener('submit', function(event) {
+            event.preventDefault(); // Prevent the form from submitting
+        
+            // Create a user object to store the values entered in the form
+            const user = {
+                firstName: document.getElementById('firstName').value, // First Name
+                lastName: document.getElementById('lastName').value, // Last Name
+                age: document.getElementById('age').value, // Age
+                dob: document.getElementById('dob').value, // Date of Birth
+                collegeYear: document.getElementById('collegeYear').value, // College Year
+                email: document.getElementById('email').value, // Email
+                password: document.getElementById('password').value, // Password
+                confirmPassword: document.getElementById('confirmPassword').value, // Confirm Password
+                esports: document.getElementById('esports').value // Esports Program
+            };
+            
+            // Check if all fields are filled. If any field is empty, display an error message
+            if (!user.firstName || !user.lastName || !user.age || !user.dob || !user.collegeYear || !user.email || !user.password || !user.confirmPassword || !user.esports) {
+                document.getElementById('result').innerHTML = "<p class='text-danger'>Please fill in all fields.</p>";
+                return;
+            }
+        
+            // Validate input of the password by ensuring that at least one special character is used
+            // This regex matches any character that is not a letter, digit, whitespace, or underscore (figured it is easier then brute forcing)
+            // ^ -- negates the set, matches any character that is not in the set
+            // \w -- matches any word character (such as lowercase a-z, uppercase A-Z, and numbers 0-9)
+            // \s -- matches any spaces and tabs
+            // .test() searches for a match between the regex and string and returns true or false depending on if a match is found
+            if (!/[^\w\s]/.test(user.password)) {
+                document.getElementById('result').innerHTML = "<p class='text-danger'>Password must contain at least one special character.</p>";
+                return;
+            }
+        
+            // Check if the entered password and the confirmation password match
+            if (user.password !== user.confirmPassword) {
+                document.getElementById('result').innerHTML = "<p class='text-danger'>Passwords do not match.</p>";
+                return; // Stop the function if the passwords don't match
+            }
+            
+            // Conceal the actual password for security before displaying it
+            let displayedPassword = "*".repeat(user.password.length);
+            
+            // Update the DOM to display the registration success message and user information
+            document.getElementById('result').innerHTML = `
+                <div class="registration-success">
+                    <h2>Registration Successful!</h2>
+                    <div class="user-info">
+                        <p><span>First Name:</span> ${user.firstName}</p>
+                        <p><span>Last Name:</span> ${user.lastName}</p>
+                        <p><span>Age:</span> ${user.age}</p>
+                        <p><span>Date of Birth:</span> ${user.dob}</p>
+                        <p><span>College Year:</span> ${user.collegeYear}</p>
+                        <p><span>Email:</span> ${user.email}</p>
+                        <p><span>Password:</span> ${displayedPassword}</p>
+                        <p><span>Esports Program:</span> ${user.esports}</p>
+                    </div>
+                </div>
+            `;
+        });   
+
+        // Event listener for change in the esports dropdown to update the image immediately upon selection
+        document.getElementById('esports').addEventListener('change', function() {
+            setEsportsImage(this.value);
+        });
+
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
