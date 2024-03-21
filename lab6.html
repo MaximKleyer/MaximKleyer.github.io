@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Cat Facts</title>
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+        <style>
+            body {
+                background-color: #92000065;
+                color: rgb(0, 0, 0);
+                font-family:'Times New Roman', Times, serif
+            }
+
+            table {
+                margin-top: 20px; /* Add some space above the table */
+
+            }
+    
+            th, td {
+                text-align: center; /* Center-align the text in the table headers and cells */
+            }
+
+            /* Style for the new color of the table */
+            .colorful-table {
+                background-color: #ffe0bd; /* Change to your preferred color */
+                border-color: black; /* Table line color changed to black */
+            }
+
+            .colorful-table th,
+            .colorful-table td {
+                border-color: black; /* Table cell border color changed to black */
+            }
+
+            .centered-paragraph {
+                text-align: center; /* Center the text */
+                margin-top: 20px; /* Add space between the image/list and the paragraph */
+            }
+    
+            .list-group-item {
+                background-color: #2222227e; /* Change the background color of list items */
+                color: white; /* Change the text color of list items */
+                border-color: #f5f3f3; /* Change the border color of list items */
+            }
+
+            .navbar {
+                background-color: #4f0000 !important;
+                margin-bottom: 20px;
+            
+            }
+
+            .navbar .nav-item .nav-link.active {
+                    background-color :#610000;
+            }
+            
+            .navbar a:link,
+                    .navbar a:visited {
+                    color: rgb(255, 120, 120); /* Unvisited link color */
+                    padding: 10px 20px;
+                    text-decoration: none;
+                    display: inline-block;
+            }
+
+            .navbar a:hover {
+                    color: rgb(255, 0, 0); /* Hovered link color */
+            }
+
+            /* Initially hide the table */
+            #factsTable {
+                display: none;
+            }
+
+            /* Additional styles for the table lines */
+            .table-bordered th,
+            .table-bordered td {
+                border: 1px solid black; /* Change border color */
+            }
+
+            .center {
+                display: flex;
+                justify-content: center; /* This centers the children horizontally */
+                align-items: center; /* This centers the children vertically */
+                height: 100%; /* Adjust the height as needed */
+                margin-bottom: 20px; /* Adds some space below the centered element */
+            }
+
+        </style>
+    </head>
+
+    <body>
+        <!-- Navigation Bar -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+            <a class="navbar-brand" href="index.html">Home</a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link btn btn-dark me-2" href="lab3.html">Lab 3</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class = "nav-link btn btn-dark me-2" href = "lab4.html">Lab 4</a> 
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link btn btn-dark me-2" href="lab5.html">Lab 5</a>
+                    </li>
+                    <li class="nav-item active">
+                        <a class="nav-link btn btn-dark me-2" href="lab6.html">Lab 6</a>
+                    </li>
+                    <li class ="nav-item">
+                        <a class = "nav-link btn btn-dark me-2" href = "https://github.com/MaximKleyer/MaximKleyer.github.io">Github</a> 
+                    </li>
+                </ul>
+            </div>
+        </nav>
+
+        <div class="container centered-content">
+            <h1 class="text-center">Cat Facts</h1>
+            <!-- Center the button with the 'center' class -->
+            <div class="center">
+                <button id="loadFacts" class="btn btn-primary">Load Cat Facts</button>
+            </div>
+    
+            <!-- The table is initially hidden -->
+            <table id="factsTable" class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th> </th>
+                        <th>Fact</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Facts will be inserted here -->
+                </tbody>
+            </table>
+    
+            <img id="catImage" src="https://hips.hearstapps.com/hmg-prod/images/cute-photos-of-cats-looking-at-camera-1593184780.jpg?crop=0.6672958942897593xw:1xh;center,top&resize=980:*" alt="Cat" class="img-fluid">
+        </div>
+
+        <script>
+            // Add an event listener to the button with the ID 'loadFacts'
+            document.getElementById('loadFacts').addEventListener('click', async function() {
+                try {
+                    // Attempt to fetch the cat facts from the specified URL
+                    const response = await fetch('https://brianobruno.github.io/cats.json');
+                    const data = await response.json(); // Parse the JSON response into a JavaScript object
+                    
+                    // Sort the cat facts by their factId property
+                    const sortedFacts = data.facts.sort((a, b) => a.factId - b.factId);
+                    
+                    // Get the table element by its ID 'factsTable'
+                    const table = document.getElementById('factsTable');
+                    // Get the <tbody> element within the table to insert rows into
+                    const tableBody = table.getElementsByTagName('tbody')[0];
+                    tableBody.innerHTML = ''; // Clear existing table rows to prepare for new facts
+        
+                    // Display the table now that we're ready to populate it with data
+                    table.style.display = 'table';
+                    
+                    // Iterate over each fact in the sorted list
+                    sortedFacts.forEach(fact => {
+                        const row = tableBody.insertRow(); // Insert a new row into the <tbody>
+                        const cell1 = row.insertCell(0); // Insert a new cell for the fact ID
+                        const cell2 = row.insertCell(1); // Insert another cell for the fact text
+                        
+                        // Set the contents of the first cell to the fact ID and the second to the fact text
+                        cell1.innerHTML = fact.factId;
+                        cell2.innerHTML = fact.text;
+                    });
+                
+                    // Update the source of the image element with ID 'catImage' to the new cat photo URL
+                    document.getElementById('catImage').src = data.catPhoto;
+        
+                    // Apply the 'colorful-table' class to the table to change its appearance according to the defined CSS
+                    table.classList.add('colorful-table');
+                } catch (error) {
+                    // If there is an error during fetch or processing, log it to the console
+                    console.error('Error loading the facts:', error);
+                }
+            });
+        </script>
+    </body>
+</html>
+
+
