@@ -33,7 +33,6 @@
             overflow-x: hidden;
         }
 
-        /* Grain overlay */
         body::after {
             content: '';
             position: fixed;
@@ -43,7 +42,6 @@
             z-index: 9999;
         }
 
-        /* Ambient glow */
         .ambient-glow {
             position: fixed;
             width: 600px;
@@ -62,7 +60,6 @@
             100% { transform: translate(-100px, 80px); }
         }
 
-        /* Layout */
         .container {
             max-width: 960px;
             margin: 0 auto;
@@ -71,7 +68,6 @@
             z-index: 1;
         }
 
-        /* Nav */
         nav {
             padding: 24px 0;
             display: flex;
@@ -92,6 +88,7 @@
             display: flex;
             gap: 28px;
             list-style: none;
+            align-items: center;
         }
 
         .nav-links a {
@@ -117,10 +114,21 @@
         .nav-links a:hover { color: var(--white); }
         .nav-links a:hover::after { width: 100%; }
 
-        /* Hero */
-        .hero {
-            padding: 100px 0 80px;
+        .nav-links .demo-link {
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            padding: 6px 14px;
+            border-radius: 6px;
+            transition: all 0.25s;
         }
+
+        .nav-links .demo-link::after { display: none; }
+        .nav-links .demo-link:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .hero { padding: 100px 0 80px; }
 
         .hero-label {
             font-family: 'JetBrains Mono', monospace;
@@ -177,6 +185,7 @@
             background: var(--accent);
             color: var(--bg);
         }
+
         .btn-primary-custom:hover {
             box-shadow: 0 0 24px var(--accent-glow);
             transform: translateY(-1px);
@@ -187,12 +196,12 @@
             color: var(--text);
             background: transparent;
         }
+
         .btn-outline-custom:hover {
             border-color: var(--accent);
             color: var(--accent);
         }
 
-        /* Section */
         section { padding: 60px 0; }
 
         .section-title {
@@ -214,14 +223,12 @@
             background: var(--border);
         }
 
-        /* Experience */
         .exp-item {
             display: grid;
             grid-template-columns: 180px 1fr;
             gap: 32px;
             padding: 28px 0;
             border-bottom: 1px solid var(--border);
-            transition: background 0.25s;
         }
 
         .exp-item:last-child { border-bottom: none; }
@@ -253,7 +260,6 @@
             line-height: 1.65;
         }
 
-        /* Skills */
         .skills-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -280,7 +286,6 @@
             font-weight: 600;
             color: var(--white);
             margin-bottom: 14px;
-            letter-spacing: 0.02em;
         }
 
         .skill-tags {
@@ -299,7 +304,6 @@
             color: var(--accent);
         }
 
-        /* Projects */
         .projects-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -358,7 +362,43 @@
             margin-bottom: 16px;
         }
 
-        /* Certifications */
+        .project-links {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .project-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.25s;
+        }
+
+        .project-link.primary {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .project-link.primary:hover {
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+
+        .project-link.secondary {
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+
+        .project-link.secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
         .cert-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -431,7 +471,6 @@
             color: #ffc107;
         }
 
-        /* Education */
         .edu-block {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -463,7 +502,6 @@
             color: var(--text-muted);
         }
 
-        /* Contact */
         .contact-grid {
             display: flex;
             gap: 16px;
@@ -496,7 +534,6 @@
             opacity: 0.7;
         }
 
-        /* Footer */
         footer {
             padding: 48px 0;
             border-top: 1px solid var(--border);
@@ -509,24 +546,15 @@
             text-align: center;
         }
 
-        /* Responsive */
         @media (max-width: 768px) {
-            .exp-item {
-                grid-template-columns: 1fr;
-                gap: 8px;
-            }
-            .projects-grid, .cert-grid {
-                grid-template-columns: 1fr;
-            }
+            .exp-item { grid-template-columns: 1fr; gap: 8px; }
+            .projects-grid, .cert-grid { grid-template-columns: 1fr; }
             .hero { padding: 60px 0 50px; }
             .nav-links { gap: 16px; }
         }
 
         @media (max-width: 480px) {
-            .nav-links { 
-                gap: 12px;
-                font-size: 0.8rem;
-            }
+            .nav-links { gap: 12px; font-size: 0.8rem; }
             .hero-links { flex-direction: column; }
             .hero-links a { text-align: center; justify-content: center; }
             .contact-grid { flex-direction: column; }
@@ -539,7 +567,6 @@
 <div class="ambient-glow"></div>
 
 <div class="container">
-    <!-- Nav -->
     <nav>
         <a href="#" class="nav-logo">maxim.kleyer</a>
         <ul class="nav-links">
@@ -547,10 +574,10 @@
             <li><a href="#projects">Projects</a></li>
             <li><a href="#skills">Skills</a></li>
             <li><a href="#contact">Contact</a></li>
+            <li><a href="heartrate.html" class="demo-link">RGB Heartrate</a></li>
         </ul>
     </nav>
 
-    <!-- Hero -->
     <section class="hero">
         <div class="hero-label">Software Engineer &mdash; New York, NY</div>
         <h1>Hi, I'm <span>Maxim Kleyer</span></h1>
@@ -570,7 +597,6 @@
         </div>
     </section>
 
-    <!-- Experience -->
     <section id="experience">
         <div class="section-title">Experience</div>
 
@@ -608,10 +634,31 @@
         </div>
     </section>
 
-    <!-- Projects -->
     <section id="projects">
         <div class="section-title">Projects</div>
         <div class="projects-grid">
+            <div class="project-card">
+                <h3>RGB Heart Rate Monitor</h3>
+                <div class="project-year">Jan &mdash; Jun 2024</div>
+                <p>Non-contact heart rate detection using photoplethysmography (PPG). Analyzes RGB color variations from facial skin via webcam, applies bandpass filtering, and uses FFT to extract pulse frequency.</p>
+                <div class="skill-tags">
+                    <span class="skill-tag">Python</span>
+                    <span class="skill-tag">FFT</span>
+                    <span class="skill-tag">Signal Processing</span>
+                    <span class="skill-tag">OpenCV</span>
+                </div>
+                <div class="project-links">
+                    <a href="heartrate.html" class="project-link primary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        Live Demo
+                    </a>
+                    <a href="https://github.com/MaximKleyer/RBGHeartbeatSensor" target="_blank" class="project-link secondary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                        Code
+                    </a>
+                </div>
+            </div>
+
             <div class="project-card">
                 <h3>Live Soccer Score Dashboard</h3>
                 <div class="project-year">Apr &mdash; Jun 2024</div>
@@ -622,21 +669,9 @@
                     <span class="skill-tag">Real-time Data</span>
                 </div>
             </div>
-
-            <div class="project-card">
-                <h3>RBG Heartrate Monitor</h3>
-                <div class="project-year">Jan &mdash; Jun 2024</div>
-                <p>Python application using Fast Fourier Transform for heartbeat signal analysis.</p>
-                <div class="skill-tags">
-                    <span class="skill-tag">Python</span>
-                    <span class="skill-tag">FFT</span>
-                    <span class="skill-tag">Signal Processing</span>
-                </div>
-            </div>
         </div>
     </section>
 
-    <!-- Skills -->
     <section id="skills">
         <div class="section-title">Technical Skills</div>
         <div class="skills-grid">
@@ -674,7 +709,6 @@
         </div>
     </section>
 
-    <!-- Certifications -->
     <section id="certifications">
         <div class="section-title">Certifications</div>
         <div class="cert-grid">
@@ -707,7 +741,6 @@
         </div>
     </section>
 
-    <!-- Education -->
     <section id="education">
         <div class="section-title">Education</div>
         <div class="edu-block">
@@ -719,7 +752,6 @@
         </div>
     </section>
 
-    <!-- Contact -->
     <section id="contact">
         <div class="section-title">Get in Touch</div>
         <div class="contact-grid">

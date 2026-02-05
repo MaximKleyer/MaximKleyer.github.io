@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB Heart Rate Monitor | Maxim Kleyer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-card-hover: #1a1a26;
+            --border: #1e1e2e;
+            --border-hover: #2a2a3e;
+            --text: #e0e0e8;
+            --text-muted: #8888a0;
+            --accent: #4af0c0;
+            --accent-dim: rgba(74, 240, 192, 0.08);
+            --accent-glow: rgba(74, 240, 192, 0.15);
+            --white: #f5f5f8;
+            --red: #ff6b6b;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* Grain overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 32px;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.25s;
+        }
+
+        .back-link:hover {
+            color: var(--accent);
+        }
+
+        .header-title {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.1rem;
+            color: var(--white);
+        }
+
+        /* Main content */
+        .monitor-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .monitor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .monitor-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .monitor-title h1 {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--white);
+        }
+
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            background: rgba(255, 107, 107, 0.15);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--red);
+            font-weight: 500;
+        }
+
+        .live-indicator.active {
+            background: rgba(74, 240, 192, 0.15);
+            color: var(--accent);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: currentColor;
+            border-radius: 50%;
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.3); }
+        }
+
+        .start-btn {
+            padding: 10px 24px;
+            background: var(--accent);
+            color: var(--bg);
+            border: none;
+            border-radius: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s;
+        }
+
+        .start-btn:hover {
+            box-shadow: 0 0 24px var(--accent-glow);
+            transform: translateY(-1px);
+        }
+
+        .start-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .start-btn.stop {
+            background: var(--red);
+        }
+
+        /* Video container */
+        .video-container {
+            position: relative;
+            background: #000;
+            aspect-ratio: 4/3;
+            max-height: 500px;
+        }
+
+        #video {
+            display: none;
+        }
+
+        #canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .video-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            gap: 16px;
+        }
+
+        .video-placeholder.hidden {
+            display: none;
+        }
+
+        .video-placeholder svg {
+            width: 64px;
+            height: 64px;
+            opacity: 0.5;
+        }
+
+        .video-placeholder p {
+            font-size: 1rem;
+        }
+
+        .error-message {
+            color: var(--red);
+            text-align: center;
+            padding: 20px;
+        }
+
+        /* BPM Display */
+        .bpm-display {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 40px;
+            padding: 32px 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .bpm-main {
+            text-align: center;
+        }
+
+        .bpm-value {
+            font-family: 'Sora', sans-serif;
+            font-size: 4rem;
+            font-weight: 700;
+            color: var(--white);
+            line-height: 1;
+        }
+
+        .bpm-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--accent);
+            margin-top: 8px;
+            letter-spacing: 0.1em;
+        }
+
+        .bpm-channels {
+            display: flex;
+            gap: 24px;
+        }
+
+        .channel {
+            text-align: center;
+        }
+
+        .channel-value {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 600;
+            line-height: 1;
+        }
+
+        .channel-value.red { color: #ff6b6b; }
+        .channel-value.green { color: #4af0c0; }
+        .channel-value.blue { color: #6b9fff; }
+
+        .channel-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            text-transform: uppercase;
+        }
+
+        /* Instructions */
+        .instructions {
+            padding: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .instructions h3 {
+            font-family: 'Sora', sans-serif;
+            font-size: 0.95rem;
+            color: var(--white);
+            margin-bottom: 12px;
+        }
+
+        .instructions ul {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .instructions li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .instructions li svg {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+            color: var(--accent);
+            margin-top: 2px;
+        }
+
+        /* Tech info */
+        .tech-info {
+            margin-top: 32px;
+            padding: 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .tech-info h3 {
+            font-family: 'Sora', sans-serif;
+            font-size: 1rem;
+            color: var(--white);
+            margin-bottom: 16px;
+        }
+
+        .tech-info p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .tech-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .tech-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 5px 12px;
+            border-radius: 6px;
+            background: var(--accent-dim);
+            border: 1px solid var(--border);
+            color: var(--accent);
+        }
+
+        .github-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            padding: 10px 20px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.25s;
+        }
+
+        .github-link:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .bpm-display {
+                flex-direction: column;
+                gap: 24px;
+            }
+
+            .bpm-value {
+                font-size: 3rem;
+            }
+
+            .monitor-header {
+                flex-direction: column;
+                gap: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <a href="index.html" class="back-link">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            Back to Portfolio
+        </a>
+        <span class="header-title">maxim.kleyer</span>
+    </header>
+
+    <div class="monitor-section">
+        <div class="monitor-header">
+            <div class="monitor-title">
+                <h1>RGB Heart Rate Monitor</h1>
+                <div class="live-indicator" id="live-indicator">
+                    <span class="pulse-dot"></span>
+                    <span id="status-text">Offline</span>
+                </div>
+            </div>
+            <button class="start-btn" id="start-btn" onclick="toggleMonitor()">Start Monitor</button>
+        </div>
+
+        <div class="video-container">
+            <video id="video" playsinline></video>
+            <canvas id="canvas"></canvas>
+            <div class="video-placeholder" id="placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
+                </svg>
+                <p>Click "Start Monitor" to begin</p>
+            </div>
+        </div>
+
+        <div class="bpm-display">
+            <div class="bpm-main">
+                <div class="bpm-value" id="bpm-value">--</div>
+                <div class="bpm-label">BPM</div>
+            </div>
+            <div class="bpm-channels">
+                <div class="channel">
+                    <div class="channel-value red" id="red-bpm">--</div>
+                    <div class="channel-label">Red</div>
+                </div>
+                <div class="channel">
+                    <div class="channel-value green" id="green-bpm">--</div>
+                    <div class="channel-label">Green</div>
+                </div>
+                <div class="channel">
+                    <div class="channel-value blue" id="blue-bpm">--</div>
+                    <div class="channel-label">Blue</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>For Best Results</h3>
+            <ul>
+                <li>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                    </svg>
+                    <span>Stay still for 10-15 seconds while the algorithm calibrates</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                    </svg>
+                    <span>Ensure good, consistent lighting on your face</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <span>Position your forehead within the cyan detection box</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <span>Results are approximate — not for medical use</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="tech-info">
+        <h3>How It Works</h3>
+        <p>
+            This monitor uses <strong>photoplethysmography (PPG)</strong> — detecting subtle color changes 
+            in your skin caused by blood flow. Your webcam captures these micro-variations in the RGB channels 
+            of your face, which are then processed using signal processing techniques.
+        </p>
+        <p>
+            The signal is filtered with a <strong>Butterworth bandpass filter</strong> (0.83-3.0 Hz, corresponding to 50-180 BPM), 
+            then analyzed using <strong>Fast Fourier Transform (FFT)</strong> to find the dominant frequency, 
+            which corresponds to your heart rate.
+        </p>
+        <div class="tech-tags">
+            <span class="tech-tag">JavaScript</span>
+            <span class="tech-tag">WebRTC</span>
+            <span class="tech-tag">FFT</span>
+            <span class="tech-tag">Signal Processing</span>
+            <span class="tech-tag">Computer Vision</span>
+        </div>
+        <a href="https://github.com/MaximKleyer/RBGHeartbeatSensor" target="_blank" class="github-link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/>
+            </svg>
+            View Python Source Code
+        </a>
+    </div>
+</div>
+
+<script>
+/**
+ * RGB Heart Rate Monitor - Browser Version
+ * Author: Maxim Kleyer
+ */
+
+class HeartRateMonitor {
+    constructor() {
+        this.video = document.getElementById('video');
+        this.canvas = document.getElementById('canvas');
+        this.ctx = this.canvas.getContext('2d');
+        
+        // Config
+        this.config = {
+            bufferSize: 256,
+            minBPM: 50,
+            maxBPM: 180,
+            smoothingAlpha: 0.1,
+            hrSmoothingAlpha: 0.12,
+        };
+        
+        // Buffers for each channel
+        this.buffers = {
+            red: [],
+            green: [],
+            blue: []
+        };
+        this.timestamps = [];
+        
+        // Heart rates per channel
+        this.heartRates = {
+            red: 0,
+            green: 0,
+            blue: 0
+        };
+        this.smoothedHR = 0;
+        
+        // Previous values for smoothing
+        this.lastValues = { red: null, green: null, blue: null };
+        
+        // ROI
+        this.roi = null;
+        
+        // State
+        this.isRunning = false;
+        this.animationId = null;
+    }
+    
+    async start() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+            });
+            
+            this.video.srcObject = stream;
+            await this.video.play();
+            
+            this.canvas.width = this.video.videoWidth;
+            this.canvas.height = this.video.videoHeight;
+            
+            // Default ROI (forehead area)
+            this.roi = {
+                x: this.canvas.width * 0.3,
+                y: this.canvas.height * 0.08,
+                width: this.canvas.width * 0.4,
+                height: this.canvas.height * 0.18
+            };
+            
+            this.isRunning = true;
+            document.getElementById('placeholder').classList.add('hidden');
+            this.processFrame();
+            
+            return true;
+        } catch (err) {
+            console.error('Camera error:', err);
+            throw err;
+        }
+    }
+    
+    stop() {
+        this.isRunning = false;
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+        }
+        if (this.video.srcObject) {
+            this.video.srcObject.getTracks().forEach(track => track.stop());
+            this.video.srcObject = null;
+        }
+        
+        // Reset
+        this.buffers = { red: [], green: [], blue: [] };
+        this.timestamps = [];
+        this.heartRates = { red: 0, green: 0, blue: 0 };
+        this.smoothedHR = 0;
+        this.lastValues = { red: null, green: null, blue: null };
+        
+        document.getElementById('placeholder').classList.remove('hidden');
+    }
+    
+    processFrame() {
+        if (!this.isRunning) return;
+        
+        const now = performance.now();
+        
+        // Draw video to canvas
+        this.ctx.drawImage(this.video, 0, 0);
+        
+        // Extract RGB from ROI
+        const rgb = this.extractRGB();
+        
+        if (rgb) {
+            // Apply EMA smoothing and store
+            for (const channel of ['red', 'green', 'blue']) {
+                const raw = rgb[channel];
+                const smoothed = this.lastValues[channel] !== null
+                    ? this.config.smoothingAlpha * raw + (1 - this.config.smoothingAlpha) * this.lastValues[channel]
+                    : raw;
+                this.lastValues[channel] = smoothed;
+                this.buffers[channel].push(smoothed);
+                
+                // Limit buffer size
+                if (this.buffers[channel].length > this.config.bufferSize) {
+                    this.buffers[channel].shift();
+                }
+            }
+            
+            this.timestamps.push(now);
+            if (this.timestamps.length > this.config.bufferSize) {
+                this.timestamps.shift();
+            }
+            
+            // Calculate heart rate every 5 frames
+            if (this.timestamps.length >= 64 && this.timestamps.length % 5 === 0) {
+                this.calculateHeartRate();
+            }
+        }
+        
+        // Draw overlay
+        this.drawOverlay();
+        
+        // Update display
+        this.updateDisplay();
+        
+        this.animationId = requestAnimationFrame(() => this.processFrame());
+    }
+    
+    extractRGB() {
+        if (!this.roi) return null;
+        
+        const { x, y, width, height } = this.roi;
+        const x1 = Math.max(0, Math.floor(x));
+        const y1 = Math.max(0, Math.floor(y));
+        const x2 = Math.min(this.canvas.width, Math.floor(x + width));
+        const y2 = Math.min(this.canvas.height, Math.floor(y + height));
+        
+        if (x2 <= x1 || y2 <= y1) return null;
+        
+        const imageData = this.ctx.getImageData(x1, y1, x2 - x1, y2 - y1);
+        const data = imageData.data;
+        
+        let sumR = 0, sumG = 0, sumB = 0;
+        const pixelCount = data.length / 4;
+        
+        for (let i = 0; i < data.length; i += 4) {
+            sumR += data[i];
+            sumG += data[i + 1];
+            sumB += data[i + 2];
+        }
+        
+        return {
+            red: sumR / pixelCount,
+            green: sumG / pixelCount,
+            blue: sumB / pixelCount
+        };
+    }
+    
+    calculateHeartRate() {
+        const duration = (this.timestamps[this.timestamps.length - 1] - this.timestamps[0]) / 1000;
+        const fs = this.timestamps.length / duration;
+        
+        if (fs < 10) return;
+        
+        // Calculate HR for each channel
+        for (const channel of ['red', 'green', 'blue']) {
+            const hr = this.processChannel(this.buffers[channel], fs);
+            if (hr !== null) {
+                // Smooth individual channel HR
+                if (this.heartRates[channel] > 0) {
+                    this.heartRates[channel] = this.config.hrSmoothingAlpha * hr + 
+                                               (1 - this.config.hrSmoothingAlpha) * this.heartRates[channel];
+                } else {
+                    this.heartRates[channel] = hr;
+                }
+            }
+        }
+        
+        // Weighted average (green channel weighted higher)
+        const weights = { red: 0.2, green: 0.6, blue: 0.2 };
+        let weightedSum = 0;
+        let totalWeight = 0;
+        
+        for (const channel of ['red', 'green', 'blue']) {
+            if (this.heartRates[channel] > 0) {
+                weightedSum += this.heartRates[channel] * weights[channel];
+                totalWeight += weights[channel];
+            }
+        }
+        
+        if (totalWeight > 0) {
+            const avgHR = weightedSum / totalWeight;
+            if (this.smoothedHR > 0) {
+                this.smoothedHR = this.config.hrSmoothingAlpha * avgHR + 
+                                  (1 - this.config.hrSmoothingAlpha) * this.smoothedHR;
+            } else {
+                this.smoothedHR = avgHR;
+            }
+        }
+    }
+    
+    processChannel(buffer, fs) {
+        let signal = [...buffer];
+        
+        // Detrend
+        const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
+        signal = signal.map(v => v - mean);
+        
+        // Linear detrend
+        const n = signal.length;
+        let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+        for (let i = 0; i < n; i++) {
+            sumX += i;
+            sumY += signal[i];
+            sumXY += i * signal[i];
+            sumX2 += i * i;
+        }
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+        signal = signal.map((v, i) => v - slope * i);
+        
+        // Normalize
+        const std = Math.sqrt(signal.reduce((a, b) => a + b * b, 0) / signal.length);
+        if (std > 0) signal = signal.map(v => v / std);
+        
+        // Hanning window
+        const windowed = signal.map((v, i) => {
+            const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (signal.length - 1)));
+            return v * w;
+        });
+        
+        // FFT
+        const fftResult = this.fft(windowed);
+        const magnitude = fftResult.map(c => Math.sqrt(c.re * c.re + c.im * c.im));
+        
+        // Find peak
+        const minFreq = this.config.minBPM / 60;
+        const maxFreq = this.config.maxBPM / 60;
+        const freqResolution = fs / (magnitude.length);
+        
+        let maxMag = 0;
+        let peakFreq = 0;
+        
+        for (let i = 0; i < magnitude.length / 2; i++) {
+            const freq = i * freqResolution;
+            if (freq >= minFreq && freq <= maxFreq) {
+                if (magnitude[i] > maxMag) {
+                    maxMag = magnitude[i];
+                    peakFreq = freq;
+                }
+            }
+        }
+        
+        // Quality check
+        const avgMag = magnitude.slice(0, magnitude.length / 2).reduce((a, b) => a + b, 0) / (magnitude.length / 2);
+        if (maxMag < avgMag * 1.8) return null;
+        
+        const hr = peakFreq * 60;
+        return (hr >= this.config.minBPM && hr <= this.config.maxBPM) ? hr : null;
+    }
+    
+    fft(signal) {
+        let m = 1;
+        while (m < signal.length) m *= 2;
+        
+        const padded = new Array(m).fill(0);
+        for (let i = 0; i < signal.length; i++) padded[i] = signal[i];
+        
+        const result = padded.map(v => ({ re: v, im: 0 }));
+        
+        // Bit reversal
+        const bits = Math.log2(m);
+        for (let i = 0; i < m; i++) {
+            const j = this.reverseBits(i, bits);
+            if (j > i) [result[i], result[j]] = [result[j], result[i]];
+        }
+        
+        // FFT butterflies
+        for (let len = 2; len <= m; len *= 2) {
+            const halfLen = len / 2;
+            const angle = -2 * Math.PI / len;
+            
+            for (let i = 0; i < m; i += len) {
+                for (let j = 0; j < halfLen; j++) {
+                    const wRe = Math.cos(angle * j);
+                    const wIm = Math.sin(angle * j);
+                    
+                    const uRe = result[i + j].re;
+                    const uIm = result[i + j].im;
+                    const tRe = wRe * result[i + j + halfLen].re - wIm * result[i + j + halfLen].im;
+                    const tIm = wRe * result[i + j + halfLen].im + wIm * result[i + j + halfLen].re;
+                    
+                    result[i + j] = { re: uRe + tRe, im: uIm + tIm };
+                    result[i + j + halfLen] = { re: uRe - tRe, im: uIm - tIm };
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    reverseBits(num, bits) {
+        let result = 0;
+        for (let i = 0; i < bits; i++) {
+            result = (result << 1) | (num & 1);
+            num >>= 1;
+        }
+        return result;
+    }
+    
+    drawOverlay() {
+        // ROI box
+        if (this.roi) {
+            this.ctx.strokeStyle = '#00ffff';
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(this.roi.x, this.roi.y, this.roi.width, this.roi.height);
+            
+            // Label
+            this.ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
+            this.ctx.font = '12px "JetBrains Mono", monospace';
+            this.ctx.fillText('FOREHEAD ROI', this.roi.x, this.roi.y - 8);
+        }
+        
+        // BPM overlay
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        this.ctx.fillRect(10, 10, 180, 60);
+        this.ctx.strokeStyle = '#00ffff';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(10, 10, 180, 60);
+        
+        this.ctx.fillStyle = '#00ffff';
+        this.ctx.font = '12px "JetBrains Mono", monospace';
+        this.ctx.fillText('HEART RATE', 20, 28);
+        
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 28px "Sora", sans-serif';
+        const bpmText = this.smoothedHR > 0 ? `${Math.round(this.smoothedHR)} BPM` : 'Detecting...';
+        this.ctx.fillText(bpmText, 20, 58);
+    }
+    
+    updateDisplay() {
+        document.getElementById('bpm-value').textContent = 
+            this.smoothedHR > 0 ? Math.round(this.smoothedHR) : '--';
+        
+        document.getElementById('red-bpm').textContent = 
+            this.heartRates.red > 0 ? Math.round(this.heartRates.red) : '--';
+        document.getElementById('green-bpm').textContent = 
+            this.heartRates.green > 0 ? Math.round(this.heartRates.green) : '--';
+        document.getElementById('blue-bpm').textContent = 
+            this.heartRates.blue > 0 ? Math.round(this.heartRates.blue) : '--';
+    }
+}
+
+// Global instance
+let monitor = null;
+
+async function toggleMonitor() {
+    const btn = document.getElementById('start-btn');
+    const indicator = document.getElementById('live-indicator');
+    const statusText = document.getElementById('status-text');
+    
+    if (!monitor || !monitor.isRunning) {
+        // Start
+        btn.disabled = true;
+        btn.textContent = 'Starting...';
+        
+        try {
+            monitor = new HeartRateMonitor();
+            await monitor.start();
+            
+            btn.textContent = 'Stop Monitor';
+            btn.classList.add('stop');
+            btn.disabled = false;
+            indicator.classList.add('active');
+            statusText.textContent = 'Live';
+        } catch (err) {
+            alert('Could not access camera. Please ensure camera permissions are granted.');
+            btn.textContent = 'Start Monitor';
+            btn.disabled = false;
+        }
+    } else {
+        // Stop
+        monitor.stop();
+        monitor = null;
+        
+        btn.textContent = 'Start Monitor';
+        btn.classList.remove('stop');
+        indicator.classList.remove('active');
+        statusText.textContent = 'Offline';
+        
+        document.getElementById('bpm-value').textContent = '--';
+        document.getElementById('red-bpm').textContent = '--';
+        document.getElementById('green-bpm').textContent = '--';
+        document.getElementById('blue-bpm').textContent = '--';
+    }
+}
+</script>
+
+</body>
+</html>
