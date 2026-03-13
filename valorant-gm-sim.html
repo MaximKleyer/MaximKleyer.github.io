@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <title>Valorant GM Simulator</title>
+    <style>
+        :root {
+            --val-red: #ff4655;
+            --val-red-dark: #bd3944;
+            --val-black: #0f1923;
+            --val-dark: #1f2326;
+            --val-gray: #383e3a;
+            --val-light: #ece8e1;
+            --val-gold: #f9d849;
+            --val-teal: #00d4aa;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 70px 0 0;
+            background: linear-gradient(135deg, var(--val-black) 0%, #1a2634 100%);
+            color: var(--val-light);
+            min-height: 100vh;
+        }
+
+        /* Navbar */
+        .navbar {
+            background-color: var(--val-red-dark) !important;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 9999;
+        }
+
+        .navbar .nav-item .nav-link.active {
+            background-color: var(--val-red);
+        }
+
+        .navbar a:link, .navbar a:visited {
+            color: var(--val-light);
+            padding: 10px 20px;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .navbar a:hover {
+            color: white;
+        }
+
+        .navbar-brand {
+            font-weight: bold;
+            color: white !important;
+        }
+
+        /* Main Layout */
+        .game-container {
+            display: none;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .game-container.active {
+            display: block;
+        }
+
+        /* Start Screen */
+        #start-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: calc(100vh - 70px);
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        #start-screen h1 {
+            font-size: 3.5rem;
+            font-weight: 900;
+            color: var(--val-red);
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 30px rgba(255, 70, 85, 0.5);
+        }
+
+        #start-screen h2 {
+            font-size: 1.5rem;
+            color: var(--val-light);
+            opacity: 0.8;
+            margin-bottom: 40px;
+        }
+
+        .start-buttons {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .btn-val {
+            background: linear-gradient(135deg, var(--val-red) 0%, var(--val-red-dark) 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255, 70, 85, 0.4);
+        }
+
+        .btn-val:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 70, 85, 0.6);
+        }
+
+        .btn-val-secondary {
+            background: transparent;
+            border: 2px solid var(--val-red);
+            color: var(--val-red);
+        }
+
+        .btn-val-secondary:hover {
+            background: var(--val-red);
+            color: white;
+        }
+
+        /* Team Selection */
+        #team-selection {
+            padding: 40px 20px;
+        }
+
+        .region-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .region-tab {
+            padding: 12px 30px;
+            background: var(--val-dark);
+            border: 2px solid var(--val-gray);
+            color: var(--val-light);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .region-tab:hover, .region-tab.active {
+            border-color: var(--val-red);
+            color: var(--val-red);
+        }
+
+        .teams-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .team-card {
+            background: var(--val-dark);
+            border: 2px solid var(--val-gray);
+            border-radius: 8px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .team-card:hover {
+            border-color: var(--val-red);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .team-card h3 {
+            color: var(--val-light);
+            margin: 0 0 5px;
+            font-size: 1.2rem;
+        }
+
+        .team-card .team-abbr {
+            color: var(--val-red);
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .team-card .team-tier {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            margin-top: 10px;
+        }
+
+        .tier-star { background: var(--val-gold); color: var(--val-black); }
+        .tier-good { background: var(--val-teal); color: var(--val-black); }
+        .tier-average { background: var(--val-gray); color: var(--val-light); }
+        .tier-prospect { background: #6366f1; color: white; }
+
+        /* Main Game UI */
+        .game-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: var(--val-dark);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .team-info h2 {
+            margin: 0;
+            color: var(--val-red);
+        }
+
+        .team-info span {
+            color: var(--val-light);
+            opacity: 0.7;
+        }
+
+        .game-stats {
+            display: flex;
+            gap: 30px;
+            text-align: right;
+        }
+
+        .stat-box {
+            text-align: center;
+        }
+
+        .stat-box .label {
+            font-size: 0.8rem;
+            color: var(--val-light);
+            opacity: 0.6;
+            text-transform: uppercase;
+        }
+
+        .stat-box .value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--val-teal);
+        }
+
+        /* Navigation Tabs */
+        .nav-tabs-game {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--val-gray);
+            padding-bottom: 10px;
+        }
+
+        .nav-tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: var(--val-light);
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -12px;
+        }
+
+        .nav-tab:hover {
+            color: var(--val-red);
+        }
+
+        .nav-tab.active {
+            color: var(--val-red);
+            border-bottom-color: var(--val-red);
+        }
+
+        /* Content Panels */
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Roster Panel */
+        .roster-grid {
+            display: grid;
+            gap: 15px;
+        }
+
+        .player-card {
+            display: grid;
+            grid-template-columns: 60px 1fr 100px 120px 100px;
+            gap: 15px;
+            align-items: center;
+            background: var(--val-dark);
+            border: 1px solid var(--val-gray);
+            border-radius: 8px;
+            padding: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .player-card:hover {
+            border-color: var(--val-red);
+        }
+
+        .player-card.starter {
+            border-left: 4px solid var(--val-teal);
+        }
+
+        .player-card.sub {
+            border-left: 4px solid var(--val-gold);
+            opacity: 0.8;
+        }
+
+        .player-overall {
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--val-gray);
+            border-radius: 8px;
+            font-size: 1.3rem;
+            font-weight: bold;
+        }
+
+        .overall-90 { background: var(--val-gold); color: var(--val-black); }
+        .overall-80 { background: var(--val-teal); color: var(--val-black); }
+        .overall-70 { background: #22c55e; color: var(--val-black); }
+        .overall-60 { background: #eab308; color: var(--val-black); }
+
+        .player-info h4 {
+            margin: 0 0 5px;
+            color: var(--val-light);
+        }
+
+        .player-info .role {
+            font-size: 0.85rem;
+            color: var(--val-red);
+            font-weight: bold;
+        }
+
+        .player-info .nationality {
+            font-size: 0.8rem;
+            color: var(--val-light);
+            opacity: 0.6;
+        }
+
+        .player-stats {
+            font-size: 0.85rem;
+            color: var(--val-light);
+        }
+
+        .player-morale {
+            text-align: center;
+        }
+
+        .morale-bar {
+            height: 8px;
+            background: var(--val-gray);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .morale-fill {
+            height: 100%;
+            background: var(--val-teal);
+            transition: width 0.3s ease;
+        }
+
+        .morale-fill.low { background: var(--val-red); }
+        .morale-fill.medium { background: var(--val-gold); }
+
+        .player-contract {
+            font-size: 0.85rem;
+            text-align: right;
+        }
+
+        .player-contract .salary {
+            color: var(--val-teal);
+            font-weight: bold;
+        }
+
+        /* Standings Panel */
+        .standings-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .standings-table th {
+            text-align: left;
+            padding: 12px;
+            background: var(--val-dark);
+            color: var(--val-light);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--val-gray);
+        }
+
+        .standings-table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--val-gray);
+        }
+
+        .standings-table tr:hover {
+            background: rgba(255, 70, 85, 0.1);
+        }
+
+        .standings-table tr.player-team {
+            background: rgba(0, 212, 170, 0.1);
+            border-left: 4px solid var(--val-teal);
+        }
+
+        /* Tournament Panel */
+        .tournament-header {
+            background: var(--val-dark);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .tournament-header h3 {
+            margin: 0;
+            color: var(--val-red);
+            font-size: 1.5rem;
+            text-transform: uppercase;
+        }
+
+        .tournament-header .phase {
+            color: var(--val-light);
+            opacity: 0.7;
+        }
+
+        .bracket-container {
+            background: var(--val-dark);
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        .match-result {
+            background: var(--val-gray);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .match-result.win {
+            border-left: 4px solid var(--val-teal);
+        }
+
+        .match-result.loss {
+            border-left: 4px solid var(--val-red);
+        }
+
+        .match-teams {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .match-team {
+            flex: 1;
+            text-align: center;
+        }
+
+        .match-team.winner {
+            color: var(--val-teal);
+            font-weight: bold;
+        }
+
+        .match-score {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--val-light);
+            padding: 0 20px;
+        }
+
+        /* Free Agents Panel */
+        .fa-filters {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .fa-filter {
+            padding: 8px 16px;
+            background: var(--val-dark);
+            border: 1px solid var(--val-gray);
+            color: var(--val-light);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .fa-filter:hover, .fa-filter.active {
+            border-color: var(--val-red);
+            color: var(--val-red);
+        }
+
+        .fa-card {
+            display: grid;
+            grid-template-columns: 60px 1fr 100px 120px;
+            gap: 15px;
+            align-items: center;
+            background: var(--val-dark);
+            border: 1px solid var(--val-gray);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .fa-card:hover {
+            border-color: var(--val-teal);
+        }
+
+        .btn-sign {
+            background: var(--val-teal);
+            color: var(--val-black);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-sign:hover {
+            background: #00b894;
+        }
+
+        /* Events Panel */
+        .events-log {
+            background: var(--val-dark);
+            border-radius: 8px;
+            padding: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            padding: 12px;
+            border-bottom: 1px solid var(--val-gray);
+            display: flex;
+            gap: 15px;
+        }
+
+        .event-item:last-child {
+            border-bottom: none;
+        }
+
+        .event-icon {
+            font-size: 1.2rem;
+        }
+
+        .event-message {
+            flex: 1;
+        }
+
+        .event-meta {
+            font-size: 0.8rem;
+            color: var(--val-light);
+            opacity: 0.5;
+        }
+
+        /* Advance Button */
+        .advance-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 100;
+        }
+
+        .btn-advance {
+            background: linear-gradient(135deg, var(--val-teal) 0%, #00b894 100%);
+            color: var(--val-black);
+            border: none;
+            padding: 15px 30px;
+            font-size: 1rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 212, 170, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .btn-advance:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 25px rgba(0, 212, 170, 0.6);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--val-dark);
+            border: 2px solid var(--val-red);
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: var(--val-red);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--val-light);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        /* Player Detail Modal */
+        .player-detail-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .stat-category h4 {
+            color: var(--val-red);
+            margin: 0 0 10px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--val-gray);
+        }
+
+        .stat-row .stat-name {
+            color: var(--val-light);
+            opacity: 0.7;
+        }
+
+        .stat-row .stat-value {
+            font-weight: bold;
+            color: var(--val-teal);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .player-card {
+                grid-template-columns: 50px 1fr;
+                gap: 10px;
+            }
+
+            .player-stats, .player-morale, .player-contract {
+                grid-column: span 2;
+            }
+
+            .game-header {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+
+            .game-stats {
+                justify-content: center;
+            }
+
+            .teams-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .region-tabs {
+                flex-wrap: wrap;
+            }
+
+            #start-screen h1 {
+                font-size: 2rem;
+            }
+        }
+
+        /* Save slots list */
+        .save-slots {
+            margin-top: 30px;
+        }
+
+        .save-slot {
+            background: var(--val-dark);
+            border: 1px solid var(--val-gray);
+            padding: 15px 20px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .save-slot:hover {
+            border-color: var(--val-teal);
+        }
+
+        .save-slot-info h4 {
+            margin: 0;
+            color: var(--val-light);
+        }
+
+        .save-slot-info span {
+            font-size: 0.85rem;
+            color: var(--val-light);
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <a class="navbar-brand" href="index.html">Home</a>
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a class="nav-link" href="Final_Project_Home.html">Football Scores</a>
+                </li>
+                <li class="nav-item active">
+                    <a class="nav-link" href="valorant-gm-sim.html">Valorant GM Sim</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="https://github.com/MaximKleyer/MaximKleyer.github.io">Github</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="game-container active">
+        <h1>Valorant</h1>
+        <h2>GM Simulator</h2>
+        <p style="max-width: 600px; opacity: 0.7; margin-bottom: 30px;">
+            Build your dynasty. Manage contracts, scout free agents, and lead your team through the VCT season to Worlds glory.
+        </p>
+        <div class="start-buttons">
+            <button class="btn-val" onclick="showTeamSelection()">New Game</button>
+            <button class="btn-val btn-val-secondary" onclick="showLoadGame()">Load Game</button>
+        </div>
+        
+        <div id="save-slots-container" class="save-slots" style="display: none;">
+            <h3 style="color: var(--val-light); margin-bottom: 15px;">Saved Games</h3>
+            <div id="save-slots-list"></div>
+        </div>
+    </div>
+
+    <!-- Team Selection Screen -->
+    <div id="team-selection" class="game-container">
+        <h2 style="text-align: center; color: var(--val-red); margin-bottom: 30px;">SELECT YOUR TEAM</h2>
+        
+        <div class="region-tabs">
+            <button class="region-tab active" data-region="AMERICAS">Americas</button>
+            <button class="region-tab" data-region="EMEA">EMEA</button>
+            <button class="region-tab" data-region="CHINA">China</button>
+            <button class="region-tab" data-region="APAC">APAC</button>
+        </div>
+        
+        <div id="teams-grid" class="teams-grid"></div>
+        
+        <div style="text-align: center; margin-top: 30px;">
+            <button class="btn-val btn-val-secondary" onclick="showStartScreen()">Back</button>
+        </div>
+    </div>
+
+    <!-- Main Game Screen -->
+    <div id="game-screen" class="game-container">
+        <!-- Game Header -->
+        <div class="game-header">
+            <div class="team-info">
+                <h2 id="header-team-name">Team Name</h2>
+                <span id="header-team-region">AMERICAS</span>
+            </div>
+            <div class="game-stats">
+                <div class="stat-box">
+                    <div class="label">Season</div>
+                    <div class="value" id="header-season">1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="label">Week</div>
+                    <div class="value" id="header-week">1</div>
+                </div>
+                <div class="stat-box">
+                    <div class="label">Points</div>
+                    <div class="value" id="header-points">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="label">Record</div>
+                    <div class="value" id="header-record">0-0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs-game">
+            <button class="nav-tab active" data-tab="roster">Roster</button>
+            <button class="nav-tab" data-tab="standings">Standings</button>
+            <button class="nav-tab" data-tab="tournament">Tournament</button>
+            <button class="nav-tab" data-tab="freeagents">Free Agents</button>
+            <button class="nav-tab" data-tab="events">News</button>
+        </div>
+
+        <!-- Roster Tab -->
+        <div id="tab-roster" class="tab-content active">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; color: var(--val-light);">Your Roster</h3>
+                <div>
+                    <span id="roster-salary" style="color: var(--val-teal);">$0</span>
+                    <span style="opacity: 0.5;"> / </span>
+                    <span id="roster-cap" style="opacity: 0.7;">$0 budget</span>
+                </div>
+            </div>
+            <div id="roster-grid" class="roster-grid"></div>
+        </div>
+
+        <!-- Standings Tab -->
+        <div id="tab-standings" class="tab-content">
+            <h3 style="color: var(--val-light); margin-bottom: 20px;">Regional Standings</h3>
+            <table class="standings-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Team</th>
+                        <th>Points</th>
+                        <th>W-L</th>
+                        <th>Maps</th>
+                    </tr>
+                </thead>
+                <tbody id="standings-body"></tbody>
+            </table>
+        </div>
+
+        <!-- Tournament Tab -->
+        <div id="tab-tournament" class="tab-content">
+            <div class="tournament-header">
+                <h3 id="tournament-name">Kickoff</h3>
+                <div class="phase" id="tournament-phase">Triple Elimination</div>
+            </div>
+            <div id="tournament-content" class="bracket-container">
+                <p style="text-align: center; opacity: 0.7;">Tournament bracket will appear here</p>
+            </div>
+        </div>
+
+        <!-- Free Agents Tab -->
+        <div id="tab-freeagents" class="tab-content">
+            <div class="fa-filters">
+                <button class="fa-filter active" data-role="all">All</button>
+                <button class="fa-filter" data-role="Duelist">Duelist</button>
+                <button class="fa-filter" data-role="Initiator">Initiator</button>
+                <button class="fa-filter" data-role="Controller">Controller</button>
+                <button class="fa-filter" data-role="Sentinel">Sentinel</button>
+            </div>
+            <div id="freeagents-list"></div>
+        </div>
+
+        <!-- Events Tab -->
+        <div id="tab-events" class="tab-content">
+            <div class="events-log" id="events-log"></div>
+        </div>
+
+        <!-- Advance Button -->
+        <div class="advance-container">
+            <button class="btn-advance" onclick="advanceWeek()">
+                ▶ Advance
+            </button>
+        </div>
+    </div>
+
+    <!-- Player Detail Modal -->
+    <div id="player-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-player-name">Player Name</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modal-player-content"></div>
+        </div>
+    </div>
+
+    <!-- Sign Player Modal -->
+    <div id="sign-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Sign Player</h3>
+                <button class="modal-close" onclick="closeSignModal()">&times;</button>
+            </div>
+            <div id="sign-modal-content"></div>
+        </div>
+    </div>
+
+    <!-- Match Results Modal -->
+    <div id="results-modal" class="modal-overlay">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h3>Week Results</h3>
+                <button class="modal-close" onclick="closeResultsModal()">&times;</button>
+            </div>
+            <div id="results-modal-content"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    
+    <!-- Game Scripts (bundled inline for simplicity) -->
+    <script src="valorant-gm-sim/game-bundle.js"></script>
+</body>
+</html>
