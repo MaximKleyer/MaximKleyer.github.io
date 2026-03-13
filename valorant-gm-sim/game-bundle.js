@@ -1192,20 +1192,28 @@ class Game {
 
 let selectedRegion = 'AMERICAS';
 let currentRoleFilter = 'all';
-let previewState = null; // Store preview state for team selection
+let previewState = null;
 
 function showScreen(id) {
-    document.querySelectorAll('.game-container').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.game-container').forEach(el => {
+        el.classList.remove('active');
+        el.style.display = 'none';
+    });
     const screen = document.getElementById(id);
     if (screen) {
         screen.classList.add('active');
+        screen.style.display = id === 'start-screen' ? 'flex' : 'block';
     }
 }
 
-function showStartScreen() { showScreen('start-screen'); }
+function showStartScreen() { 
+    showScreen('start-screen'); 
+}
+
 function showTeamSelection() {
-    // Generate preview state once when entering team selection
+    console.log('showTeamSelection called');
     previewState = generateGameState();
+    console.log('previewState generated:', Object.keys(previewState.teams).length, 'teams');
     showScreen('team-selection');
     renderTeamGrid();
 }
@@ -1227,7 +1235,7 @@ function showLoadGame() {
     }
 
     list.innerHTML = slots.map(s => `
-        <div class="save-slot" onclick="loadGame('${s.slot}')">
+        <div class="save-slot" data-slot="${s.slot}">
             <div class="save-slot-info">
                 <h4>${s.teamName}</h4>
                 <span>Season ${s.season}</span>
@@ -1247,28 +1255,41 @@ function loadGame(slot) {
 
 function renderTeamGrid() {
     const grid = document.getElementById('teams-grid');
-    if (!grid) return;
+    if (!grid) {
+        console.error('teams-grid not found');
+        return;
+    }
     
     if (!previewState) {
+        console.log('No previewState, generating...');
         previewState = generateGameState();
     }
     
     const tids = previewState.regionTeamIds[selectedRegion];
+    console.log('Rendering', tids.length, 'teams for', selectedRegion);
     
     grid.innerHTML = tids.map(tid => {
         const team = previewState.teams[tid];
-        const tierClass = `tier-${team.tier}`;
+        const tierClass = 'tier-' + team.tier;
         const overall = team.getOverall(previewState.players);
         
-        return `
-            <div class="team-card" onclick="selectTeam('${tid}', '${selectedRegion}')">
-                <h3>${team.name}</h3>
-                <div class="team-abbr">${team.abbreviation}</div>
-                <div style="margin-top:10px;opacity:0.7;">OVR: ${overall}</div>
-                <div class="team-tier ${tierClass}">${team.tier}</div>
-            </div>
-        `;
+        return '<div class="team-card" data-team-id="' + tid + '" data-region="' + selectedRegion + '">' +
+            '<h3>' + team.name + '</h3>' +
+            '<div class="team-abbr">' + team.abbreviation + '</div>' +
+            '<div style="margin-top:10px;opacity:0.7;">OVR: ' + overall + '</div>' +
+            '<div class="team-tier ' + tierClass + '">' + team.tier + '</div>' +
+        '</div>';
     }).join('');
+    
+    // Add click listeners via event delegation
+    grid.querySelectorAll('.team-card').forEach(card => {
+        card.addEventListener('click', function() {
+            const teamId = this.getAttribute('data-team-id');
+            const region = this.getAttribute('data-region');
+            console.log('Team card clicked:', teamId, region);
+            selectTeam(teamId, region);
+        });
+    });
 }
 
 function selectTeam(teamId, region) {
@@ -1276,10 +1297,17 @@ function selectTeam(teamId, region) {
     
     if (!previewState) {
         console.error('No preview state available');
+        alert('Error: Please try again');
         return;
     }
     
-    // Use the preview state directly instead of generating a new one
+    if (!previewState.teams[teamId]) {
+        console.error('Team not found:', teamId);
+        alert('Error: Team not found');
+        return;
+    }
+    
+    // Create game from preview state
     game = new Game();
     game.teams = previewState.teams;
     game.players = previewState.players;
@@ -1294,12 +1322,12 @@ function selectTeam(teamId, region) {
         game.seasonPoints[tid] = 0;
     }
     
-    game.addEvent('game_start', `Welcome to ${game.teams[teamId].name}! Season ${game.season} begins.`);
+    game.addEvent('game_start', 'Welcome to ' + game.teams[teamId].name + '! Season ' + game.season + ' begins.');
     game.phase = 'kickoff';
     game.startKickoff();
     
     game.save();
-    previewState = null; // Clear preview state
+    previewState = null;
     showGameScreen();
 }
 
@@ -1335,6 +1363,17 @@ document.addEventListener('DOMContentLoaded', () => {
             currentRoleFilter = btn.dataset.role;
             renderFreeAgents();
         });
+    });
+    
+    // Save slots - event delegation on container
+    document.getElementById('save-slots-list').addEventListener('click', (e) => {
+        const slot = e.target.closest('.save-slot');
+        if (slot) {
+            const slotName = slot.getAttribute('data-slot');
+            if (slotName) {
+                loadGame(slotName);
+            }
+        }
     });
 });
 

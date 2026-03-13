@@ -74,13 +74,22 @@
 
         /* Start Screen */
         #start-screen {
-            display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: calc(100vh - 70px);
             text-align: center;
             padding: 40px 20px;
+        }
+
+        #start-screen.active {
+            display: flex;
+        }
+
+        /* Team Selection */
+        #team-selection {
+            padding: 40px 20px;
+            min-height: calc(100vh - 70px);
         }
 
         #start-screen h1 {
@@ -135,11 +144,6 @@
         .btn-val-secondary:hover {
             background: var(--val-red);
             color: white;
-        }
-
-        /* Team Selection */
-        #team-selection {
-            padding: 40px 20px;
         }
 
         .region-tabs {
