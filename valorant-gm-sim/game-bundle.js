@@ -24,7 +24,7 @@ const TEAM_NAMES = {
         { name: 'KRÜ Esports', abbr: 'KRU' },
         { name: 'G2 Esports', abbr: 'G2' },
         { name: 'Evil Geniuses', abbr: 'EG' },
-        { name: 'Team Envy', abbr: 'ENVY' }
+        { name: '2Game Esports', abbr: '2G' }
     ],
     EMEA: [
         { name: 'Fnatic', abbr: 'FNC' },
@@ -35,10 +35,10 @@ const TEAM_NAMES = {
         { name: 'Karmine Corp', abbr: 'KC' },
         { name: 'BBL Esports', abbr: 'BBL' },
         { name: 'FUT Esports', abbr: 'FUT' },
-        { name: 'Giants Gaming', abbr: 'GX' },
-        { name: 'Picific Esports', abbr: 'PCF' },
+        { name: 'Giants Gaming', abbr: 'GIA' },
+        { name: 'KOI', abbr: 'KOI' },
         { name: 'Gentle Mates', abbr: 'M8' },
-        { name: 'ULF Esports', abbr: 'ULF' }
+        { name: 'Apeks', abbr: 'APK' }
     ],
     CHINA: [
         { name: 'EDward Gaming', abbr: 'EDG' },
@@ -51,8 +51,8 @@ const TEAM_NAMES = {
         { name: 'All Gamers', abbr: 'AG' },
         { name: 'Wolves Esports', abbr: 'WOL' },
         { name: 'TyLoo', abbr: 'TYL' },
-        { name: 'XLG Esports ', abbr: 'XLG' },
-        { name: 'Titan Esports', abbr: 'TITN' }
+        { name: 'Four Angry Men', abbr: '4AM' },
+        { name: 'RA Esports', abbr: 'RA' }
     ],
     APAC: [
         { name: 'DRX', abbr: 'DRX' },
@@ -63,10 +63,10 @@ const TEAM_NAMES = {
         { name: 'DetonatioN FocusMe', abbr: 'DFM' },
         { name: 'Global Esports', abbr: 'GE' },
         { name: 'Team Secret', abbr: 'TS' },
-        { name: 'NS RedForce', abbr: 'NS' },
-        { name: 'Varrel', abbr: 'VRL' },
+        { name: 'BLEED Esports', abbr: 'BLD' },
+        { name: 'Talon Esports', abbr: 'TLN' },
         { name: 'Rex Regum Qeon', abbr: 'RRQ' },
-        { name: 'Full Sense', abbr: 'FULL' }
+        { name: 'Boom Esports', abbr: 'BOOM' }
     ]
 };
 
@@ -1192,14 +1192,20 @@ class Game {
 
 let selectedRegion = 'AMERICAS';
 let currentRoleFilter = 'all';
+let previewState = null; // Store preview state for team selection
 
 function showScreen(id) {
     document.querySelectorAll('.game-container').forEach(el => el.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    const screen = document.getElementById(id);
+    if (screen) {
+        screen.classList.add('active');
+    }
 }
 
 function showStartScreen() { showScreen('start-screen'); }
 function showTeamSelection() {
+    // Generate preview state once when entering team selection
+    previewState = generateGameState();
     showScreen('team-selection');
     renderTeamGrid();
 }
@@ -1241,16 +1247,18 @@ function loadGame(slot) {
 
 function renderTeamGrid() {
     const grid = document.getElementById('teams-grid');
-    const infos = TEAM_NAMES[selectedRegion];
+    if (!grid) return;
     
-    // Generate temp data for preview
-    const state = generateGameState();
-    const tids = state.regionTeamIds[selectedRegion];
+    if (!previewState) {
+        previewState = generateGameState();
+    }
+    
+    const tids = previewState.regionTeamIds[selectedRegion];
     
     grid.innerHTML = tids.map(tid => {
-        const team = state.teams[tid];
+        const team = previewState.teams[tid];
         const tierClass = `tier-${team.tier}`;
-        const overall = team.getOverall(state.players);
+        const overall = team.getOverall(previewState.players);
         
         return `
             <div class="team-card" onclick="selectTeam('${tid}', '${selectedRegion}')">
@@ -1264,39 +1272,69 @@ function renderTeamGrid() {
 }
 
 function selectTeam(teamId, region) {
+    console.log('selectTeam called:', teamId, region);
+    
+    if (!previewState) {
+        console.error('No preview state available');
+        return;
+    }
+    
+    // Use the preview state directly instead of generating a new one
     game = new Game();
-    game.newGame(teamId, region);
+    game.teams = previewState.teams;
+    game.players = previewState.players;
+    game.regionTeamIds = previewState.regionTeamIds;
+    game.freeAgentIds = previewState.freeAgentIds;
+    
+    game.playerTeamId = teamId;
+    game.playerRegion = region;
+    game.teams[teamId].isPlayerTeam = true;
+    
+    for (const tid of Object.keys(game.teams)) {
+        game.seasonPoints[tid] = 0;
+    }
+    
+    game.addEvent('game_start', `Welcome to ${game.teams[teamId].name}! Season ${game.season} begins.`);
+    game.phase = 'kickoff';
+    game.startKickoff();
+    
     game.save();
+    previewState = null; // Clear preview state
     showGameScreen();
 }
 
-// Region tabs
-document.querySelectorAll('.region-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.region-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        selectedRegion = tab.dataset.region;
-        renderTeamGrid();
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Valorant GM Simulator loaded');
+    
+    // Region tabs
+    document.querySelectorAll('.region-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.region-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            selectedRegion = tab.dataset.region;
+            renderTeamGrid();
+        });
     });
-});
 
-// Nav tabs
-document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    // Nav tabs
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        });
     });
-});
 
-// FA filters
-document.querySelectorAll('.fa-filter').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.fa-filter').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentRoleFilter = btn.dataset.role;
-        renderFreeAgents();
+    // FA filters
+    document.querySelectorAll('.fa-filter').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.fa-filter').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentRoleFilter = btn.dataset.role;
+            renderFreeAgents();
+        });
     });
 });
 
@@ -1625,8 +1663,3 @@ function showResultsModal(results) {
 function closeResultsModal() {
     document.getElementById('results-modal').classList.remove('active');
 }
-
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('Valorant GM Simulator loaded');
-});
