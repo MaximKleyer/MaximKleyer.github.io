@@ -1,6 +1,6 @@
 /**
- * Valorant GM Simulator - Bundled Game Script
- * All game logic in a single file for GitHub Pages compatibility
+ * Valorant GM Simulator - Complete Game Bundle v2.0
+ * Full VCT Tournament System with Bracket Visualization
  */
 
 // ============================================================================
@@ -87,13 +87,33 @@ const FIRST_NAMES = [
 
 const IGN_STYLES = ['', 'x', 'z', '_', '1', '2', 'gg', 'tv', 'pro', 'god', 'ace', 'king', 'boss'];
 
+// Points awarded per tournament placement
 const POINTS_TABLE = {
     kickoff: { 1: 3, 2: 2, 3: 1 },
     masters_1: { 1: 5, 2: 3, 3: 2, 4: 1 },
-    stage_1: { 1: 5, 2: 3, 3: 2, 4: 1 },
+    stage_1: { 1: 5, 2: 3, 3: 2, 4: 1 }, // Plus +1 per group win
     masters_2: { 1: 7, 2: 5, 3: 4, 4: 3, 5: 2, 6: 2 },
-    stage_2: { 1: 7, 2: 5, 3: 4, 4: 3 }
+    stage_2: { 1: 7, 2: 5, 3: 4, 4: 3 } // Plus +1 per group win
 };
+
+// Phase order for the season
+const PHASE_ORDER = [
+    'roster_kickoff',    // Roster changes before Kickoff
+    'kickoff',           // Kickoff tournament
+    'roster_masters1',   // Roster changes before Masters 1
+    'masters_1',         // Masters 1 (international)
+    'groups_stage1',     // Group reveal for Stage 1
+    'stage_1_groups',    // Stage 1 group play
+    'stage_1_playoffs',  // Stage 1 playoffs
+    'roster_masters2',   // Roster changes before Masters 2
+    'masters_2',         // Masters 2 (international)
+    'groups_stage2',     // Group reveal for Stage 2
+    'stage_2_groups',    // Stage 2 group play
+    'stage_2_playoffs',  // Stage 2 playoffs
+    'roster_worlds',     // Roster changes before Worlds
+    'worlds',            // Worlds (international)
+    'offseason'          // End of season
+];
 
 // ============================================================================
 // UTILITY FUNCTIONS
@@ -125,6 +145,12 @@ function generateIGN() {
         () => name[0].toUpperCase() + name.slice(1, randInt(4, 6)).toLowerCase()
     ];
     return formats[randInt(0, formats.length - 1)]();
+}
+
+function ordinal(n) {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
 // ============================================================================
@@ -250,12 +276,10 @@ class MatchStats {
     get kad() { return this.deaths > 0 ? ((this.kills + this.assists) / this.deaths).toFixed(2) : (this.kills + this.assists).toFixed(2); }
     get kast() { return this.roundsPlayed > 0 ? ((this.roundsWithKAST / this.roundsPlayed) * 100).toFixed(1) : '0.0'; }
     get adr() { return this.roundsPlayed > 0 ? (this.damageDealt / this.roundsPlayed).toFixed(1) : '0.0'; }
-    get ddDelta() { return this.roundsPlayed > 0 ? ((this.damageDealt - this.damageReceived) / this.roundsPlayed).toFixed(1) : '0.0'; }
     get headshotPct() {
         const total = this.headshots + this.bodyshots + this.legshots;
         return total > 0 ? ((this.headshots / total) * 100).toFixed(1) : '0.0';
     }
-    get killsPerRound() { return this.roundsPlayed > 0 ? (this.kills / this.roundsPlayed).toFixed(2) : '0.00'; }
     get acs() {
         if (this.roundsPlayed === 0) return 0;
         const score = this.damageDealt + this.kills * 50 + this.assists * 25 + this.firstBloods * 50 + this.threeKs * 50 + this.fourKs * 100 + this.aces * 200;
@@ -363,10 +387,22 @@ class TeamStats {
         this.roundsWon = 0;
         this.roundsLost = 0;
         this.seasonPoints = 0;
+        
+        // Tournament placements
+        this.kickoffPlace = null;
+        this.stage1Place = null;
+        this.stage2Place = null;
+        this.masters1Place = null;
+        this.masters2Place = null;
+        this.worldsPlace = null;
+        
+        // Group stage wins (for bonus points)
+        this.stage1GroupWins = 0;
+        this.stage2GroupWins = 0;
     }
 
-    get matchRecord() { return `${this.matchesWon}-${this.matchesLost}`; }
-    get mapRecord() { return `${this.mapsWon}-${this.mapsLost}`; }
+    get matchRecord() { return this.matchesWon + '-' + this.matchesLost; }
+    get mapRecord() { return this.mapsWon + '-' + this.mapsLost; }
 
     reset() {
         this.matchesWon = 0;
@@ -376,6 +412,14 @@ class TeamStats {
         this.roundsWon = 0;
         this.roundsLost = 0;
         this.seasonPoints = 0;
+        this.kickoffPlace = null;
+        this.stage1Place = null;
+        this.stage2Place = null;
+        this.masters1Place = null;
+        this.masters2Place = null;
+        this.worldsPlace = null;
+        this.stage1GroupWins = 0;
+        this.stage2GroupWins = 0;
     }
 }
 
@@ -427,7 +471,7 @@ class Team {
     get capSpace() { return this.finances.yearlyBudget - this.yearlySalary; }
 
     addPlayer(playerId, contract) {
-        if (this.roster.length >= 6) return false;
+        if (this.roster.length >= 7) return false;
         this.roster.push(playerId);
         this.contracts[playerId] = contract;
         return true;
@@ -444,7 +488,6 @@ class Team {
     }
 
     getStarters() { return this.roster.slice(0, 5); }
-    getSubstitute() { return this.roster.length > 5 ? this.roster[5] : null; }
 
     updateTeamMorale(players) {
         if (this.roster.length === 0) { this.teamMorale = 50; return; }
@@ -479,11 +522,6 @@ class MatchEngine {
         };
     }
 
-    pickAgent(player) {
-        const agents = this.agents[player.role] || this.agents.Duelist;
-        return agents[randInt(0, agents.length - 1)];
-    }
-
     selectMap(played = []) {
         const available = MAPS.filter(m => !played.includes(m));
         return available.length > 0 ? available[randInt(0, available.length - 1)] : MAPS[randInt(0, MAPS.length - 1)];
@@ -516,7 +554,6 @@ class MatchEngine {
 
         const team1Wins = Math.random() < t1WinProb;
         
-        // Generate player stats for this round
         const roundStats = {};
         const allPlayers = [...team1.getStarters(), ...team2.getStarters()];
         const winners = team1Wins ? team1.getStarters() : team2.getStarters();
@@ -529,7 +566,6 @@ class MatchEngine {
             };
         }
 
-        // Deaths: losers die more
         const loserDeaths = randInt(3, 5);
         const winnerDeaths = randInt(0, Math.min(loserDeaths - 1, 4));
 
@@ -543,7 +579,6 @@ class MatchEngine {
             roundStats[shuffledWinners[i]].deaths = 1;
         }
 
-        // Kills distribution
         const totalKills = loserDeaths + winnerDeaths;
         const killers = allPlayers.filter(pid => roundStats[pid].deaths === 0);
 
@@ -558,7 +593,6 @@ class MatchEngine {
             else roundStats[killer].legshots++;
         }
 
-        // Damage and KAST
         for (const pid of allPlayers) {
             const s = roundStats[pid];
             s.damage = s.kills * randInt(130, 170) + (s.deaths === 0 ? randInt(0, 80) : 0);
@@ -566,7 +600,6 @@ class MatchEngine {
             s.survived = s.deaths === 0;
             s.kast = s.survived || s.kills > 0 || (s.deaths === 1 && s.kills > 0);
             
-            // Assists for survivors without kills
             if (s.deaths === 0 && s.kills === 0 && Math.random() < 0.4) {
                 s.assists = 1;
                 s.kast = true;
@@ -576,10 +609,9 @@ class MatchEngine {
         return { winner: team1Wins ? team1.id : team2.id, stats: roundStats };
     }
 
-    simulateMap(team1, team2, players) {
-        const mapName = this.selectMap();
+    simulateMap(team1, team2, players, mapName = null) {
+        if (!mapName) mapName = this.selectMap();
         let t1Score = 0, t2Score = 0;
-        const rounds = [];
         let t1Attacking = Math.random() < 0.5;
         let roundNum = 0;
 
@@ -594,12 +626,10 @@ class MatchEngine {
             if (roundNum > 24 && (roundNum - 25) % 2 === 0) t1Attacking = !t1Attacking;
 
             const result = this.simulateRound(team1, team2, players, mapName, t1Attacking);
-            rounds.push(result);
 
             if (result.winner === team1.id) t1Score++;
             else t2Score++;
 
-            // Aggregate stats
             for (const [pid, s] of Object.entries(result.stats)) {
                 const ms = playerMapStats[pid];
                 if (ms) {
@@ -619,7 +649,6 @@ class MatchEngine {
                 }
             }
 
-            // Check OT
             if (t1Score >= 12 && t2Score >= 12 && Math.abs(t1Score - t2Score) < 2) continue;
         }
 
@@ -628,8 +657,9 @@ class MatchEngine {
             team1Score: t1Score,
             team2Score: t2Score,
             winner: t1Score > t2Score ? team1.id : team2.id,
-            playerStats: playerMapStats,
-            rounds
+            loser: t1Score > t2Score ? team2.id : team1.id,
+            score: t1Score + '-' + t2Score,
+            playerStats: playerMapStats
         };
     }
 
@@ -645,9 +675,10 @@ class MatchEngine {
         }
 
         while (t1Wins < winsNeeded && t2Wins < winsNeeded) {
-            const mapResult = this.simulateMap(team1, team2, players);
+            const mapName = this.selectMap(playedMaps);
+            playedMaps.push(mapName);
+            const mapResult = this.simulateMap(team1, team2, players, mapName);
             maps.push(mapResult);
-            playedMaps.push(mapResult.mapName);
 
             if (mapResult.winner === team1.id) t1Wins++;
             else t2Wins++;
@@ -667,7 +698,7 @@ class MatchEngine {
             team2Wins: t2Wins,
             winnerId,
             loserId,
-            score: `${t1Wins}-${t2Wins}`,
+            score: t1Wins + '-' + t2Wins,
             maps,
             playerStats: seriesStats
         };
@@ -679,10 +710,14 @@ class MatchEngine {
 
         winner.seasonStats.matchesWon++;
         loser.seasonStats.matchesLost++;
-        winner.seasonStats.mapsWon += result.team1Wins > result.team2Wins ? result.team1Wins : result.team2Wins;
-        winner.seasonStats.mapsLost += result.team1Wins > result.team2Wins ? result.team2Wins : result.team1Wins;
-        loser.seasonStats.mapsWon += result.team1Wins > result.team2Wins ? result.team2Wins : result.team1Wins;
-        loser.seasonStats.mapsLost += result.team1Wins > result.team2Wins ? result.team1Wins : result.team2Wins;
+        
+        const winnerMaps = result.team1Wins > result.team2Wins ? result.team1Wins : result.team2Wins;
+        const loserMaps = result.team1Wins > result.team2Wins ? result.team2Wins : result.team1Wins;
+        
+        winner.seasonStats.mapsWon += winnerMaps;
+        winner.seasonStats.mapsLost += loserMaps;
+        loser.seasonStats.mapsWon += loserMaps;
+        loser.seasonStats.mapsLost += winnerMaps;
 
         winner.updateStreak(true);
         loser.updateStreak(false);
@@ -706,21 +741,41 @@ class MatchEngine {
 }
 
 // ============================================================================
-// TOURNAMENT SYSTEM
+// TOURNAMENT CLASSES
 // ============================================================================
 
+// Match object for tournament tracking
+class TournamentMatch {
+    constructor(team1Id, team2Id, bestOf = 3, roundName = '') {
+        this.id = generateId('match');
+        this.team1Id = team1Id;
+        this.team2Id = team2Id;
+        this.bestOf = bestOf;
+        this.roundName = roundName;
+        this.winnerId = null;
+        this.loserId = null;
+        this.score = null;
+        this.played = false;
+        this.seriesResult = null;
+    }
+}
+
+// Triple Elimination Bracket (Kickoff)
 class TripleElimBracket {
     constructor(teamIds) {
         this.teamIds = [...teamIds];
         this.losses = {};
         this.placements = {};
-        this.matches = [];
+        this.completedMatches = [];
+        this.currentRound = 0;
         this.isComplete = false;
 
         for (const id of teamIds) this.losses[id] = 0;
     }
 
-    getActive() { return this.teamIds.filter(id => this.losses[id] < 3); }
+    getActive() { 
+        return this.teamIds.filter(id => this.losses[id] < 3 && !this.placements[id]); 
+    }
 
     generateMatches() {
         const active = this.getActive();
@@ -730,6 +785,7 @@ class TripleElimBracket {
             return [];
         }
 
+        this.currentRound++;
         const byLosses = { 0: [], 1: [], 2: [] };
         for (const id of active) byLosses[this.losses[id]].push(id);
 
@@ -737,28 +793,365 @@ class TripleElimBracket {
         for (let l = 0; l <= 2; l++) {
             const pool = [...byLosses[l]].sort(() => Math.random() - 0.5);
             while (pool.length >= 2) {
-                matches.push({ id: generateId('match'), team1: pool.shift(), team2: pool.pop(), bestOf: 3 });
+                const roundName = l === 0 ? 'Winners Round ' + this.currentRound : 
+                                  l === 1 ? 'Losers Round ' + this.currentRound : 
+                                  'Elimination Round ' + this.currentRound;
+                matches.push(new TournamentMatch(pool.shift(), pool.pop(), 3, roundName));
             }
         }
-        this.matches.push(...matches);
         return matches;
     }
 
-    recordResult(matchId, winnerId) {
-        const match = this.matches.find(m => m.id === matchId);
-        if (!match) return;
+    recordResult(match, seriesResult) {
+        match.winnerId = seriesResult.winnerId;
+        match.loserId = seriesResult.loserId;
+        match.score = seriesResult.score;
+        match.played = true;
+        match.seriesResult = seriesResult;
+        
+        this.completedMatches.push(match);
+        this.losses[match.loserId]++;
 
-        const loserId = match.team1 === winnerId ? match.team2 : match.team1;
-        this.losses[loserId]++;
-
-        if (this.losses[loserId] >= 3) {
-            this.placements[loserId] = this.getActive().length + 1;
+        if (this.losses[match.loserId] >= 3) {
+            const remaining = this.getActive().length + 1;
+            this.placements[match.loserId] = remaining;
         }
 
-        if (this.getActive().length === 1) {
-            this.placements[this.getActive()[0]] = 1;
+        if (this.getActive().length <= 1) {
+            const winner = this.getActive()[0];
+            if (winner) this.placements[winner] = 1;
             this.isComplete = true;
         }
+    }
+}
+
+// Swiss Bracket (for Masters and Worlds groups)
+class SwissBracket {
+    constructor(teamIds, winsNeeded = 3, lossesOut = 3) {
+        this.teamIds = [...teamIds];
+        this.winsNeeded = winsNeeded;
+        this.lossesOut = lossesOut;
+        this.records = {};
+        this.completedMatches = [];
+        this.qualified = [];
+        this.eliminated = [];
+        this.currentRound = 0;
+        this.isComplete = false;
+
+        for (const id of teamIds) {
+            this.records[id] = { wins: 0, losses: 0 };
+        }
+    }
+
+    getActive() {
+        return this.teamIds.filter(id => 
+            !this.qualified.includes(id) && !this.eliminated.includes(id)
+        );
+    }
+
+    generateMatches() {
+        const active = this.getActive();
+        if (active.length < 2 || this.isComplete) {
+            this.isComplete = true;
+            return [];
+        }
+
+        this.currentRound++;
+        const byRecord = {};
+        for (const id of active) {
+            const key = this.records[id].wins + '-' + this.records[id].losses;
+            if (!byRecord[key]) byRecord[key] = [];
+            byRecord[key].push(id);
+        }
+
+        const matches = [];
+        const paired = new Set();
+
+        const sortedKeys = Object.keys(byRecord).sort((a, b) => {
+            const [aW] = a.split('-').map(Number);
+            const [bW] = b.split('-').map(Number);
+            return bW - aW;
+        });
+
+        for (const key of sortedKeys) {
+            const pool = byRecord[key].filter(id => !paired.has(id)).sort(() => Math.random() - 0.5);
+            while (pool.length >= 2) {
+                const t1 = pool.shift();
+                const t2 = pool.pop();
+                matches.push(new TournamentMatch(t1, t2, 3, 'Swiss Round ' + this.currentRound));
+                paired.add(t1);
+                paired.add(t2);
+            }
+        }
+
+        return matches;
+    }
+
+    recordResult(match, seriesResult) {
+        match.winnerId = seriesResult.winnerId;
+        match.loserId = seriesResult.loserId;
+        match.score = seriesResult.score;
+        match.played = true;
+        match.seriesResult = seriesResult;
+        
+        this.completedMatches.push(match);
+        this.records[match.winnerId].wins++;
+        this.records[match.loserId].losses++;
+
+        if (this.records[match.winnerId].wins >= this.winsNeeded) {
+            if (!this.qualified.includes(match.winnerId)) {
+                this.qualified.push(match.winnerId);
+            }
+        }
+
+        if (this.records[match.loserId].losses >= this.lossesOut) {
+            if (!this.eliminated.includes(match.loserId)) {
+                this.eliminated.push(match.loserId);
+            }
+        }
+
+        if (this.getActive().length === 0) {
+            this.isComplete = true;
+        }
+    }
+}
+
+// Double Elimination Bracket (for playoffs)
+class DoubleElimBracket {
+    constructor(seedOrder) {
+        this.seeds = [...seedOrder];
+        this.upperBracket = [];
+        this.lowerBracket = [];
+        this.grandFinal = null;
+        this.completedMatches = [];
+        this.placements = {};
+        this.isComplete = false;
+        this.currentRound = 0;
+        this.pendingMatches = [];
+        
+        this.initBracket();
+    }
+
+    initBracket() {
+        // For 8 teams: UB R1 has 4 matches
+        const n = this.seeds.length;
+        if (n === 8) {
+            this.pendingMatches = [
+                new TournamentMatch(this.seeds[0], this.seeds[7], 3, 'Upper Round 1'),
+                new TournamentMatch(this.seeds[3], this.seeds[4], 3, 'Upper Round 1'),
+                new TournamentMatch(this.seeds[1], this.seeds[6], 3, 'Upper Round 1'),
+                new TournamentMatch(this.seeds[2], this.seeds[5], 3, 'Upper Round 1')
+            ];
+            this.upperBracket.push([...this.pendingMatches]);
+        }
+    }
+
+    generateMatches() {
+        return this.pendingMatches.filter(m => !m.played);
+    }
+
+    recordResult(match, seriesResult) {
+        match.winnerId = seriesResult.winnerId;
+        match.loserId = seriesResult.loserId;
+        match.score = seriesResult.score;
+        match.played = true;
+        match.seriesResult = seriesResult;
+        
+        this.completedMatches.push(match);
+        this.progressBracket(match);
+    }
+
+    progressBracket(match) {
+        // Simple 8-team double elim progression
+        const ubR1 = this.upperBracket[0] || [];
+        const ubR1Done = ubR1.every(m => m.played);
+
+        if (ubR1Done && !this.upperBracket[1]) {
+            // Create UB Semis
+            const winners = ubR1.map(m => m.winnerId);
+            const losers = ubR1.map(m => m.loserId);
+            
+            this.upperBracket[1] = [
+                new TournamentMatch(winners[0], winners[1], 3, 'Upper Semifinal'),
+                new TournamentMatch(winners[2], winners[3], 3, 'Upper Semifinal')
+            ];
+            this.pendingMatches.push(...this.upperBracket[1]);
+            
+            // Create LB R1
+            this.lowerBracket[0] = [
+                new TournamentMatch(losers[0], losers[1], 3, 'Lower Round 1'),
+                new TournamentMatch(losers[2], losers[3], 3, 'Lower Round 1')
+            ];
+            this.pendingMatches.push(...this.lowerBracket[0]);
+        }
+
+        const ubR2 = this.upperBracket[1] || [];
+        const lbR1 = this.lowerBracket[0] || [];
+        const ubR2Done = ubR2.length > 0 && ubR2.every(m => m.played);
+        const lbR1Done = lbR1.length > 0 && lbR1.every(m => m.played);
+
+        if (ubR2Done && lbR1Done && !this.upperBracket[2]) {
+            // UB Final
+            this.upperBracket[2] = [
+                new TournamentMatch(ubR2[0].winnerId, ubR2[1].winnerId, 3, 'Upper Final')
+            ];
+            this.pendingMatches.push(...this.upperBracket[2]);
+            
+            // LB R2 (LB winners vs UB losers)
+            this.lowerBracket[1] = [
+                new TournamentMatch(lbR1[0].winnerId, ubR2[0].loserId, 3, 'Lower Round 2'),
+                new TournamentMatch(lbR1[1].winnerId, ubR2[1].loserId, 3, 'Lower Round 2')
+            ];
+            this.pendingMatches.push(...this.lowerBracket[1]);
+            
+            // Eliminate LB R1 losers
+            for (const m of lbR1) {
+                this.placements[m.loserId] = 7; // 7th-8th
+            }
+        }
+
+        const ubFinal = this.upperBracket[2] || [];
+        const lbR2 = this.lowerBracket[1] || [];
+        const ubFinalDone = ubFinal.length > 0 && ubFinal.every(m => m.played);
+        const lbR2Done = lbR2.length > 0 && lbR2.every(m => m.played);
+
+        if (ubFinalDone && lbR2Done && !this.lowerBracket[2]) {
+            // LB Semifinal
+            this.lowerBracket[2] = [
+                new TournamentMatch(lbR2[0].winnerId, lbR2[1].winnerId, 3, 'Lower Semifinal')
+            ];
+            this.pendingMatches.push(...this.lowerBracket[2]);
+            
+            // Eliminate LB R2 losers
+            for (const m of lbR2) {
+                this.placements[m.loserId] = 5; // 5th-6th
+            }
+        }
+
+        const lbSemi = this.lowerBracket[2] || [];
+        const lbSemiDone = lbSemi.length > 0 && lbSemi.every(m => m.played);
+
+        if (ubFinalDone && lbSemiDone && !this.lowerBracket[3]) {
+            // LB Final (LB semi winner vs UB Final loser)
+            this.lowerBracket[3] = [
+                new TournamentMatch(lbSemi[0].winnerId, ubFinal[0].loserId, 3, 'Lower Final')
+            ];
+            this.pendingMatches.push(...this.lowerBracket[3]);
+            
+            // Eliminate LB semi loser
+            this.placements[lbSemi[0].loserId] = 4;
+        }
+
+        const lbFinal = this.lowerBracket[3] || [];
+        const lbFinalDone = lbFinal.length > 0 && lbFinal.every(m => m.played);
+
+        if (ubFinalDone && lbFinalDone && !this.grandFinal) {
+            // Grand Final (UB winner vs LB winner) - BO5
+            this.grandFinal = new TournamentMatch(ubFinal[0].winnerId, lbFinal[0].winnerId, 5, 'Grand Final');
+            this.pendingMatches.push(this.grandFinal);
+            
+            // Eliminate LB final loser
+            this.placements[lbFinal[0].loserId] = 3;
+        }
+
+        if (this.grandFinal && this.grandFinal.played) {
+            this.placements[this.grandFinal.winnerId] = 1;
+            this.placements[this.grandFinal.loserId] = 2;
+            this.isComplete = true;
+        }
+    }
+}
+
+// Group Stage (for Stage 1/2)
+class GroupStage {
+    constructor(groups, matchesPerPair = 2) {
+        // groups = { A: [teamIds], B: [teamIds] }
+        this.groups = groups;
+        this.matchesPerPair = matchesPerPair;
+        this.standings = {};
+        this.completedMatches = [];
+        this.pendingMatches = [];
+        this.isComplete = false;
+
+        for (const [groupName, teams] of Object.entries(groups)) {
+            this.standings[groupName] = teams.map(id => ({
+                teamId: id,
+                wins: 0,
+                losses: 0,
+                mapWins: 0,
+                mapLosses: 0
+            }));
+        }
+
+        this.generateAllMatches();
+    }
+
+    generateAllMatches() {
+        for (const [groupName, teams] of Object.entries(this.groups)) {
+            for (let i = 0; i < teams.length; i++) {
+                for (let j = i + 1; j < teams.length; j++) {
+                    for (let k = 0; k < this.matchesPerPair; k++) {
+                        const t1 = k % 2 === 0 ? teams[i] : teams[j];
+                        const t2 = k % 2 === 0 ? teams[j] : teams[i];
+                        this.pendingMatches.push(new TournamentMatch(t1, t2, 3, 'Group ' + groupName));
+                    }
+                }
+            }
+        }
+    }
+
+    generateMatches(count = 6) {
+        return this.pendingMatches.filter(m => !m.played).slice(0, count);
+    }
+
+    recordResult(match, seriesResult) {
+        match.winnerId = seriesResult.winnerId;
+        match.loserId = seriesResult.loserId;
+        match.score = seriesResult.score;
+        match.played = true;
+        match.seriesResult = seriesResult;
+        
+        this.completedMatches.push(match);
+
+        // Update standings
+        for (const [groupName, teams] of Object.entries(this.groups)) {
+            if (teams.includes(match.winnerId) && teams.includes(match.loserId)) {
+                const ws = this.standings[groupName].find(s => s.teamId === match.winnerId);
+                const ls = this.standings[groupName].find(s => s.teamId === match.loserId);
+                
+                if (ws) {
+                    ws.wins++;
+                    ws.mapWins += seriesResult.team1Wins > seriesResult.team2Wins ? 
+                                  seriesResult.team1Wins : seriesResult.team2Wins;
+                    ws.mapLosses += seriesResult.team1Wins > seriesResult.team2Wins ? 
+                                   seriesResult.team2Wins : seriesResult.team1Wins;
+                }
+                if (ls) {
+                    ls.losses++;
+                    ls.mapWins += seriesResult.team1Wins > seriesResult.team2Wins ? 
+                                  seriesResult.team2Wins : seriesResult.team1Wins;
+                    ls.mapLosses += seriesResult.team1Wins > seriesResult.team2Wins ? 
+                                   seriesResult.team1Wins : seriesResult.team2Wins;
+                }
+                break;
+            }
+        }
+
+        if (this.pendingMatches.every(m => m.played)) {
+            this.isComplete = true;
+        }
+    }
+
+    getGroupStandings(groupName) {
+        const standings = this.standings[groupName] || [];
+        return [...standings].sort((a, b) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            return (b.mapWins - b.mapLosses) - (a.mapWins - a.mapLosses);
+        });
+    }
+
+    getTop(groupName, n) {
+        return this.getGroupStandings(groupName).slice(0, n).map(s => s.teamId);
     }
 }
 
@@ -777,7 +1170,9 @@ function generatePlayer(region, role, tier = 'average') {
 function generateRoster(region, tier) {
     const roles = ['Duelist', 'Initiator', 'Controller', 'Sentinel', 'Initiator'];
     const players = roles.map(role => generatePlayer(region, role, tier));
-    if (Math.random() < 0.5) {
+    // Add 1-2 more players for bench
+    const extraCount = randInt(1, 2);
+    for (let i = 0; i < extraCount; i++) {
         players.push(generatePlayer(region, ROLES[randInt(0, 3)], tier === 'star' ? 'good' : 'average'));
     }
     return players;
@@ -869,21 +1264,25 @@ class Game {
         this.playerTeamId = null;
         this.playerRegion = null;
         this.matchEngine = new MatchEngine();
+        
         this.season = 1;
         this.week = 1;
-        this.phase = 'preseason';
+        this.phase = 'roster_kickoff';
+        this.phaseIndex = 0;
+        
         this.tournament = null;
+        this.tournamentType = null;
         this.seasonPoints = {};
         this.events = [];
+        
+        // For group reveals
+        this.currentGroups = null;
+        
+        // Roster lock state
+        this.rosterLocked = false;
     }
 
     newGame(teamId, region) {
-        const state = generateGameState();
-        this.teams = state.teams;
-        this.players = state.players;
-        this.regionTeamIds = state.regionTeamIds;
-        this.freeAgentIds = state.freeAgentIds;
-
         this.playerTeamId = teamId;
         this.playerRegion = region;
         this.teams[teamId].isPlayerTeam = true;
@@ -892,12 +1291,23 @@ class Game {
             this.seasonPoints[tid] = 0;
         }
 
-        this.addEvent('game_start', `Welcome to ${this.teams[teamId].name}! Season ${this.season} begins.`);
-        this.phase = 'kickoff';
-        this.startKickoff();
+        this.addEvent('game_start', 'Welcome to ' + this.teams[teamId].name + '! Season ' + this.season + ' begins.');
+        this.addEvent('roster_period', 'Roster changes are now open. Prepare your team for Kickoff!');
+        
+        this.phase = 'roster_kickoff';
+        this.phaseIndex = 0;
+        this.rosterLocked = false;
     }
 
     get playerTeam() { return this.teams[this.playerTeamId]; }
+
+    isRosterPhase() {
+        return this.phase.startsWith('roster_') || this.phase === 'offseason';
+    }
+
+    canModifyRoster() {
+        return this.isRosterPhase();
+    }
 
     getTeamRoster(teamId) {
         const team = this.teams[teamId];
@@ -917,14 +1327,22 @@ class Game {
 
     getRecentEvents(n = 20) { return this.events.slice(-n); }
 
+    // =========================================================================
+    // ROSTER MANAGEMENT
+    // =========================================================================
+
     signPlayer(playerId, salary, years) {
+        if (!this.canModifyRoster()) {
+            return { success: false, msg: 'Roster is locked during events' };
+        }
+        
         const player = this.players[playerId];
         const team = this.playerTeam;
         if (!player || !team) return { success: false, msg: 'Invalid' };
 
         const faIds = this.freeAgentIds[this.playerRegion] || [];
         if (!faIds.includes(playerId)) return { success: false, msg: 'Not a free agent' };
-        if (team.roster.length >= 6) return { success: false, msg: 'Roster full' };
+        if (team.roster.length >= 7) return { success: false, msg: 'Roster full (max 7)' };
         if (salary > team.capSpace) return { success: false, msg: 'Cannot afford' };
 
         const contract = new Contract(playerId, team.id, salary, years);
@@ -934,15 +1352,18 @@ class Game {
         const idx = faIds.indexOf(playerId);
         if (idx > -1) faIds.splice(idx, 1);
 
-        this.addEvent('signing', `Signed ${player.name} (${formatMoney(salary)}/yr, ${years}yr)`);
-        return { success: true, msg: `Signed ${player.name}` };
+        this.addEvent('signing', 'Signed ' + player.name + ' (' + formatMoney(salary) + '/yr, ' + years + 'yr)');
+        return { success: true, msg: 'Signed ' + player.name };
     }
 
     releasePlayer(playerId) {
+        if (!this.canModifyRoster()) {
+            return { success: false, msg: 'Roster is locked during events' };
+        }
+        
         const player = this.players[playerId];
         const team = this.playerTeam;
         if (!player || !team) return { success: false, msg: 'Invalid' };
-        if (team.roster.length <= 5) return { success: false, msg: 'Need 5 players' };
 
         team.removePlayer(playerId);
         player.teamId = null;
@@ -950,8 +1371,8 @@ class Game {
         if (!this.freeAgentIds[this.playerRegion]) this.freeAgentIds[this.playerRegion] = [];
         this.freeAgentIds[this.playerRegion].push(playerId);
 
-        this.addEvent('release', `Released ${player.name}`);
-        return { success: true, msg: `Released ${player.name}` };
+        this.addEvent('release', 'Released ' + player.name);
+        return { success: true, msg: 'Released ' + player.name };
     }
 
     getMarketValue(playerId) {
@@ -968,13 +1389,107 @@ class Game {
         return Math.round(val);
     }
 
-    startKickoff() {
-        const teamIds = this.regionTeamIds[this.playerRegion];
-        this.tournament = new TripleElimBracket(teamIds);
-        this.addEvent('tournament', 'Kickoff begins!');
+    // =========================================================================
+    // PHASE MANAGEMENT
+    // =========================================================================
+
+    canAdvance() {
+        // During roster phases, need 5-7 players to advance
+        if (this.isRosterPhase()) {
+            const rosterSize = this.playerTeam.roster.length;
+            if (rosterSize < 5 || rosterSize > 7) {
+                return { can: false, reason: 'Need 5-7 players to continue (currently ' + rosterSize + ')' };
+            }
+        }
+        return { can: true };
+    }
+
+    advancePhase() {
+        const check = this.canAdvance();
+        if (!check.can) {
+            return { success: false, msg: check.reason, results: [] };
+        }
+
+        this.phaseIndex++;
+        if (this.phaseIndex >= PHASE_ORDER.length) {
+            this.startNewSeason();
+            return { success: true, msg: 'New season started!', results: [] };
+        }
+
+        this.phase = PHASE_ORDER[this.phaseIndex];
+        this.week++;
+
+        // Initialize the new phase
+        return this.initializePhase();
+    }
+
+    initializePhase() {
+        const results = [];
+        
+        switch (this.phase) {
+            case 'roster_kickoff':
+            case 'roster_masters1':
+            case 'roster_masters2':
+            case 'roster_worlds':
+                this.rosterLocked = false;
+                this.addEvent('roster_period', 'Roster changes are now open.');
+                break;
+                
+            case 'kickoff':
+                this.rosterLocked = true;
+                this.startKickoff();
+                break;
+                
+            case 'masters_1':
+            case 'masters_2':
+                this.rosterLocked = true;
+                this.startMasters();
+                break;
+                
+            case 'groups_stage1':
+                this.rosterLocked = false;
+                this.setupStage1Groups();
+                this.addEvent('groups_reveal', 'Stage 1 groups have been drawn!');
+                break;
+                
+            case 'groups_stage2':
+                this.rosterLocked = false;
+                this.setupStage2Groups();
+                this.addEvent('groups_reveal', 'Stage 2 groups have been drawn!');
+                break;
+                
+            case 'stage_1_groups':
+            case 'stage_2_groups':
+                this.rosterLocked = true;
+                this.startStageGroups();
+                break;
+                
+            case 'stage_1_playoffs':
+            case 'stage_2_playoffs':
+                this.rosterLocked = true;
+                this.startStagePlayoffs();
+                break;
+                
+            case 'worlds':
+                this.rosterLocked = true;
+                this.startWorlds();
+                break;
+                
+            case 'offseason':
+                this.rosterLocked = false;
+                this.processOffseason();
+                break;
+        }
+        
+        return { success: true, msg: 'Advanced to ' + this.phase, results };
     }
 
     advanceWeek() {
+        // If in roster phase, just advance to next phase
+        if (this.isRosterPhase() || this.phase.startsWith('groups_stage')) {
+            return this.advancePhase();
+        }
+
         this.week++;
         const results = [];
 
@@ -982,24 +1497,27 @@ class Game {
             const matches = this.tournament.generateMatches();
 
             for (const match of matches) {
-                const t1 = this.teams[match.team1];
-                const t2 = this.teams[match.team2];
-                const result = this.matchEngine.simulateSeries(t1, t2, this.players, match.bestOf);
-                this.matchEngine.applyResults(result, this.teams, this.players);
-                this.tournament.recordResult(match.id, result.winnerId);
+                const t1 = this.teams[match.team1Id];
+                const t2 = this.teams[match.team2Id];
+                const seriesResult = this.matchEngine.simulateSeries(t1, t2, this.players, match.bestOf);
+                this.matchEngine.applyResults(seriesResult, this.teams, this.players);
+                this.tournament.recordResult(match, seriesResult);
 
                 results.push({
+                    match: match,
                     team1: t1.name,
                     team2: t2.name,
-                    score: result.score,
-                    winner: this.teams[result.winnerId].name,
-                    isPlayerMatch: match.team1 === this.playerTeamId || match.team2 === this.playerTeamId
+                    score: seriesResult.score,
+                    winner: this.teams[seriesResult.winnerId].name,
+                    roundName: match.roundName,
+                    isPlayerMatch: match.team1Id === this.playerTeamId || match.team2Id === this.playerTeamId
                 });
 
-                if (match.team1 === this.playerTeamId || match.team2 === this.playerTeamId) {
-                    const won = result.winnerId === this.playerTeamId;
-                    const opp = match.team1 === this.playerTeamId ? t2.name : t1.name;
-                    this.addEvent(won ? 'match_win' : 'match_loss', `${won ? '✅ Victory' : '❌ Defeat'} vs ${opp} (${result.score})`);
+                if (match.team1Id === this.playerTeamId || match.team2Id === this.playerTeamId) {
+                    const won = seriesResult.winnerId === this.playerTeamId;
+                    const opp = match.team1Id === this.playerTeamId ? t2.name : t1.name;
+                    this.addEvent(won ? 'match_win' : 'match_loss', 
+                        (won ? '✅ Victory' : '❌ Defeat') + ' vs ' + opp + ' (' + seriesResult.score + ')');
                 }
             }
 
@@ -1008,58 +1526,200 @@ class Game {
             }
         }
 
-        // AI moves
-        if (Math.random() < 0.1) this.processAIMoves();
+        // AI moves during roster periods
+        if (this.isRosterPhase() && Math.random() < 0.15) {
+            this.processAIMoves();
+        }
 
-        return results;
+        return { success: true, msg: 'Week ' + this.week, results };
+    }
+
+    // =========================================================================
+    // TOURNAMENT INITIALIZATION
+    // =========================================================================
+
+    startKickoff() {
+        const teamIds = this.regionTeamIds[this.playerRegion];
+        this.tournament = new TripleElimBracket(teamIds);
+        this.tournamentType = 'kickoff';
+        this.addEvent('tournament', 'Kickoff Tournament begins!');
+    }
+
+    startMasters() {
+        // For simplicity, simulate international Masters with top 3 from each region
+        // Player's region teams qualify based on Kickoff placement
+        const qualified = [];
+        for (const region of REGIONS) {
+            const teamIds = this.regionTeamIds[region];
+            const sorted = [...teamIds].sort((a, b) => {
+                const aPlace = this.teams[a].seasonStats.kickoffPlace || 99;
+                const bPlace = this.teams[b].seasonStats.kickoffPlace || 99;
+                return aPlace - bPlace;
+            });
+            qualified.push(...sorted.slice(0, 3));
+        }
+        
+        this.tournament = new SwissBracket(qualified, 3, 3);
+        this.tournamentType = this.phase;
+        this.addEvent('tournament', this.phase.replace('_', ' ').toUpperCase() + ' begins!');
+    }
+
+    setupStage1Groups() {
+        // Group based on Kickoff placement
+        const teamIds = this.regionTeamIds[this.playerRegion];
+        const sorted = [...teamIds].sort((a, b) => {
+            const aPlace = this.teams[a].seasonStats.kickoffPlace || 99;
+            const bPlace = this.teams[b].seasonStats.kickoffPlace || 99;
+            return aPlace - bPlace;
+        });
+        
+        // Snake draft into 2 groups
+        const groupA = [];
+        const groupB = [];
+        for (let i = 0; i < sorted.length; i++) {
+            if (i % 4 === 0 || i % 4 === 3) groupA.push(sorted[i]);
+            else groupB.push(sorted[i]);
+        }
+        
+        this.currentGroups = { A: groupA, B: groupB };
+    }
+
+    setupStage2Groups() {
+        // Group based on total points
+        const teamIds = this.regionTeamIds[this.playerRegion];
+        const sorted = [...teamIds].sort((a, b) => {
+            return (this.seasonPoints[b] || 0) - (this.seasonPoints[a] || 0);
+        });
+        
+        const groupA = [];
+        const groupB = [];
+        for (let i = 0; i < sorted.length; i++) {
+            if (i % 4 === 0 || i % 4 === 3) groupA.push(sorted[i]);
+            else groupB.push(sorted[i]);
+        }
+        
+        this.currentGroups = { A: groupA, B: groupB };
+    }
+
+    startStageGroups() {
+        if (!this.currentGroups) {
+            // Fallback
+            this.setupStage1Groups();
+        }
+        this.tournament = new GroupStage(this.currentGroups, 2);
+        this.tournamentType = this.phase;
+        this.addEvent('tournament', this.phase.replace(/_/g, ' ').toUpperCase() + ' begins!');
+    }
+
+    startStagePlayoffs() {
+        // Get top 4 from each group
+        const gs = this.tournament;
+        const topA = gs.getTop('A', 4);
+        const topB = gs.getTop('B', 4);
+        
+        // Award group win bonus points
+        const stageType = this.phase.includes('1') ? 'stage_1' : 'stage_2';
+        for (const [groupName, standings] of Object.entries(gs.standings)) {
+            for (const s of standings) {
+                const team = this.teams[s.teamId];
+                if (stageType === 'stage_1') {
+                    team.seasonStats.stage1GroupWins = s.wins;
+                } else {
+                    team.seasonStats.stage2GroupWins = s.wins;
+                }
+                this.seasonPoints[s.teamId] = (this.seasonPoints[s.teamId] || 0) + s.wins;
+            }
+        }
+        
+        // Seed: 1A vs 4B, 2A vs 3B, 1B vs 4A, 2B vs 3A style
+        const seeds = [
+            topA[0], topB[3], topA[1], topB[2],
+            topB[0], topA[3], topB[1], topA[2]
+        ].filter(id => id);
+        
+        this.tournament = new DoubleElimBracket(seeds);
+        this.tournamentType = this.phase;
+        this.addEvent('tournament', 'Playoffs begin!');
+    }
+
+    startWorlds() {
+        // Top 4 from each region by points
+        const qualified = [];
+        for (const region of REGIONS) {
+            const teamIds = this.regionTeamIds[region];
+            const sorted = [...teamIds].sort((a, b) => {
+                return (this.seasonPoints[b] || 0) - (this.seasonPoints[a] || 0);
+            });
+            qualified.push(...sorted.slice(0, 4));
+        }
+        
+        this.tournament = new SwissBracket(qualified, 3, 3);
+        this.tournamentType = 'worlds';
+        this.addEvent('tournament', 'VALORANT Champions begins!');
     }
 
     finalizeTournament() {
-        const placements = this.tournament.placements;
-        const pointsTable = POINTS_TABLE[this.phase] || {};
+        const placements = this.tournament.placements || {};
+        const pointsTable = POINTS_TABLE[this.tournamentType] || {};
 
         for (const [tid, place] of Object.entries(placements)) {
             const pts = pointsTable[place] || 0;
             this.seasonPoints[tid] = (this.seasonPoints[tid] || 0) + pts;
             this.teams[tid].seasonStats.seasonPoints = this.seasonPoints[tid];
+            
+            // Store placement
+            const team = this.teams[tid];
+            switch (this.tournamentType) {
+                case 'kickoff': team.seasonStats.kickoffPlace = place; break;
+                case 'masters_1': team.seasonStats.masters1Place = place; break;
+                case 'masters_2': team.seasonStats.masters2Place = place; break;
+                case 'stage_1_playoffs': team.seasonStats.stage1Place = place; break;
+                case 'stage_2_playoffs': team.seasonStats.stage2Place = place; break;
+                case 'worlds': team.seasonStats.worldsPlace = place; break;
+            }
         }
 
         const playerPlace = placements[this.playerTeamId];
         if (playerPlace) {
             const pts = pointsTable[playerPlace] || 0;
-            this.addEvent('tournament_end', `${this.phase.toUpperCase()} complete! Finished ${playerPlace}${this.ordinal(playerPlace)} (+${pts} pts)`);
+            this.addEvent('tournament_end', 
+                this.tournamentType.replace(/_/g, ' ').toUpperCase() + ' complete! ' +
+                'Finished ' + ordinal(playerPlace) + ' (+' + pts + ' pts)');
         }
 
-        this.nextPhase();
-    }
-
-    ordinal(n) {
-        const s = ['th', 'st', 'nd', 'rd'];
-        const v = n % 100;
-        return s[(v - 20) % 10] || s[v] || s[0];
-    }
-
-    nextPhase() {
-        const phases = ['kickoff', 'stage_1', 'stage_2', 'offseason'];
-        const idx = phases.indexOf(this.phase);
-        this.phase = phases[(idx + 1) % phases.length];
-
-        if (this.phase === 'offseason') {
-            this.processOffseason();
-            this.season++;
-            this.phase = 'kickoff';
-            this.week = 1;
-            for (const tid of Object.keys(this.seasonPoints)) this.seasonPoints[tid] = 0;
-            this.addEvent('new_season', `Season ${this.season} begins!`);
-        }
-
-        this.startKickoff();
+        // Auto-advance to next phase
+        this.advancePhase();
     }
 
     processOffseason() {
         for (const t of Object.values(this.teams)) t.resetSeason();
         for (const p of Object.values(this.players)) p.resetSeasonStats();
-        this.addEvent('offseason', 'Offseason complete.');
+        
+        // Generate new free agents
+        for (const region of REGIONS) {
+            const newFAs = generateFreeAgents(region, 5);
+            for (const fa of newFAs) {
+                this.players[fa.id] = fa;
+                if (!this.freeAgentIds[region]) this.freeAgentIds[region] = [];
+                this.freeAgentIds[region].push(fa.id);
+            }
+        }
+        
+        this.addEvent('offseason', 'Offseason complete. New free agents available!');
+    }
+
+    startNewSeason() {
+        this.season++;
+        this.week = 1;
+        this.phaseIndex = 0;
+        this.phase = PHASE_ORDER[0];
+        
+        for (const tid of Object.keys(this.seasonPoints)) {
+            this.seasonPoints[tid] = 0;
+        }
+        
+        this.addEvent('new_season', 'Season ' + this.season + ' begins!');
+        this.rosterLocked = false;
     }
 
     processAIMoves() {
@@ -1069,7 +1729,7 @@ class Game {
                 const team = this.teams[tid];
                 const fas = this.freeAgentIds[region] || [];
 
-                if (Math.random() < 0.05 && team.roster.length < 6 && fas.length > 0) {
+                if (Math.random() < 0.05 && team.roster.length < 7 && fas.length > 0) {
                     const faId = fas[randInt(0, fas.length - 1)];
                     const fa = this.players[faId];
                     const salary = this.getMarketValue(faId);
@@ -1078,7 +1738,7 @@ class Game {
                         team.addPlayer(faId, contract);
                         fa.teamId = tid;
                         fas.splice(fas.indexOf(faId), 1);
-                        this.addEvent('ai_signing', `${team.name} signs ${fa.name}`);
+                        this.addEvent('ai_signing', team.name + ' signs ' + fa.name);
                     }
                 }
             }
@@ -1096,14 +1756,20 @@ class Game {
                 points: this.seasonPoints[tid] || 0,
                 record: t.seasonStats.matchRecord,
                 mapRecord: t.seasonStats.mapRecord,
+                kickoffPlace: t.seasonStats.kickoffPlace,
+                stage1Place: t.seasonStats.stage1Place,
                 isPlayer: tid === this.playerTeamId
             };
-        }).sort((a, b) => b.points - a.points || b.record.localeCompare(a.record));
+        }).sort((a, b) => b.points - a.points);
     }
+
+    // =========================================================================
+    // SAVE/LOAD
+    // =========================================================================
 
     save(slot = 'autosave') {
         const data = {
-            version: '1.0',
+            version: '2.0',
             teams: this.teams,
             players: this.players,
             regionTeamIds: this.regionTeamIds,
@@ -1113,15 +1779,18 @@ class Game {
             season: this.season,
             week: this.week,
             phase: this.phase,
+            phaseIndex: this.phaseIndex,
             seasonPoints: this.seasonPoints,
+            currentGroups: this.currentGroups,
+            rosterLocked: this.rosterLocked,
             events: this.events.slice(-50)
         };
-        localStorage.setItem(`valgm_${slot}`, JSON.stringify(data));
+        localStorage.setItem('valgm_' + slot, JSON.stringify(data));
         return true;
     }
 
     static load(slot = 'autosave') {
-        const raw = localStorage.getItem(`valgm_${slot}`);
+        const raw = localStorage.getItem('valgm_' + slot);
         if (!raw) return null;
 
         try {
@@ -1136,7 +1805,10 @@ class Game {
             g.season = data.season;
             g.week = data.week;
             g.phase = data.phase;
+            g.phaseIndex = data.phaseIndex || 0;
             g.seasonPoints = data.seasonPoints;
+            g.currentGroups = data.currentGroups;
+            g.rosterLocked = data.rosterLocked || false;
             g.events = data.events || [];
 
             // Reconstruct class instances
@@ -1177,9 +1849,10 @@ class Game {
             if (key.startsWith('valgm_')) {
                 try {
                     const data = JSON.parse(localStorage.getItem(key));
-                    const teamName = data.teams?.[data.playerTeamId]?.name || 'Unknown';
+                    const teamName = data.teams && data.teams[data.playerTeamId] ? 
+                                     data.teams[data.playerTeamId].name : 'Unknown';
                     slots.push({ slot: key.replace('valgm_', ''), teamName, season: data.season });
-                } catch {}
+                } catch (e) {}
             }
         }
         return slots;
@@ -1211,9 +1884,7 @@ function showStartScreen() {
 }
 
 function showTeamSelection() {
-    console.log('showTeamSelection called');
     previewState = generateGameState();
-    console.log('previewState generated:', Object.keys(previewState.teams).length, 'teams');
     showScreen('team-selection');
     renderTeamGrid();
 }
@@ -1234,14 +1905,14 @@ function showLoadGame() {
         return;
     }
 
-    list.innerHTML = slots.map(s => `
-        <div class="save-slot" data-slot="${s.slot}">
-            <div class="save-slot-info">
-                <h4>${s.teamName}</h4>
-                <span>Season ${s.season}</span>
-            </div>
-        </div>
-    `).join('');
+    list.innerHTML = slots.map(s => 
+        '<div class="save-slot" data-slot="' + s.slot + '">' +
+            '<div class="save-slot-info">' +
+                '<h4>' + s.teamName + '</h4>' +
+                '<span>Season ' + s.season + '</span>' +
+            '</div>' +
+        '</div>'
+    ).join('');
 }
 
 function loadGame(slot) {
@@ -1255,18 +1926,9 @@ function loadGame(slot) {
 
 function renderTeamGrid() {
     const grid = document.getElementById('teams-grid');
-    if (!grid) {
-        console.error('teams-grid not found');
-        return;
-    }
-    
-    if (!previewState) {
-        console.log('No previewState, generating...');
-        previewState = generateGameState();
-    }
+    if (!grid || !previewState) return;
     
     const tids = previewState.regionTeamIds[selectedRegion];
-    console.log('Rendering', tids.length, 'teams for', selectedRegion);
     
     grid.innerHTML = tids.map(tid => {
         const team = previewState.teams[tid];
@@ -1281,59 +1943,899 @@ function renderTeamGrid() {
         '</div>';
     }).join('');
     
-    // Add click listeners via event delegation
     grid.querySelectorAll('.team-card').forEach(card => {
         card.addEventListener('click', function() {
             const teamId = this.getAttribute('data-team-id');
             const region = this.getAttribute('data-region');
-            console.log('Team card clicked:', teamId, region);
             selectTeam(teamId, region);
         });
     });
 }
 
 function selectTeam(teamId, region) {
-    console.log('selectTeam called:', teamId, region);
-    
-    if (!previewState) {
-        console.error('No preview state available');
+    if (!previewState || !previewState.teams[teamId]) {
         alert('Error: Please try again');
         return;
     }
     
-    if (!previewState.teams[teamId]) {
-        console.error('Team not found:', teamId);
-        alert('Error: Team not found');
-        return;
-    }
-    
-    // Create game from preview state
     game = new Game();
     game.teams = previewState.teams;
     game.players = previewState.players;
     game.regionTeamIds = previewState.regionTeamIds;
     game.freeAgentIds = previewState.freeAgentIds;
-    
-    game.playerTeamId = teamId;
-    game.playerRegion = region;
-    game.teams[teamId].isPlayerTeam = true;
-    
-    for (const tid of Object.keys(game.teams)) {
-        game.seasonPoints[tid] = 0;
-    }
-    
-    game.addEvent('game_start', 'Welcome to ' + game.teams[teamId].name + '! Season ' + game.season + ' begins.');
-    game.phase = 'kickoff';
-    game.startKickoff();
-    
+    game.newGame(teamId, region);
     game.save();
     previewState = null;
     showGameScreen();
 }
 
-// Initialize when DOM is ready
+function updateUI() {
+    if (!game) return;
+
+    const team = game.playerTeam;
+    document.getElementById('header-team-name').textContent = team.name;
+    document.getElementById('header-team-region').textContent = game.playerRegion;
+    document.getElementById('header-season').textContent = game.season;
+    document.getElementById('header-week').textContent = game.week;
+    document.getElementById('header-points').textContent = game.seasonPoints[game.playerTeamId] || 0;
+    document.getElementById('header-record').textContent = team.seasonStats.matchRecord;
+    
+    // Update phase indicator
+    const phaseDisplay = document.getElementById('header-phase');
+    if (phaseDisplay) {
+        phaseDisplay.textContent = formatPhaseName(game.phase);
+    }
+    
+    // Update advance button
+    updateAdvanceButton();
+
+    renderRoster();
+    renderStandings();
+    renderTournament();
+    renderFreeAgents();
+    renderEvents();
+}
+
+function formatPhaseName(phase) {
+    const names = {
+        'roster_kickoff': '📋 Roster Period (Kickoff)',
+        'kickoff': '🏆 Kickoff',
+        'roster_masters1': '📋 Roster Period',
+        'masters_1': '🌍 Masters 1',
+        'groups_stage1': '📊 Stage 1 Groups Reveal',
+        'stage_1_groups': '🏆 Stage 1 Groups',
+        'stage_1_playoffs': '🏆 Stage 1 Playoffs',
+        'roster_masters2': '📋 Roster Period',
+        'masters_2': '🌍 Masters 2',
+        'groups_stage2': '📊 Stage 2 Groups Reveal',
+        'stage_2_groups': '🏆 Stage 2 Groups',
+        'stage_2_playoffs': '🏆 Stage 2 Playoffs',
+        'roster_worlds': '📋 Roster Period',
+        'worlds': '🌍 Champions',
+        'offseason': '📋 Offseason'
+    };
+    return names[phase] || phase;
+}
+
+function updateAdvanceButton() {
+    const btn = document.querySelector('.btn-advance');
+    if (!btn) return;
+    
+    const check = game.canAdvance();
+    btn.disabled = !check.can;
+    
+    if (game.isRosterPhase() || game.phase.startsWith('groups_stage')) {
+        btn.textContent = '▶ Continue';
+    } else {
+        btn.textContent = '▶ Simulate Week';
+    }
+    
+    if (!check.can) {
+        btn.title = check.reason;
+    } else {
+        btn.title = '';
+    }
+}
+
+function renderRoster() {
+    const grid = document.getElementById('roster-grid');
+    const team = game.playerTeam;
+    const roster = game.getTeamRoster(game.playerTeamId);
+    
+    const canModify = game.canModifyRoster();
+
+    document.getElementById('roster-salary').textContent = formatMoney(team.yearlySalary);
+    document.getElementById('roster-cap').textContent = formatMoney(team.finances.yearlyBudget) + ' budget';
+    
+    // Show roster lock status
+    const lockStatus = document.getElementById('roster-lock-status');
+    if (lockStatus) {
+        lockStatus.textContent = canModify ? '🔓 Roster Unlocked' : '🔒 Roster Locked';
+        lockStatus.style.color = canModify ? 'var(--val-teal)' : 'var(--val-red)';
+    }
+
+    grid.innerHTML = roster.map((p, i) => {
+        const isStarter = i < 5;
+        const ovrClass = p.overall >= 90 ? 'overall-90' : p.overall >= 80 ? 'overall-80' : p.overall >= 70 ? 'overall-70' : p.overall >= 60 ? 'overall-60' : '';
+        const moraleClass = p.morale < 40 ? 'low' : p.morale < 60 ? 'medium' : '';
+        const contract = team.contracts[p.id];
+
+        return '<div class="player-card ' + (isStarter ? 'starter' : 'sub') + '" data-player-id="' + p.id + '">' +
+            '<div class="player-overall ' + ovrClass + '">' + p.overall + '</div>' +
+            '<div class="player-info">' +
+                '<h4>' + p.name + '</h4>' +
+                '<div class="role">' + p.role + '</div>' +
+                '<div class="nationality">' + p.nationality + ' • ' + p.age + 'yo</div>' +
+            '</div>' +
+            '<div class="player-stats">' +
+                'K/D: ' + p.seasonStats.kd + '<br>' +
+                'ACS: ' + p.seasonStats.acs +
+            '</div>' +
+            '<div class="player-morale">' +
+                '<div style="font-size:0.8rem;">Morale</div>' +
+                '<div class="morale-bar">' +
+                    '<div class="morale-fill ' + moraleClass + '" style="width:' + p.morale + '%"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="player-contract">' +
+                '<div class="salary">' + formatMoney(contract ? contract.salary : 0) + '/yr</div>' +
+                '<div style="opacity:0.6;">' + (contract ? contract.years : 0) + 'yr left</div>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+    
+    // Roster size warning
+    const rosterWarning = document.getElementById('roster-warning');
+    if (rosterWarning) {
+        if (roster.length < 5) {
+            rosterWarning.textContent = '⚠️ Need at least 5 players to continue';
+            rosterWarning.style.display = 'block';
+        } else if (roster.length > 7) {
+            rosterWarning.textContent = '⚠️ Maximum 7 players allowed';
+            rosterWarning.style.display = 'block';
+        } else {
+            rosterWarning.style.display = 'none';
+        }
+    }
+    
+    // Add click handlers
+    grid.querySelectorAll('.player-card').forEach(card => {
+        card.addEventListener('click', function() {
+            showPlayerModal(this.getAttribute('data-player-id'));
+        });
+    });
+}
+
+function renderStandings() {
+    const body = document.getElementById('standings-body');
+    const standings = game.getStandings();
+
+    body.innerHTML = standings.map((s, i) => 
+        '<tr class="' + (s.isPlayer ? 'player-team' : '') + '">' +
+            '<td>' + (i + 1) + '</td>' +
+            '<td><strong>' + s.abbr + '</strong> ' + s.name + '</td>' +
+            '<td style="color:var(--val-teal);font-weight:bold;">' + s.points + '</td>' +
+            '<td>' + s.record + '</td>' +
+            '<td>' + s.mapRecord + '</td>' +
+            '<td>' + (s.kickoffPlace ? ordinal(s.kickoffPlace) : '-') + '</td>' +
+        '</tr>'
+    ).join('');
+}
+
+function renderTournament() {
+    const nameEl = document.getElementById('tournament-name');
+    const phaseEl = document.getElementById('tournament-phase');
+    const content = document.getElementById('tournament-content');
+    
+    nameEl.textContent = formatPhaseName(game.phase);
+    
+    // Group reveal screens
+    if (game.phase === 'groups_stage1' || game.phase === 'groups_stage2') {
+        phaseEl.textContent = 'Group Draw';
+        renderGroupReveal(content);
+        return;
+    }
+    
+    // Active tournament
+    if (game.tournament) {
+        if (game.tournament.isComplete) {
+            phaseEl.textContent = 'Complete';
+        } else {
+            phaseEl.textContent = 'In Progress';
+        }
+        
+        if (game.tournament instanceof TripleElimBracket) {
+            renderTripleElimBracket(content, game.tournament);
+        } else if (game.tournament instanceof SwissBracket) {
+            renderSwissBracket(content, game.tournament);
+        } else if (game.tournament instanceof DoubleElimBracket) {
+            renderDoubleElimBracket(content, game.tournament);
+        } else if (game.tournament instanceof GroupStage) {
+            renderGroupStage(content, game.tournament);
+        }
+    } else {
+        phaseEl.textContent = game.isRosterPhase() ? 'Roster Period' : 'Waiting';
+        content.innerHTML = '<p style="text-align:center;opacity:0.7;">No active tournament</p>';
+    }
+}
+
+function renderGroupReveal(container) {
+    if (!game.currentGroups) {
+        container.innerHTML = '<p style="text-align:center;opacity:0.7;">Groups not yet drawn</p>';
+        return;
+    }
+    
+    const priorEvent = game.phase === 'groups_stage1' ? 'Kickoff' : 'Stage 1';
+    const placeKey = game.phase === 'groups_stage1' ? 'kickoffPlace' : 'stage1Place';
+    
+    let html = '<div class="groups-reveal">';
+    
+    for (const [groupName, teamIds] of Object.entries(game.currentGroups)) {
+        html += '<div class="group-card">' +
+            '<h3 class="group-title">Group ' + groupName + '</h3>' +
+            '<div class="group-teams">';
+        
+        for (const tid of teamIds) {
+            const team = game.teams[tid];
+            const place = team.seasonStats[placeKey];
+            const isPlayer = tid === game.playerTeamId;
+            
+            html += '<div class="group-team ' + (isPlayer ? 'player-team' : '') + '">' +
+                '<span class="team-name">' + team.name + '</span>' +
+                '<span class="prior-place">' + priorEvent + ': ' + (place ? ordinal(place) : '-') + '</span>' +
+            '</div>';
+        }
+        
+        html += '</div></div>';
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderTripleElimBracket(container, bracket) {
+    let html = '<div class="bracket-triple-elim">';
+    
+    // Show completed matches grouped by round
+    const matchesByRound = {};
+    for (const match of bracket.completedMatches) {
+        const round = match.roundName || 'Round';
+        if (!matchesByRound[round]) matchesByRound[round] = [];
+        matchesByRound[round].push(match);
+    }
+    
+    for (const [roundName, matches] of Object.entries(matchesByRound)) {
+        html += '<div class="bracket-round">' +
+            '<h4 class="round-title">' + roundName + '</h4>' +
+            '<div class="round-matches">';
+        
+        for (const match of matches) {
+            const t1 = game.teams[match.team1Id];
+            const t2 = game.teams[match.team2Id];
+            const isPlayerMatch = match.team1Id === game.playerTeamId || match.team2Id === game.playerTeamId;
+            
+            html += '<div class="bracket-match ' + (isPlayerMatch ? 'player-match' : '') + '">' +
+                '<div class="match-team ' + (match.winnerId === match.team1Id ? 'winner' : 'loser') + '">' +
+                    '<span class="team-name">' + t1.abbreviation + '</span>' +
+                '</div>' +
+                '<div class="match-score">' + match.score + '</div>' +
+                '<div class="match-team ' + (match.winnerId === match.team2Id ? 'winner' : 'loser') + '">' +
+                    '<span class="team-name">' + t2.abbreviation + '</span>' +
+                '</div>' +
+            '</div>';
+        }
+        
+        html += '</div></div>';
+    }
+    
+    // Show final placements if complete
+    if (bracket.isComplete) {
+        html += '<div class="final-placements">' +
+            '<h4>Final Standings</h4>';
+        
+        const sortedPlacements = Object.entries(bracket.placements)
+            .sort((a, b) => a[1] - b[1])
+            .slice(0, 6);
+        
+        for (const [tid, place] of sortedPlacements) {
+            const team = game.teams[tid];
+            const isPlayer = tid === game.playerTeamId;
+            html += '<div class="placement-row ' + (isPlayer ? 'player-team' : '') + '">' +
+                '<span class="place">' + ordinal(place) + '</span>' +
+                '<span class="team-name">' + team.name + '</span>' +
+            '</div>';
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderSwissBracket(container, bracket) {
+    let html = '<div class="bracket-swiss">';
+    
+    // Show current records
+    html += '<div class="swiss-standings">' +
+        '<h4>Standings</h4>' +
+        '<table class="swiss-table">' +
+        '<thead><tr><th>Team</th><th>W</th><th>L</th><th>Status</th></tr></thead>' +
+        '<tbody>';
+    
+    const sortedRecords = Object.entries(bracket.records)
+        .map(([tid, rec]) => ({ tid, ...rec }))
+        .sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+    
+    for (const rec of sortedRecords) {
+        const team = game.teams[rec.tid];
+        const isPlayer = rec.tid === game.playerTeamId;
+        const qualified = bracket.qualified.includes(rec.tid);
+        const eliminated = bracket.eliminated.includes(rec.tid);
+        
+        let status = '-';
+        if (qualified) status = '✅ Qualified';
+        else if (eliminated) status = '❌ Eliminated';
+        
+        html += '<tr class="' + (isPlayer ? 'player-team' : '') + '">' +
+            '<td>' + team.abbreviation + '</td>' +
+            '<td>' + rec.wins + '</td>' +
+            '<td>' + rec.losses + '</td>' +
+            '<td>' + status + '</td>' +
+        '</tr>';
+    }
+    
+    html += '</tbody></table></div>';
+    
+    // Show recent matches
+    if (bracket.completedMatches.length > 0) {
+        html += '<div class="swiss-matches">' +
+            '<h4>Recent Matches</h4>';
+        
+        const recentMatches = bracket.completedMatches.slice(-8);
+        for (const match of recentMatches) {
+            const t1 = game.teams[match.team1Id];
+            const t2 = game.teams[match.team2Id];
+            const isPlayerMatch = match.team1Id === game.playerTeamId || match.team2Id === game.playerTeamId;
+            
+            html += '<div class="bracket-match ' + (isPlayerMatch ? 'player-match' : '') + '">' +
+                '<div class="match-team ' + (match.winnerId === match.team1Id ? 'winner' : 'loser') + '">' +
+                    '<span class="team-name">' + t1.abbreviation + '</span>' +
+                '</div>' +
+                '<div class="match-score">' + match.score + '</div>' +
+                '<div class="match-team ' + (match.winnerId === match.team2Id ? 'winner' : 'loser') + '">' +
+                    '<span class="team-name">' + t2.abbreviation + '</span>' +
+                '</div>' +
+            '</div>';
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderDoubleElimBracket(container, bracket) {
+    let html = '<div class="bracket-double-elim">';
+    
+    // Upper Bracket
+    html += '<div class="bracket-section">' +
+        '<h4 class="bracket-section-title">Upper Bracket</h4>';
+    
+    for (let i = 0; i < bracket.upperBracket.length; i++) {
+        const round = bracket.upperBracket[i];
+        if (!round) continue;
+        
+        html += '<div class="bracket-round">' +
+            '<div class="round-label">Round ' + (i + 1) + '</div>';
+        
+        for (const match of round) {
+            html += renderBracketMatch(match);
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    
+    // Lower Bracket
+    html += '<div class="bracket-section">' +
+        '<h4 class="bracket-section-title">Lower Bracket</h4>';
+    
+    for (let i = 0; i < bracket.lowerBracket.length; i++) {
+        const round = bracket.lowerBracket[i];
+        if (!round) continue;
+        
+        html += '<div class="bracket-round">' +
+            '<div class="round-label">Round ' + (i + 1) + '</div>';
+        
+        for (const match of round) {
+            html += renderBracketMatch(match);
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    
+    // Grand Final
+    if (bracket.grandFinal) {
+        html += '<div class="bracket-section grand-final-section">' +
+            '<h4 class="bracket-section-title">Grand Final</h4>' +
+            renderBracketMatch(bracket.grandFinal) +
+        '</div>';
+    }
+    
+    // Placements
+    if (Object.keys(bracket.placements).length > 0) {
+        html += '<div class="final-placements">' +
+            '<h4>Placements</h4>';
+        
+        const sortedPlacements = Object.entries(bracket.placements)
+            .sort((a, b) => a[1] - b[1]);
+        
+        for (const [tid, place] of sortedPlacements) {
+            const team = game.teams[tid];
+            const isPlayer = tid === game.playerTeamId;
+            html += '<div class="placement-row ' + (isPlayer ? 'player-team' : '') + '">' +
+                '<span class="place">' + ordinal(place) + '</span>' +
+                '<span class="team-name">' + team.name + '</span>' +
+            '</div>';
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderBracketMatch(match) {
+    if (!match.team1Id || !match.team2Id) {
+        return '<div class="bracket-match pending">' +
+            '<div class="match-team">TBD</div>' +
+            '<div class="match-score">-</div>' +
+            '<div class="match-team">TBD</div>' +
+        '</div>';
+    }
+    
+    const t1 = game.teams[match.team1Id];
+    const t2 = game.teams[match.team2Id];
+    const isPlayerMatch = match.team1Id === game.playerTeamId || match.team2Id === game.playerTeamId;
+    
+    if (!match.played) {
+        return '<div class="bracket-match upcoming ' + (isPlayerMatch ? 'player-match' : '') + '">' +
+            '<div class="match-team">' + t1.abbreviation + '</div>' +
+            '<div class="match-score">vs</div>' +
+            '<div class="match-team">' + t2.abbreviation + '</div>' +
+        '</div>';
+    }
+    
+    return '<div class="bracket-match ' + (isPlayerMatch ? 'player-match' : '') + '">' +
+        '<div class="match-team ' + (match.winnerId === match.team1Id ? 'winner' : 'loser') + '">' +
+            t1.abbreviation +
+        '</div>' +
+        '<div class="match-score">' + match.score + '</div>' +
+        '<div class="match-team ' + (match.winnerId === match.team2Id ? 'winner' : 'loser') + '">' +
+            t2.abbreviation +
+        '</div>' +
+    '</div>';
+}
+
+function renderGroupStage(container, gs) {
+    let html = '<div class="group-stage">';
+    
+    for (const groupName of Object.keys(gs.groups)) {
+        const standings = gs.getGroupStandings(groupName);
+        
+        html += '<div class="group-card">' +
+            '<h4 class="group-title">Group ' + groupName + '</h4>' +
+            '<table class="group-table">' +
+            '<thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>Maps</th></tr></thead>' +
+            '<tbody>';
+        
+        standings.forEach((s, i) => {
+            const team = game.teams[s.teamId];
+            const isPlayer = s.teamId === game.playerTeamId;
+            const mapDiff = s.mapWins - s.mapLosses;
+            
+            html += '<tr class="' + (isPlayer ? 'player-team' : '') + '">' +
+                '<td>' + (i + 1) + '</td>' +
+                '<td>' + team.abbreviation + '</td>' +
+                '<td>' + s.wins + '</td>' +
+                '<td>' + s.losses + '</td>' +
+                '<td>' + (mapDiff >= 0 ? '+' : '') + mapDiff + '</td>' +
+            '</tr>';
+        });
+        
+        html += '</tbody></table></div>';
+    }
+    
+    // Recent matches
+    if (gs.completedMatches.length > 0) {
+        html += '<div class="group-matches">' +
+            '<h4>Recent Matches</h4>';
+        
+        const recentMatches = gs.completedMatches.slice(-6);
+        for (const match of recentMatches) {
+            html += renderBracketMatch(match);
+        }
+        
+        html += '</div>';
+    }
+    
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderFreeAgents() {
+    const container = document.getElementById('fa-list');
+    const fas = game.getFreeAgents();
+    const canSign = game.canModifyRoster();
+    
+    let filtered = fas;
+    if (currentRoleFilter !== 'all') {
+        filtered = fas.filter(p => p.role === currentRoleFilter);
+    }
+    
+    filtered.sort((a, b) => b.overall - a.overall);
+    
+    container.innerHTML = filtered.map(p => {
+        const val = game.getMarketValue(p.id);
+        const ovrClass = p.overall >= 90 ? 'overall-90' : p.overall >= 80 ? 'overall-80' : p.overall >= 70 ? 'overall-70' : p.overall >= 60 ? 'overall-60' : '';
+        
+        return '<div class="fa-card" data-player-id="' + p.id + '">' +
+            '<div class="player-overall ' + ovrClass + '">' + p.overall + '</div>' +
+            '<div class="fa-info">' +
+                '<h4>' + p.name + '</h4>' +
+                '<div>' + p.role + ' • ' + p.nationality + ' • ' + p.age + 'yo</div>' +
+            '</div>' +
+            '<div class="fa-value">' + formatMoney(val) + '/yr</div>' +
+            '<button class="btn-sign" data-player-id="' + p.id + '" ' + (!canSign ? 'disabled' : '') + '>' +
+                (canSign ? 'Sign' : '🔒') +
+            '</button>' +
+        '</div>';
+    }).join('');
+    
+    // Lock message
+    const lockMsg = document.getElementById('fa-lock-message');
+    if (lockMsg) {
+        if (canSign) {
+            lockMsg.style.display = 'none';
+        } else {
+            lockMsg.style.display = 'block';
+            lockMsg.textContent = '🔒 Roster locked during events. Sign players between tournaments.';
+        }
+    }
+    
+    // Add sign button handlers
+    container.querySelectorAll('.btn-sign').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (!this.disabled) {
+                showSignModal(this.getAttribute('data-player-id'));
+            }
+        });
+    });
+    
+    // Add card click handlers for player details
+    container.querySelectorAll('.fa-card').forEach(card => {
+        card.addEventListener('click', function() {
+            showPlayerModal(this.getAttribute('data-player-id'));
+        });
+    });
+}
+
+function renderEvents() {
+    const container = document.getElementById('events-list');
+    const events = game.getRecentEvents(15);
+    
+    const icons = {
+        'game_start': '🎮',
+        'roster_period': '📋',
+        'signing': '✍️',
+        'release': '👋',
+        'tournament': '🏆',
+        'tournament_end': '🏆',
+        'match_win': '✅',
+        'match_loss': '❌',
+        'groups_reveal': '📊',
+        'ai_signing': '📰',
+        'offseason': '🌴',
+        'new_season': '🆕'
+    };
+    
+    container.innerHTML = events.reverse().map(e => {
+        const icon = icons[e.type] || '📢';
+        return '<div class="event-item event-' + e.type + '">' +
+            '<span class="event-icon">' + icon + '</span>' +
+            '<span class="event-message">' + e.message + '</span>' +
+            '<span class="event-week">W' + e.week + '</span>' +
+        '</div>';
+    }).join('');
+}
+
+// ============================================================================
+// MODALS
+// ============================================================================
+
+function showPlayerModal(playerId) {
+    const player = game.players[playerId];
+    if (!player) return;
+    
+    const modal = document.getElementById('player-modal');
+    const content = document.getElementById('player-modal-content');
+    
+    const team = player.teamId ? game.teams[player.teamId] : null;
+    const contract = team ? team.contracts[playerId] : null;
+    const isOnPlayerTeam = player.teamId === game.playerTeamId;
+    const canRelease = isOnPlayerTeam && game.canModifyRoster();
+    const a = player.attributes;
+    
+    content.innerHTML = 
+        '<div class="modal-header">' +
+            '<h2>' + player.name + '</h2>' +
+            '<button class="modal-close" onclick="closePlayerModal()">&times;</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+            '<div class="player-detail-header">' +
+                '<div class="player-overall overall-' + Math.floor(player.overall / 10) * 10 + '">' + player.overall + '</div>' +
+                '<div class="player-basic-info">' +
+                    '<div><strong>Role:</strong> ' + player.role + '</div>' +
+                    '<div><strong>Age:</strong> ' + player.age + '</div>' +
+                    '<div><strong>Nationality:</strong> ' + player.nationality + '</div>' +
+                    '<div><strong>Team:</strong> ' + (team ? team.name : 'Free Agent') + '</div>' +
+                    (contract ? '<div><strong>Contract:</strong> ' + formatMoney(contract.salary) + '/yr, ' + contract.years + ' yr left</div>' : '') +
+                '</div>' +
+            '</div>' +
+            
+            '<div class="attributes-section">' +
+                '<h4>Attributes</h4>' +
+                '<div class="attr-grid">' +
+                    '<div class="attr-group">' +
+                        '<h5>Aim (' + a.aimRating + ')</h5>' +
+                        renderAttrBar('Flicking', a.aim.flicking) +
+                        renderAttrBar('Tracking', a.aim.tracking) +
+                        renderAttrBar('Burst Control', a.aim.burstControl) +
+                        renderAttrBar('Micro Adjust', a.aim.microAdjustment) +
+                    '</div>' +
+                    '<div class="attr-group">' +
+                        '<h5>Game Sense (' + a.gameSenseRating + ')</h5>' +
+                        renderAttrBar('Map Awareness', a.gameSense.mapAwareness) +
+                        renderAttrBar('Timing', a.gameSense.timing) +
+                        renderAttrBar('Economy IQ', a.gameSense.economyIQ) +
+                        renderAttrBar('Clutch IQ', a.gameSense.clutchIQ) +
+                        renderAttrBar('Game IQ', a.gameSense.gameIQ) +
+                    '</div>' +
+                    '<div class="attr-group">' +
+                        '<h5>Movement (' + a.movementRating + ')</h5>' +
+                        renderAttrBar('Positioning', a.movement.positioning) +
+                        renderAttrBar('Peeking', a.movement.peeking) +
+                        renderAttrBar('Counter-Strafe', a.movement.counterStrafing) +
+                        renderAttrBar('Off-Angle', a.movement.offAnglePlay) +
+                    '</div>' +
+                    '<div class="attr-group">' +
+                        '<h5>Agent Prof. (' + a.agentRating + ')</h5>' +
+                        renderAttrBar('Utility Usage', a.agentProficiency.utilityUsage) +
+                        renderAttrBar('Lineups', a.agentProficiency.lineupKnowledge) +
+                        renderAttrBar('Agent Pool', a.agentProficiency.agentPool) +
+                    '</div>' +
+                    '<div class="attr-group">' +
+                        '<h5>Team Play (' + a.teamPlayRating + ')</h5>' +
+                        renderAttrBar('Communication', a.teamPlay.communication) +
+                        renderAttrBar('Support Play', a.teamPlay.supportPlay) +
+                        renderAttrBar('Discipline', a.teamPlay.discipline) +
+                    '</div>' +
+                    '<div class="attr-group">' +
+                        '<h5>Mental (' + a.mentalRating + ')</h5>' +
+                        renderAttrBar('Consistency', a.mental.consistency) +
+                        renderAttrBar('Adaptability', a.mental.adaptability) +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+            
+            '<div class="stats-section">' +
+                '<h4>Season Stats</h4>' +
+                '<div class="stat-row">' +
+                    '<span>K/D: ' + player.seasonStats.kd + '</span>' +
+                    '<span>ACS: ' + player.seasonStats.acs + '</span>' +
+                    '<span>KAST: ' + player.seasonStats.kast + '%</span>' +
+                    '<span>ADR: ' + player.seasonStats.adr + '</span>' +
+                    '<span>HS%: ' + player.seasonStats.headshotPct + '%</span>' +
+                '</div>' +
+            '</div>' +
+            
+            (canRelease ? 
+                '<div class="modal-actions">' +
+                    '<button class="btn-val btn-release" onclick="releasePlayerConfirm(\'' + playerId + '\')">Release Player</button>' +
+                '</div>' : '') +
+        '</div>';
+    
+    modal.style.display = 'flex';
+}
+
+function renderAttrBar(name, value) {
+    const colorClass = value >= 80 ? 'attr-high' : value >= 60 ? 'attr-mid' : 'attr-low';
+    return '<div class="attr-row">' +
+        '<span class="attr-name">' + name + '</span>' +
+        '<div class="attr-bar-container">' +
+            '<div class="attr-bar ' + colorClass + '" style="width:' + value + '%"></div>' +
+        '</div>' +
+        '<span class="attr-value">' + value + '</span>' +
+    '</div>';
+}
+
+function closePlayerModal() {
+    document.getElementById('player-modal').style.display = 'none';
+}
+
+function showSignModal(playerId) {
+    const player = game.players[playerId];
+    if (!player) return;
+    
+    const modal = document.getElementById('sign-modal');
+    const content = document.getElementById('sign-modal-content');
+    const marketValue = game.getMarketValue(playerId);
+    
+    content.innerHTML = 
+        '<div class="modal-header">' +
+            '<h2>Sign ' + player.name + '</h2>' +
+            '<button class="modal-close" onclick="closeSignModal()">&times;</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+            '<div class="sign-player-info">' +
+                '<div class="player-overall">' + player.overall + '</div>' +
+                '<div>' +
+                    '<strong>' + player.name + '</strong><br>' +
+                    player.role + ' • ' + player.age + 'yo<br>' +
+                    'Market Value: ' + formatMoney(marketValue) + '/yr' +
+                '</div>' +
+            '</div>' +
+            '<div class="sign-form">' +
+                '<div class="form-group">' +
+                    '<label>Annual Salary</label>' +
+                    '<input type="range" id="sign-salary" min="' + Math.round(marketValue * 0.8) + '" max="' + Math.round(marketValue * 1.5) + '" value="' + marketValue + '" oninput="updateSalaryDisplay()">' +
+                    '<div id="salary-display">' + formatMoney(marketValue) + '/yr</div>' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Contract Length</label>' +
+                    '<select id="sign-years">' +
+                        '<option value="1">1 Year</option>' +
+                        '<option value="2" selected>2 Years</option>' +
+                        '<option value="3">3 Years</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="cap-info">' +
+                    'Cap Space: ' + formatMoney(game.playerTeam.capSpace) +
+                '</div>' +
+            '</div>' +
+            '<div class="modal-actions">' +
+                '<button class="btn-val" onclick="confirmSign(\'' + playerId + '\')">Sign Player</button>' +
+                '<button class="btn-val btn-val-secondary" onclick="closeSignModal()">Cancel</button>' +
+            '</div>' +
+        '</div>';
+    
+    modal.style.display = 'flex';
+}
+
+function updateSalaryDisplay() {
+    const salary = parseInt(document.getElementById('sign-salary').value);
+    document.getElementById('salary-display').textContent = formatMoney(salary) + '/yr';
+}
+
+function confirmSign(playerId) {
+    const salary = parseInt(document.getElementById('sign-salary').value);
+    const years = parseInt(document.getElementById('sign-years').value);
+    
+    const result = game.signPlayer(playerId, salary, years);
+    
+    if (result.success) {
+        closeSignModal();
+        game.save();
+        updateUI();
+    } else {
+        alert(result.msg);
+    }
+}
+
+function closeSignModal() {
+    document.getElementById('sign-modal').style.display = 'none';
+}
+
+function releasePlayerConfirm(playerId) {
+    const player = game.players[playerId];
+    if (!player) return;
+    
+    if (confirm('Release ' + player.name + '? This cannot be undone.')) {
+        const result = game.releasePlayer(playerId);
+        if (result.success) {
+            closePlayerModal();
+            game.save();
+            updateUI();
+        } else {
+            alert(result.msg);
+        }
+    }
+}
+
+function advanceWeek() {
+    const result = game.advanceWeek();
+    
+    if (!result.success) {
+        alert(result.msg);
+        return;
+    }
+    
+    game.save();
+    
+    if (result.results && result.results.length > 0) {
+        showResultsModal(result.results);
+    }
+    
+    updateUI();
+}
+
+function showResultsModal(results) {
+    const modal = document.getElementById('results-modal');
+    const content = document.getElementById('results-modal-content');
+    
+    const playerMatches = results.filter(r => r.isPlayerMatch);
+    const otherMatches = results.filter(r => !r.isPlayerMatch);
+    
+    let html = '<div class="modal-header">' +
+        '<h2>Week ' + game.week + ' Results</h2>' +
+        '<button class="modal-close" onclick="closeResultsModal()">&times;</button>' +
+    '</div>' +
+    '<div class="modal-body">';
+    
+    if (playerMatches.length > 0) {
+        html += '<h3 style="color:var(--val-red);">Your Matches</h3>';
+        for (const r of playerMatches) {
+            const won = r.winner === game.playerTeam.name;
+            html += '<div class="result-match player-result ' + (won ? 'win' : 'loss') + '">' +
+                '<div class="result-round">' + r.roundName + '</div>' +
+                '<div class="result-teams">' +
+                    '<span class="' + (r.team1 === r.winner ? 'winner' : '') + '">' + r.team1 + '</span>' +
+                    ' <strong>' + r.score + '</strong> ' +
+                    '<span class="' + (r.team2 === r.winner ? 'winner' : '') + '">' + r.team2 + '</span>' +
+                '</div>' +
+            '</div>';
+        }
+    }
+    
+    if (otherMatches.length > 0) {
+        html += '<h3 style="margin-top:20px;">Other Matches</h3>';
+        for (const r of otherMatches) {
+            html += '<div class="result-match">' +
+                '<div class="result-round">' + r.roundName + '</div>' +
+                '<div class="result-teams">' +
+                    '<span class="' + (r.team1 === r.winner ? 'winner' : '') + '">' + r.team1 + '</span>' +
+                    ' <strong>' + r.score + '</strong> ' +
+                    '<span class="' + (r.team2 === r.winner ? 'winner' : '') + '">' + r.team2 + '</span>' +
+                '</div>' +
+            '</div>';
+        }
+    }
+    
+    html += '<div class="modal-actions">' +
+        '<button class="btn-val" onclick="closeResultsModal()">Continue</button>' +
+    '</div></div>';
+    
+    content.innerHTML = html;
+    modal.style.display = 'flex';
+}
+
+function closeResultsModal() {
+    document.getElementById('results-modal').style.display = 'none';
+}
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('Valorant GM Simulator loaded');
+    console.log('Valorant GM Simulator v2.0 loaded');
     
     // Region tabs
     document.querySelectorAll('.region-tab').forEach(tab => {
@@ -1365,340 +2867,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
     
-    // Save slots - event delegation on container
+    // Save slots
     document.getElementById('save-slots-list').addEventListener('click', (e) => {
         const slot = e.target.closest('.save-slot');
         if (slot) {
             const slotName = slot.getAttribute('data-slot');
-            if (slotName) {
-                loadGame(slotName);
-            }
+            if (slotName) loadGame(slotName);
         }
     });
+    
+    // Close modals on outside click
+    document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    });
 });
-
-function updateUI() {
-    if (!game) return;
-
-    // Header
-    const team = game.playerTeam;
-    document.getElementById('header-team-name').textContent = team.name;
-    document.getElementById('header-team-region').textContent = game.playerRegion;
-    document.getElementById('header-season').textContent = game.season;
-    document.getElementById('header-week').textContent = game.week;
-    document.getElementById('header-points').textContent = game.seasonPoints[game.playerTeamId] || 0;
-    document.getElementById('header-record').textContent = team.seasonStats.matchRecord;
-
-    renderRoster();
-    renderStandings();
-    renderTournament();
-    renderFreeAgents();
-    renderEvents();
-}
-
-function renderRoster() {
-    const grid = document.getElementById('roster-grid');
-    const team = game.playerTeam;
-    const roster = game.getTeamRoster(game.playerTeamId);
-
-    document.getElementById('roster-salary').textContent = formatMoney(team.yearlySalary);
-    document.getElementById('roster-cap').textContent = formatMoney(team.finances.yearlyBudget) + ' budget';
-
-    grid.innerHTML = roster.map((p, i) => {
-        const isStarter = i < 5;
-        const ovrClass = p.overall >= 90 ? 'overall-90' : p.overall >= 80 ? 'overall-80' : p.overall >= 70 ? 'overall-70' : p.overall >= 60 ? 'overall-60' : '';
-        const moraleClass = p.morale < 40 ? 'low' : p.morale < 60 ? 'medium' : '';
-        const contract = team.contracts[p.id];
-
-        return `
-            <div class="player-card ${isStarter ? 'starter' : 'sub'}" onclick="showPlayerModal('${p.id}')">
-                <div class="player-overall ${ovrClass}">${p.overall}</div>
-                <div class="player-info">
-                    <h4>${p.name}</h4>
-                    <div class="role">${p.role}</div>
-                    <div class="nationality">${p.nationality} • ${p.age}yo</div>
-                </div>
-                <div class="player-stats">
-                    K/D: ${p.seasonStats.kd}<br>
-                    ACS: ${p.seasonStats.acs}
-                </div>
-                <div class="player-morale">
-                    <div style="font-size:0.8rem;">Morale</div>
-                    <div class="morale-bar">
-                        <div class="morale-fill ${moraleClass}" style="width:${p.morale}%"></div>
-                    </div>
-                </div>
-                <div class="player-contract">
-                    <div class="salary">${formatMoney(contract?.salary || 0)}/yr</div>
-                    <div style="opacity:0.6;">${contract?.years || 0}yr left</div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderStandings() {
-    const body = document.getElementById('standings-body');
-    const standings = game.getStandings();
-
-    body.innerHTML = standings.map((s, i) => `
-        <tr class="${s.isPlayer ? 'player-team' : ''}">
-            <td>${i + 1}</td>
-            <td><strong>${s.abbr}</strong> ${s.name}</td>
-            <td style="color:var(--val-teal);font-weight:bold;">${s.points}</td>
-            <td>${s.record}</td>
-            <td>${s.mapRecord}</td>
-        </tr>
-    `).join('');
-}
-
-function renderTournament() {
-    document.getElementById('tournament-name').textContent = game.phase.replace('_', ' ').toUpperCase();
-    document.getElementById('tournament-phase').textContent = game.tournament ? 
-        (game.tournament.isComplete ? 'Complete' : 'In Progress') : 'Not Started';
-
-    const content = document.getElementById('tournament-content');
-    if (game.tournament) {
-        const placements = game.tournament.placements;
-        const placed = Object.entries(placements).sort((a, b) => a[1] - b[1]).slice(0, 8);
-
-        if (placed.length > 0) {
-            content.innerHTML = '<h4 style="margin-bottom:15px;">Placements</h4>' + placed.map(([tid, place]) => {
-                const team = game.teams[tid];
-                const isPlayer = tid === game.playerTeamId;
-                return `<div class="match-result ${isPlayer ? 'win' : ''}" style="margin-bottom:5px;">
-                    <span style="color:var(--val-gold);font-weight:bold;">#${place}</span>
-                    <span style="margin-left:15px;">${team.name}</span>
-                </div>`;
-            }).join('');
-        } else {
-            content.innerHTML = '<p style="text-align:center;opacity:0.7;">Tournament in progress...</p>';
-        }
-    } else {
-        content.innerHTML = '<p style="text-align:center;opacity:0.7;">No active tournament</p>';
-    }
-}
-
-function renderFreeAgents() {
-    const list = document.getElementById('freeagents-list');
-    let fas = game.getFreeAgents();
-
-    if (currentRoleFilter !== 'all') {
-        fas = fas.filter(p => p.role === currentRoleFilter);
-    }
-
-    fas.sort((a, b) => b.overall - a.overall);
-
-    list.innerHTML = fas.slice(0, 20).map(p => {
-        const ovrClass = p.overall >= 90 ? 'overall-90' : p.overall >= 80 ? 'overall-80' : p.overall >= 70 ? 'overall-70' : p.overall >= 60 ? 'overall-60' : '';
-        const value = game.getMarketValue(p.id);
-
-        return `
-            <div class="fa-card">
-                <div class="player-overall ${ovrClass}">${p.overall}</div>
-                <div class="player-info">
-                    <h4>${p.name}</h4>
-                    <div class="role">${p.role}</div>
-                    <div class="nationality">${p.nationality} • ${p.age}yo</div>
-                </div>
-                <div style="text-align:center;">
-                    <div style="color:var(--val-teal);font-weight:bold;">${formatMoney(value)}/yr</div>
-                    <div style="opacity:0.6;font-size:0.8rem;">Est. Value</div>
-                </div>
-                <button class="btn-sign" onclick="showSignModal('${p.id}')">Sign</button>
-            </div>
-        `;
-    }).join('');
-
-    if (fas.length === 0) {
-        list.innerHTML = '<p style="text-align:center;opacity:0.7;">No free agents available</p>';
-    }
-}
-
-function renderEvents() {
-    const log = document.getElementById('events-log');
-    const events = game.getRecentEvents(30).reverse();
-
-    log.innerHTML = events.map(e => {
-        const icon = e.type === 'match_win' ? '✅' : e.type === 'match_loss' ? '❌' : 
-                     e.type === 'signing' ? '✍️' : e.type === 'release' ? '👋' :
-                     e.type === 'tournament' || e.type === 'tournament_end' ? '🏆' : '📰';
-        return `
-            <div class="event-item">
-                <div class="event-icon">${icon}</div>
-                <div class="event-message">${e.message}</div>
-                <div class="event-meta">Week ${e.week}</div>
-            </div>
-        `;
-    }).join('');
-}
-
-function showPlayerModal(playerId) {
-    const player = game.players[playerId];
-    if (!player) return;
-
-    document.getElementById('modal-player-name').textContent = player.name;
-    const content = document.getElementById('modal-player-content');
-
-    const attrs = player.attributes;
-    content.innerHTML = `
-        <div style="margin-bottom:20px;">
-            <span class="role" style="font-size:1.1rem;">${player.role}</span>
-            <span style="margin-left:15px;opacity:0.7;">${player.nationality} • ${player.age}yo</span>
-            <span style="float:right;font-size:1.5rem;font-weight:bold;color:var(--val-teal);">OVR ${player.overall}</span>
-        </div>
-        
-        <div class="player-detail-stats">
-            <div class="stat-category">
-                <h4>Aim (${attrs.aimRating})</h4>
-                <div class="stat-row"><span class="stat-name">Flicking</span><span class="stat-value">${attrs.aim.flicking}</span></div>
-                <div class="stat-row"><span class="stat-name">Tracking</span><span class="stat-value">${attrs.aim.tracking}</span></div>
-                <div class="stat-row"><span class="stat-name">Burst Control</span><span class="stat-value">${attrs.aim.burstControl}</span></div>
-                <div class="stat-row"><span class="stat-name">Micro-Adj</span><span class="stat-value">${attrs.aim.microAdjustment}</span></div>
-            </div>
-            <div class="stat-category">
-                <h4>Game Sense (${attrs.gameSenseRating})</h4>
-                <div class="stat-row"><span class="stat-name">Map Awareness</span><span class="stat-value">${attrs.gameSense.mapAwareness}</span></div>
-                <div class="stat-row"><span class="stat-name">Timing</span><span class="stat-value">${attrs.gameSense.timing}</span></div>
-                <div class="stat-row"><span class="stat-name">Economy IQ</span><span class="stat-value">${attrs.gameSense.economyIQ}</span></div>
-                <div class="stat-row"><span class="stat-name">Clutch IQ</span><span class="stat-value">${attrs.gameSense.clutchIQ}</span></div>
-                <div class="stat-row"><span class="stat-name">Game IQ</span><span class="stat-value">${attrs.gameSense.gameIQ}</span></div>
-            </div>
-            <div class="stat-category">
-                <h4>Movement (${attrs.movementRating})</h4>
-                <div class="stat-row"><span class="stat-name">Positioning</span><span class="stat-value">${attrs.movement.positioning}</span></div>
-                <div class="stat-row"><span class="stat-name">Peeking</span><span class="stat-value">${attrs.movement.peeking}</span></div>
-                <div class="stat-row"><span class="stat-name">Counter-Strafe</span><span class="stat-value">${attrs.movement.counterStrafing}</span></div>
-                <div class="stat-row"><span class="stat-name">Off-Angle</span><span class="stat-value">${attrs.movement.offAnglePlay}</span></div>
-            </div>
-            <div class="stat-category">
-                <h4>Agent Prof. (${attrs.agentRating})</h4>
-                <div class="stat-row"><span class="stat-name">Utility Usage</span><span class="stat-value">${attrs.agentProficiency.utilityUsage}</span></div>
-                <div class="stat-row"><span class="stat-name">Lineup Knowledge</span><span class="stat-value">${attrs.agentProficiency.lineupKnowledge}</span></div>
-                <div class="stat-row"><span class="stat-name">Agent Pool</span><span class="stat-value">${attrs.agentProficiency.agentPool}</span></div>
-            </div>
-        </div>
-
-        <h4 style="margin-top:20px;color:var(--val-red);">Season Stats</h4>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px;">
-            <div class="stat-box"><div class="label">K/D</div><div class="value">${player.seasonStats.kd}</div></div>
-            <div class="stat-box"><div class="label">ACS</div><div class="value">${player.seasonStats.acs}</div></div>
-            <div class="stat-box"><div class="label">KAST</div><div class="value">${player.seasonStats.kast}%</div></div>
-            <div class="stat-box"><div class="label">HS%</div><div class="value">${player.seasonStats.headshotPct}%</div></div>
-            <div class="stat-box"><div class="label">ADR</div><div class="value">${player.seasonStats.adr}</div></div>
-            <div class="stat-box"><div class="label">DDΔ</div><div class="value">${player.seasonStats.ddDelta}</div></div>
-            <div class="stat-box"><div class="label">FB</div><div class="value">${player.seasonStats.firstBloods}</div></div>
-            <div class="stat-box"><div class="label">Aces</div><div class="value">${player.seasonStats.aces}</div></div>
-        </div>
-
-        ${player.teamId === game.playerTeamId && game.playerTeam.roster.length > 5 ? 
-            `<button class="btn-val" style="margin-top:20px;width:100%;" onclick="releasePlayerConfirm('${playerId}')">Release Player</button>` : ''}
-    `;
-
-    document.getElementById('player-modal').classList.add('active');
-}
-
-function closeModal() {
-    document.getElementById('player-modal').classList.remove('active');
-}
-
-let signPlayerId = null;
-
-function showSignModal(playerId) {
-    signPlayerId = playerId;
-    const player = game.players[playerId];
-    const value = game.getMarketValue(playerId);
-    const team = game.playerTeam;
-
-    const content = document.getElementById('sign-modal-content');
-    content.innerHTML = `
-        <div style="margin-bottom:20px;">
-            <h4>${player.name}</h4>
-            <span class="role">${player.role}</span> • OVR ${player.overall}
-        </div>
-        <div style="margin-bottom:20px;">
-            <div style="opacity:0.7;">Estimated Value: <span style="color:var(--val-teal)">${formatMoney(value)}/yr</span></div>
-            <div style="opacity:0.7;">Your Cap Space: <span style="color:var(--val-teal)">${formatMoney(team.capSpace)}</span></div>
-        </div>
-        <div style="margin-bottom:15px;">
-            <label style="display:block;margin-bottom:5px;">Salary (per year)</label>
-            <input type="number" id="sign-salary" value="${value}" min="10000" max="${team.capSpace}" 
-                   style="width:100%;padding:10px;background:var(--val-gray);border:none;color:white;border-radius:4px;">
-        </div>
-        <div style="margin-bottom:20px;">
-            <label style="display:block;margin-bottom:5px;">Contract Length (years)</label>
-            <select id="sign-years" style="width:100%;padding:10px;background:var(--val-gray);border:none;color:white;border-radius:4px;">
-                <option value="1">1 Year</option>
-                <option value="2" selected>2 Years</option>
-                <option value="3">3 Years</option>
-            </select>
-        </div>
-        <button class="btn-val" style="width:100%;" onclick="confirmSign()">Sign Player</button>
-    `;
-
-    document.getElementById('sign-modal').classList.add('active');
-}
-
-function closeSignModal() {
-    document.getElementById('sign-modal').classList.remove('active');
-    signPlayerId = null;
-}
-
-function confirmSign() {
-    const salary = parseInt(document.getElementById('sign-salary').value);
-    const years = parseInt(document.getElementById('sign-years').value);
-
-    const result = game.signPlayer(signPlayerId, salary, years);
-    if (result.success) {
-        game.save();
-        closeSignModal();
-        updateUI();
-    } else {
-        alert(result.msg);
-    }
-}
-
-function releasePlayerConfirm(playerId) {
-    const player = game.players[playerId];
-    if (confirm(`Release ${player.name}?`)) {
-        const result = game.releasePlayer(playerId);
-        if (result.success) {
-            game.save();
-            closeModal();
-            updateUI();
-        } else {
-            alert(result.msg);
-        }
-    }
-}
-
-function advanceWeek() {
-    const results = game.advanceWeek();
-    game.save();
-    updateUI();
-
-    if (results.length > 0) {
-        showResultsModal(results);
-    }
-}
-
-function showResultsModal(results) {
-    const content = document.getElementById('results-modal-content');
-    content.innerHTML = `
-        <h4 style="margin-bottom:20px;">Week ${game.week - 1} Results</h4>
-        ${results.map(r => `
-            <div class="match-result ${r.isPlayerMatch ? (r.winner === game.playerTeam.name ? 'win' : 'loss') : ''}">
-                <div class="match-teams">
-                    <div class="match-team ${r.winner === r.team1 ? 'winner' : ''}">${r.team1}</div>
-                    <div class="match-score">${r.score}</div>
-                    <div class="match-team ${r.winner === r.team2 ? 'winner' : ''}">${r.team2}</div>
-                </div>
-            </div>
-        `).join('')}
-    `;
-    document.getElementById('results-modal').classList.add('active');
-}
-
-function closeResultsModal() {
-    document.getElementById('results-modal').classList.remove('active');
-}
