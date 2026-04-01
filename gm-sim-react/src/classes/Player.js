@@ -14,8 +14,19 @@ function randomFrom(arr) {
  * with rare highs and lows. This keeps stars rare and busts common.
  */
 function randRating(min, max) {
-    const r = (Math.random() + Math.random() + Math.random()) / 3;
-    return Math.round(min + r * (max - min));
+    const roll = Math.random();
+
+    if (roll < 0.08) {
+        // 8% chance: elite (top 15% of range)
+        return Math.round(max - Math.random() * (max - min) * 0.15);
+    } else if (roll < 0.18) {
+        // 10% chance: bad (bottom 20% of range)
+        return Math.round(min + Math.random() * (max - min) * 0.20);
+    } else {
+        // 82% chance: normal bell curve in the middle
+        const r = (Math.random() + Math.random()) / 2;
+        return Math.round(min + r * (max - min));
+    }
 }
 
 
@@ -64,13 +75,41 @@ export class Player {
 }
 
 
-// ── Player generator ──
+// ── Player generator ────────────────────────────────────────────────────────
+
+// ── Track used tags globally to prevent duplicates ──
+const usedTags = new Set();
+
+/** Create a unique tag, appending a number if needed */
+function getUniqueTag() {
+    const baseTags = [...TAGS]; // don't mutate the original
+    // Shuffle to avoid always picking the same ones first
+    baseTags.sort(() => Math.random() - 0.5);
+
+    for (const tag of baseTags) {
+        if (!usedTags.has(tag)) {
+            usedTags.add(tag);
+            return tag;
+        }
+    }
+
+    // All base tags used — append random numbers until unique
+    let tag;
+    do {
+        const base = baseTags[Math.floor(Math.random() * baseTags.length)];
+        const num = Math.floor(Math.random() * 99) + 1;
+        tag = `${base}${num}`;
+    } while (usedTags.has(tag));
+
+    usedTags.add(tag);
+    return tag;
+}
 
 /** Create a random player for a given role */
 export function generatePlayer(role) {
     const firstName = randomFrom(FIRST_NAMES);
     const lastName = randomFrom(LAST_NAMES);
-    const tag = randomFrom(TAGS);
+    const tag = getUniqueTag();
 
     const floors = ROLE_FLOORS[role] || {};
     const defaultFloor = 45;

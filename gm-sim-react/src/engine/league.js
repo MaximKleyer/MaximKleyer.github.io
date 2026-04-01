@@ -30,6 +30,17 @@ export function initLeague(humanTeamIndex = 0) {
   // Generate a 5-player roster for each team (one per role)
   for (const team of teams) {
     for (const role of REQUIRED_ROLES) {
+      let added = false;
+      let attempts = 0;
+      while (!added && attempts < 10) {
+        added = team.addPlayer(generatePlayer(role));
+        attempts++;
+      }
+    }
+
+    // Saftey check - force fill if roster is short
+    while (team.roster.length < 5) {
+      const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length]
       team.addPlayer(generatePlayer(role));
     }
   }

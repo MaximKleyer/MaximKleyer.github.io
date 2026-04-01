@@ -1,103 +1,96 @@
 /**
- * Bracket.jsx — Visual double elimination bracket.
+ * Bracket.jsx — Double elimination bracket.
  *
- * ═══════════════════════════════════════════════════════════════
- * REACT CONCEPT: Breaking complex UI into small components
- * ═══════════════════════════════════════════════════════════════
- *
- * A bracket is visually complex. Instead of one giant render,
- * we break it into:
- *   - <MatchCard />  — a single matchup (two teams + score)
- *   - <Round />       — a column of matches in the same round
- *   - <Bracket />     — the full layout with UB and LB sections
- *
- * Each piece is small and testable on its own. This is the
- * composability that React enables — you build complex UIs
- * from simple, reusable building blocks.
- *
- * ═══════════════════════════════════════════════════════════════
+ * COLUMN LAYOUT (updated):
+ *   Col 1: UB Quarterfinals (top) + LB Round 1 (bottom)
+ *   Col 2: UB Semifinals (top) + LB Quarterfinals (bottom)
+ *   Col 3: (empty top) + LB Semifinal (bottom)
+ *   Col 4: UB Final (top) + LB Final (bottom)     ← same column now
+ *   Col 5: Grand Final (centered)
  */
 
 import { getStageName, getChampion } from '../engine/bracket.js';
 
-/**
- * A single match card showing two teams and the series score.
- * Highlights the winner in green and loser in red.
- *
- * @param {object}  match — { teamA, teamB, result }
- * @param {string}  bestOf — "bo3" or "bo5" label
- */
-function MatchCard({ match, bestOf = 'bo3' }) {
-  if (!match) return null;
+/* ── Shared: format map scores for display ─────────────────── */
+export function formatMapScores(result) {
+  if (!result || !result.maps) return [];
+  return result.maps.map(m => {
+    const high = Math.max(m.roundsA, m.roundsB);
+    const low = Math.min(m.roundsA, m.roundsB);
+    return `${high}-${low}`;
+  });
+}
 
+/* ── Match Card ──────────────────────────────────────────────── */
+function MatchCard({ match, bestOf = 'bo3' }) {
+  if (!match) return <div className="match-card empty" />;
   const { teamA, teamB, result } = match;
 
-  // Helper to render one team row inside the match card
+  let scoreA = null, scoreB = null, aWon = null, bWon = null;
+  if (result) {
+    if (result.winner === teamA) {
+      scoreA = Math.max(result.score[0], result.score[1]);
+      scoreB = Math.min(result.score[0], result.score[1]);
+      aWon = true; bWon = false;
+    } else {
+      scoreB = Math.max(result.score[0], result.score[1]);
+      scoreA = Math.min(result.score[0], result.score[1]);
+      aWon = false; bWon = true;
+    }
+  }
+
+  const mapScores = formatMapScores(result);
+
   const TeamRow = ({ team, score, isWinner }) => (
     <div className={`match-team ${isWinner === true ? 'winner' : ''} ${isWinner === false ? 'loser' : ''}`}>
-      <span
-        className="team-color"
-        style={{ background: team?.color || '#333' }}
-      />
+      <span className="team-color" style={{ background: team?.color || '#333' }} />
       <span className="team-name">{team?.abbr || 'TBD'}</span>
       <span className="team-score">{score ?? '-'}</span>
     </div>
   );
 
-  // Determine scores and winner
-  let scoreA = null, scoreB = null, aWon = null, bWon = null;
-  if (result) {
-    // result.score is [winsA, winsB] where A is from simulateSeries
-    // but winner might be teamB, so we need to figure out which score goes where
-    if (result.winner === teamA) {
-      scoreA = Math.max(result.score[0], result.score[1]);
-      scoreB = Math.min(result.score[0], result.score[1]);
-      aWon = true;
-      bWon = false;
-    } else {
-      scoreB = Math.max(result.score[0], result.score[1]);
-      scoreA = Math.min(result.score[0], result.score[1]);
-      aWon = false;
-      bWon = true;
-    }
-  }
-
   return (
     <div className="match-card">
       <TeamRow team={teamA} score={scoreA} isWinner={aWon} />
       <TeamRow team={teamB} score={scoreB} isWinner={bWon} />
+      {mapScores.length > 0 && (
+        <div className="match-map-scores">
+          {mapScores.map((s, i) => (
+            <span key={i} className="map-score-pill">M{i + 1}: {s}</span>
+          ))}
+        </div>
+      )}
       <span className="match-format">{bestOf}</span>
     </div>
   );
 }
 
-
-/**
- * A column of matches sharing the same round label.
- */
-function Round({ label, matches, bestOf = 'bo3' }) {
-  // Normalize to array (some rounds are a single match, not an array)
-  const matchList = Array.isArray(matches) ? matches : [matches];
-
-  return (
-    <div className="bracket-round">
-      <div className="round-label">{label}</div>
-      <div className="round-matches">
-        {matchList.map((match, i) => (
-          <MatchCard key={i} match={match} bestOf={bestOf} />
-        ))}
+/* ── SVG Connectors ──────────────────────────────────────────── */
+function Connector({ type = 'straight' }) {
+  if (type === 'converge') {
+    return (
+      <div className="connector converge">
+        <svg viewBox="0 0 32 100" preserveAspectRatio="none">
+          <path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" />
+          <path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" />
+        </svg>
       </div>
-    </div>
-  );
+    );
+  }
+  if (type === 'straight') {
+    return (
+      <div className="connector straight">
+        <svg viewBox="0 0 32 10" preserveAspectRatio="none">
+          <line x1="0" y1="5" x2="32" y2="5" stroke="var(--border-hover)" strokeWidth="2" />
+        </svg>
+      </div>
+    );
+  }
+  return null;
 }
 
-
-/**
- * Main Bracket component.
- */
+/* ── Main Bracket Component ──────────────────────────────────── */
 export default function Bracket({ gameState, bracket, onAdvanceBracket }) {
-
-  // ── Group stage not finished yet ──
   if (gameState.phase === 'group') {
     const remaining = gameState.schedule.filter(m => !m.result).length;
     return (
@@ -105,22 +98,14 @@ export default function Bracket({ gameState, bracket, onAdvanceBracket }) {
         <h2>Bracket</h2>
         <div className="empty-state">
           <p>The bracket will be revealed after group play ends.</p>
-          <p className="muted">
-            {remaining} group match{remaining !== 1 ? 'es' : ''} remaining.
-          </p>
+          <p className="muted">{remaining} group match{remaining !== 1 ? 'es' : ''} remaining.</p>
         </div>
       </>
     );
   }
 
-  // ── Bracket not yet generated (shouldn't happen, but safety check) ──
   if (!bracket) {
-    return (
-      <>
-        <h2>Bracket</h2>
-        <p className="muted">Generating bracket...</p>
-      </>
-    );
+    return <><h2>Bracket</h2><p className="muted">Generating bracket...</p></>;
   }
 
   const champion = getChampion(bracket);
@@ -128,16 +113,12 @@ export default function Bracket({ gameState, bracket, onAdvanceBracket }) {
   const isFinished = bracket.stage >= 7;
 
   return (
-    <>
+    <div className="bracket-page">
       <h2>Playoffs — Double Elimination</h2>
 
-      {/* Stage info and advance button */}
       <div className="bracket-controls">
         <p className="muted">
-          {isFinished
-            ? `🏆 ${champion.name} wins Champions!`
-            : `Next: ${stageName}`
-          }
+          {isFinished ? `🏆 ${champion.name} wins Champions!` : `Next: ${stageName}`}
         </p>
         {!isFinished && (
           <button className="btn-advance-bracket" onClick={onAdvanceBracket}>
@@ -146,44 +127,127 @@ export default function Bracket({ gameState, bracket, onAdvanceBracket }) {
         )}
       </div>
 
-      {/* ── Upper Bracket ── */}
-      <div className="bracket-section">
-        <h3 className="bracket-section-label upper">Upper Bracket</h3>
-        <div className="bracket-row">
-          <Round label="UB Quarterfinals" matches={bracket.ubQF} />
-          <Round label="UB Semifinals" matches={bracket.ubSF} />
-          <Round label="UB Final" matches={bracket.ubFinal} />
+      <div className="bracket-grid">
+
+        {/* ── Col 1: UBQF + LBR1 ── */}
+        <div className="bracket-col">
+          <div className="bracket-half upper">
+            <div className="round-label">UB Quarterfinals</div>
+            <div className="round-matches">
+              <MatchCard match={bracket.ubQF[0]} />
+              <MatchCard match={bracket.ubQF[1]} />
+            </div>
+          </div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower">
+            <div className="round-label">LB Round 1</div>
+            <div className="round-matches">
+              <MatchCard match={bracket.lbR1[0]} />
+              <MatchCard match={bracket.lbR1[1]} />
+            </div>
+          </div>
+        </div>
+
+        {/* Connectors 1→2 */}
+        <div className="bracket-connectors">
+          <div className="bracket-half upper"><Connector type="converge" /></div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower"><Connector type="converge" /></div>
+        </div>
+
+        {/* ── Col 2: UBSF + LBQF ── */}
+        <div className="bracket-col">
+          <div className="bracket-half upper">
+            <div className="round-label">UB Semifinals</div>
+            <div className="round-matches">
+              <MatchCard match={bracket.ubSF[0]} />
+              <MatchCard match={bracket.ubSF[1]} />
+            </div>
+          </div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower">
+            <div className="round-label">LB Quarterfinals</div>
+            <div className="round-matches">
+              <MatchCard match={bracket.lbQF[0]} />
+              <MatchCard match={bracket.lbQF[1]} />
+            </div>
+          </div>
+        </div>
+
+        {/* Connectors 2→3 */}
+        <div className="bracket-connectors">
+          <div className="bracket-half upper"><Connector type="converge" /></div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower"><Connector type="converge" /></div>
+        </div>
+
+        {/* ── Col 3: (empty top) + LBSF ── */}
+        <div className="bracket-col">
+          <div className="bracket-half upper">
+            <div className="round-label">&nbsp;</div>
+            <div className="round-matches round-matches-center">
+              <div className="bracket-through-line">→</div>
+            </div>
+          </div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower">
+            <div className="round-label">LB Semifinal</div>
+            <div className="round-matches round-matches-center">
+              <MatchCard match={bracket.lbSF} />
+            </div>
+          </div>
+        </div>
+
+        {/* Connectors 3→4 */}
+        <div className="bracket-connectors">
+          <div className="bracket-half upper"><Connector type="straight" /></div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower"><Connector type="straight" /></div>
+        </div>
+
+        {/* ── Col 4: UB Final + LB Final (SAME COLUMN) ── */}
+        <div className="bracket-col">
+          <div className="bracket-half upper">
+            <div className="round-label">UB Final</div>
+            <div className="round-matches round-matches-center">
+              <MatchCard match={bracket.ubFinal} />
+            </div>
+          </div>
+          <div className="bracket-divider" />
+          <div className="bracket-half lower">
+            <div className="round-label">LB Final</div>
+            <div className="round-matches round-matches-center">
+              <MatchCard match={bracket.lbFinal} bestOf="bo5" />
+            </div>
+          </div>
+        </div>
+
+        {/* Connectors 4→5 */}
+        <div className="bracket-connectors">
+          <Connector type="converge" />
+        </div>
+
+        {/* ── Col 5: Grand Final ── */}
+        <div className="bracket-col grand-final-col">
+          <div className="round-label grand-label">Grand Final</div>
+          <div className="round-matches round-matches-center">
+            <MatchCard match={bracket.grandFinal} bestOf="bo5" />
+          </div>
+          {champion && (
+            <div className="champion-banner">
+              <span className="champion-icon">🏆</span>
+              <span>{champion.name}</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Grand Final (center) ── */}
-      <div className="bracket-section">
-        <h3 className="bracket-section-label grand">Grand Final</h3>
-        <div className="bracket-row">
-          <Round label="" matches={bracket.grandFinal} bestOf="bo5" />
-        </div>
-      </div>
-
-      {/* ── Lower Bracket ── */}
-      <div className="bracket-section">
-        <h3 className="bracket-section-label lower">Lower Bracket</h3>
-        <div className="bracket-row">
-          <Round label="LB Round 1" matches={bracket.lbR1} />
-          <Round label="LB Quarterfinals" matches={bracket.lbQF} />
-          <Round label="LB Semifinal" matches={bracket.lbSF} />
-          <Round label="LB Final" matches={bracket.lbFinal} bestOf="bo5" />
-        </div>
-      </div>
-
-      {/* ── Eliminated teams ── */}
       {bracket.eliminated.length > 0 && (
         <div className="eliminated-list">
           <h3>Eliminated</h3>
-          <p className="muted">
-            {bracket.eliminated.map(t => t.abbr).join(', ')}
-          </p>
+          <p className="muted">{bracket.eliminated.map(t => t.abbr).join('  ·  ')}</p>
         </div>
       )}
-    </>
+    </div>
   );
 }

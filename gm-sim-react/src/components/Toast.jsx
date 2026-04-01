@@ -1,32 +1,30 @@
 /**
- * Toast.jsx — A small popup notification that appears briefly.
+ * Toast.jsx — Notification popup with map scores.
  *
- * REACT CONCEPT: useEffect for side effects
- *
- * useEffect lets you run code AFTER React renders. Here we use it
- * to start a timer that auto-dismisses the toast after a few seconds.
- *
- * The "cleanup" function (the return inside useEffect) cancels the
- * timer if the component unmounts before the timer fires — this
- * prevents memory leaks and "setState on unmounted component" warnings.
- *
- * useEffect dependency array [onClose]:
- *   - [] means "run once on mount"
- *   - [onClose] means "run when onClose changes" (safety habit)
+ * Now shows individual map results below the series score.
+ * Example:
+ *   W 2-1 vs Cloud9
+ *   13-8 · 9-13 · 13-11
  */
 
 import { useEffect } from 'react';
 
-export default function Toast({ message, type, onClose }) {
-  // Auto-dismiss after 4 seconds
+export default function Toast({ message, type, mapScores, onClose }) {
   useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
-    return () => clearTimeout(timer); // cleanup on unmount
+    const timer = setTimeout(onClose, 5000); // 5s to read map scores
+    return () => clearTimeout(timer);
   }, [onClose]);
 
   return (
     <div className={`toast toast-${type}`}>
-      <span>{message}</span>
+      <div className="toast-content">
+        <span className="toast-message">{message}</span>
+        {mapScores && mapScores.length > 0 && (
+          <span className="toast-maps">
+            {mapScores.join('  ·  ')}
+          </span>
+        )}
+      </div>
       <button className="toast-close" onClick={onClose}>✕</button>
     </div>
   );
