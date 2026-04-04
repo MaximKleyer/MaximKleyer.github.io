@@ -1,16 +1,15 @@
 /**
- * App.jsx — Root component.
- *
- * UPDATED: Toast now receives mapScores for display.
- * simulateSeries now stores teamA/teamB on result for Schedule detail view.
+ * App.jsx — Root component (complete, clean version).
  */
 
 import { useState, useCallback } from 'react';
 
 import { initLeague, getHumanTeam } from './engine/league.js';
+import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
 import { generateBracket, advanceBracketStage } from './engine/bracket.js';
+import { REQUIRED_ROLES } from './data/constants.js';
 
 import TeamSelect from './components/TeamSelect.jsx';
 import Sidebar from './components/Sidebar.jsx';
@@ -23,18 +22,44 @@ import Bracket from './components/Bracket.jsx';
 import Stats from './components/Stats.jsx';
 import Toast from './components/Toast.jsx';
 
+function processSeriesResult(result) {
+  const { winner, loser, maps, score } = result;
+  winner.record.wins++;
+  loser.record.losses++;
+  const wm = Math.max(score[0], score[1]);
+  const lm = Math.min(score[0], score[1]);
+  winner.record.mapWins += wm;
+  winner.record.mapLosses += lm;
+  loser.record.mapWins += lm;
+  loser.record.mapLosses += wm;
+  for (const map of maps) {
+    const teamAIsWinner = (result.teamA === winner);
+    if (teamAIsWinner) {
+      winner.record.roundWins += map.roundsA;
+      winner.record.roundLosses += map.roundsB;
+      loser.record.roundWins += map.roundsB;
+      loser.record.roundLosses += map.roundsA;
+    } else {
+      winner.record.roundWins += map.roundsB;
+      winner.record.roundLosses += map.roundsA;
+      loser.record.roundWins += map.roundsA;
+      loser.record.roundLosses += map.roundsB;
+    }
+  }
+}
+
 export default function App() {
   const [started, setStarted] = useState(false);
   const [gameState, setGameState] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [bracket, setBracket] = useState(null);
   const [toast, setToast] = useState(null);
+  const [, forceRender] = useState(0);
 
   const clearToast = useCallback(() => setToast(null), []);
 
   function handleTeamSelect(teamIndex) {
-    const state = initLeague(teamIndex);
-    setGameState(state);
+    setGameState(initLeague(teamIndex));
     setStarted(true);
   }
 
@@ -44,61 +69,98 @@ export default function App() {
 
   const humanTeam = getHumanTeam(gameState);
 
-  // ── Helper: build map score strings from a result ──
   function getMapScoreStrings(result) {
-    if (!result || !result.maps) return [];
-    return result.maps.map(m => {
-      const high = Math.max(m.roundsA, m.roundsB);
-      const low = Math.min(m.roundsA, m.roundsB);
-      return `${high}-${low}`;
-    });
+    if (!result?.maps) return [];
+    return result.maps.map(m =>
+      `${Math.max(m.roundsA, m.roundsB)}-${Math.min(m.roundsA, m.roundsB)}`
+    );
   }
 
-  // ── Helper: show toast for a match involving human team ──
   function showMatchToast(result, team) {
     const won = result.winner === team;
     const opponent = result.teamA === team ? result.teamB : result.teamA;
     const score = result.score;
-    const mapScores = getMapScoreStrings(result);
-
     setToast({
       message: won
         ? `W ${Math.max(...score)}-${Math.min(...score)} vs ${opponent.name}`
         : `L ${Math.min(...score)}-${Math.max(...score)} vs ${opponent.name}`,
       type: won ? 'win' : 'loss',
-      mapScores,
+      mapScores: getMapScoreStrings(result),
     });
   }
 
   // ── Advance Week ──
   function advanceWeek() {
     const { schedule, currentWeek } = gameState;
+
+    // Preseason
+    if (currentWeek === 0) {
+      for (const team of gameState.teams) {
+        while (team.roster.length < 5) {
+          const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length];
+          const fa = gameState.freeAgents.find(p => p.role === role);
+          if (fa) {
+            team.roster.push(fa);
+            gameState.freeAgents.splice(gameState.freeAgents.indexOf(fa), 1);
+          } else {
+            team.roster.push(generatePlayer(role));
+          }
+        }
+        team.validateStrategy();
+      }
+      setGameState(prev => ({ ...prev, currentWeek: 1 }));
+      setToast({ message: 'Season started!', type: 'win', mapScores: null });
+      return;
+    }
+
+    // Get this week's matches
     const weekMatches = schedule.filter(m => m.week === currentWeek && !m.result);
 
+    // No matches left — check if group stage is done
     if (weekMatches.length === 0) {
       const remaining = schedule.filter(m => !m.result);
       if (remaining.length === 0 && gameState.phase !== 'bracket') {
-        const newBracket = generateBracket(gameState.teams);
-        setBracket(newBracket);
-        setGameState(prev => ({ ...prev, phase: 'bracket' }));
+        // Freeze standings: sort order + records locked permanently
+        const frozenStandings = {};
+        for (const group of ['A', 'B']) {
+          const sorted = gameState.teams
+            .filter(t => t.group === group)
+            .sort((a, b) => {
+              if (b.record.wins !== a.record.wins) return b.record.wins - a.record.wins;
+              const mdA = a.record.mapWins - a.record.mapLosses;
+              const mdB = b.record.mapWins - b.record.mapLosses;
+              if (mdB !== mdA) return mdB - mdA;
+              const rdA = (a.record.roundWins || 0) - (a.record.roundLosses || 0);
+              const rdB = (b.record.roundWins || 0) - (b.record.roundLosses || 0);
+              if (rdB !== rdA) return rdB - rdA;
+              return b.overallRating - a.overallRating;
+            });
+          frozenStandings[group] = sorted.map(t => ({
+            abbr: t.abbr,
+            name: t.name,
+            color: t.color,
+            isHuman: t.isHuman,
+            overallRating: t.overallRating,
+            record: { ...t.record },
+          }));
+        }
+
+        setBracket(generateBracket(gameState.teams));
+        setGameState(prev => ({
+          ...prev,
+          phase: 'bracket',
+          frozenStandings,
+        }));
         setCurrentView('bracket');
       }
       return;
     }
 
+    // Simulate matches
     for (const match of weekMatches) {
       const result = simulateSeries(match.teamA, match.teamB, 3);
       match.result = result;
-
-      result.winner.record.wins++;
-      result.loser.record.losses++;
-      const winnerMaps = Math.max(result.score[0], result.score[1]);
-      const loserMaps  = Math.min(result.score[0], result.score[1]);
-      result.winner.record.mapWins += winnerMaps;
-      result.winner.record.mapLosses += loserMaps;
-      result.loser.record.mapWins += loserMaps;
-      result.loser.record.mapLosses += winnerMaps;
-
+      processSeriesResult(result);
       gameState.results.push({
         week: currentWeek,
         teamA: match.teamA.abbr,
@@ -110,12 +172,8 @@ export default function App() {
 
     runCpuMoves(gameState);
 
-    const humanMatch = weekMatches.find(
-      m => m.teamA === humanTeam || m.teamB === humanTeam
-    );
-    if (humanMatch && humanMatch.result) {
-      showMatchToast(humanMatch.result, humanTeam);
-    }
+    const humanMatch = weekMatches.find(m => m.teamA === humanTeam || m.teamB === humanTeam);
+    if (humanMatch?.result) showMatchToast(humanMatch.result, humanTeam);
 
     setGameState(prev => ({
       ...prev,
@@ -123,16 +181,13 @@ export default function App() {
     }));
   }
 
-  // ── Bracket advancement ──
+  // ── Bracket ──
   function advanceBracketStageHandler() {
     if (!bracket || bracket.stage >= 7) return;
     const updated = advanceBracketStage(bracket);
     setBracket(updated);
-
-    const humanMatch = findHumanBracketMatch(updated, humanTeam);
-    if (humanMatch && humanMatch.result) {
-      showMatchToast(humanMatch.result, humanTeam);
-    }
+    const hm = findHumanBracketMatch(updated, humanTeam);
+    if (hm?.result) showMatchToast(hm.result, humanTeam);
   }
 
   function findHumanBracketMatch(b, team) {
@@ -144,16 +199,16 @@ export default function App() {
       6: [b.lbFinal],
       7: [b.grandFinal],
     };
-    const matches = (stageMatches[b.stage] || []).flat();
-    return matches.find(m =>
-      m.result && (m.teamA === team || m.teamB === team)
+    return (stageMatches[b.stage] || []).flat().find(
+      m => m.result && (m.teamA === team || m.teamB === team)
     ) || null;
   }
 
-  // ── Roster actions ──
+  // ── Roster ──
   function signPlayer(player) {
     if (humanTeam.rosterFull) return;
     humanTeam.addPlayer(player);
+    humanTeam.validateStrategy();
     setGameState(prev => ({
       ...prev,
       freeAgents: prev.freeAgents.filter(p => p !== player),
@@ -161,14 +216,20 @@ export default function App() {
   }
 
   function releasePlayer(player) {
+    if (humanTeam.atMinRoster) return;
     humanTeam.removePlayer(player);
+    humanTeam.validateStrategy();
     setGameState(prev => ({
       ...prev,
       freeAgents: [...prev.freeAgents, player],
     }));
   }
 
-  // ── View rendering ──
+  function handleStrategyUpdate() {
+    forceRender(n => n + 1);
+  }
+
+  // ── Views ──
   function renderView() {
     switch (currentView) {
       case 'dashboard':
@@ -176,7 +237,13 @@ export default function App() {
       case 'schedule':
         return <Schedule gameState={gameState} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} />;
+        return (
+          <Roster
+            team={humanTeam}
+            onRelease={releasePlayer}
+            onUpdate={handleStrategyUpdate}
+          />
+        );
       case 'freeagents':
         return (
           <FreeAgents
@@ -186,7 +253,12 @@ export default function App() {
           />
         );
       case 'standings':
-        return <Standings teams={gameState.teams} />;
+        return (
+          <Standings
+            teams={gameState.teams}
+            frozenStandings={gameState.frozenStandings}
+          />
+        );
       case 'bracket':
         return (
           <Bracket

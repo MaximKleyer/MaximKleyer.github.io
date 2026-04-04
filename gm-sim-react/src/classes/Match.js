@@ -1,35 +1,66 @@
 /**
- * Match.js — Round-by-round Valorant match simulation.
+ * Match.js — Round-by-round simulation.
  *
- * UPDATED: simulateMap now returns per-player stats for each map
- * so the UI can show individual map stat lines, not just season totals.
+ * FIXED: simulateMap now stores rosterA/rosterB (player ID arrays)
+ * on the map result so the UI can show the correct players even
+ * if the roster changes after the match.
+ *
+ * simulateSeries also stores roster snapshots.
  */
 
 import { SIM } from '../data/constants.js';
+import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
 
-// Role aggression weights for duel selection
 const ROLE_AGGRESSION = {
-  duelist:    1.4,
-  initiator:  1.1,
-  flex:       1.0,
-  controller: 0.8,
-  sentinel:   0.7,
+  duelist: 1.4, initiator: 1.1, flex: 1.0, controller: 0.8, sentinel: 0.7,
 };
 
-/** Player's effective combat rating for a single duel */
-function getDuelRating(player) {
-  const r = player.ratings;
-  const base = (r.aim * 0.50) + (r.positioning * 0.20)
-             + (r.gamesense * 0.20) + (r.clutch * 0.10);
-  const variance = (Math.random() * 16) - 8;
-  return base + variance;
+const SUBTYPE_WEIGHTS = {};
+for (const role of Object.keys(SUBTYPES)) {
+  for (const sub of SUBTYPES[role]) {
+    SUBTYPE_WEIGHTS[sub.id] = sub.weights;
+  }
 }
 
-/** Pick which player takes the next fight (weighted by role aggression) */
-function pickFighter(alivePlayers) {
-  const weights = alivePlayers.map(p => ROLE_AGGRESSION[p.role] || 1.0);
-  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-  let roll = Math.random() * totalWeight;
+function getDuelRating(player, assignment) {
+  const r = player.ratings;
+  let weights = null;
+  if (assignment && assignment.subtypeId) {
+    weights = SUBTYPE_WEIGHTS[assignment.subtypeId];
+  }
+  let base;
+  if (weights) {
+    base = (r.aim * (weights.aim || 0)) + (r.positioning * (weights.positioning || 0))
+         + (r.gamesense * (weights.gamesense || 0)) + (r.clutch * (weights.clutch || 0))
+         + (r.utility * (weights.utility || 0));
+  } else {
+    base = (r.aim * 0.50) + (r.positioning * 0.20) + (r.gamesense * 0.20) + (r.clutch * 0.10);
+  }
+  return base + (Math.random() * 16) - 8;
+}
+
+function getIglBonus(team) {
+  const igl = team.igl;
+  if (!igl) return 0;
+  const iq = igl.ratings.gamesense;
+  return iq <= IGL_BASELINE ? 0 : (iq - IGL_BASELINE) * IGL_BONUS_MULTIPLIER;
+}
+
+function buildAssignmentMap(team) {
+  const map = {};
+  if (team.strategy?.assignments) {
+    for (const a of team.strategy.assignments) map[a.playerId] = a;
+  }
+  return map;
+}
+
+function pickFighter(alivePlayers, assignmentMap) {
+  const weights = alivePlayers.map(p => {
+    const a = assignmentMap[p.id];
+    return ROLE_AGGRESSION[a ? a.role : p.role] || 1.0;
+  });
+  const total = weights.reduce((s, w) => s + w, 0);
+  let roll = Math.random() * total;
   for (let i = 0; i < alivePlayers.length; i++) {
     roll -= weights[i];
     if (roll <= 0) return alivePlayers[i];
@@ -37,16 +68,14 @@ function pickFighter(alivePlayers) {
   return alivePlayers[alivePlayers.length - 1];
 }
 
-/** Check if a teammate gets an assist on a kill */
 function checkAssist(killer, aliveAllies) {
   const teammates = aliveAllies.filter(p => p !== killer);
   if (teammates.length === 0) return null;
   const avgUtil = teammates.reduce((s, p) => s + p.ratings.utility, 0) / teammates.length;
-  const assistChance = 0.20 + (avgUtil / 100) * 0.25;
-  if (Math.random() < assistChance) {
+  if (Math.random() < 0.20 + (avgUtil / 100) * 0.25) {
     const utilWeights = teammates.map(p => p.ratings.utility);
-    const totalUtil = utilWeights.reduce((s, w) => s + w, 0);
-    let roll = Math.random() * totalUtil;
+    const total = utilWeights.reduce((s, w) => s + w, 0);
+    let roll = Math.random() * total;
     for (let i = 0; i < teammates.length; i++) {
       roll -= utilWeights[i];
       if (roll <= 0) return teammates[i];
@@ -56,135 +85,100 @@ function checkAssist(killer, aliveAllies) {
   return null;
 }
 
-/** Kill bonus lookup — more enemies alive = more points */
 const KILL_BONUS = { 5: 150, 4: 130, 3: 110, 2: 90, 1: 70 };
 
-/** Simulate one round of 5v5 */
-function simulateRound(teamAPlayers, teamBPlayers, roundStats) {
+function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assignMapB) {
   const aliveA = [...teamAPlayers];
   const aliveB = [...teamBPlayers];
-  const roundKills = {};
-  const roundCombatScore = {};
-
+  const roundKills = {}, roundCS = {};
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
-    roundKills[p.id] = 0;
-    roundCombatScore[p.id] = 0;
+    roundKills[p.id] = 0; roundCS[p.id] = 0;
   }
 
   while (aliveA.length > 0 && aliveB.length > 0) {
-    const fighterA = pickFighter(aliveA);
-    const fighterB = pickFighter(aliveB);
-    const ratingA = getDuelRating(fighterA);
-    const ratingB = getDuelRating(fighterB);
-    const powA = ratingA ** 3;
-    const powB = ratingB ** 3;
-    const probAWins = powA / (powA + powB);
+    const fA = pickFighter(aliveA, assignMapA);
+    const fB = pickFighter(aliveB, assignMapB);
+    const rA = getDuelRating(fA, assignMapA[fA.id]);
+    const rB = getDuelRating(fB, assignMapB[fB.id]);
+    const pA = rA ** 3, pB = rB ** 3;
+    const prob = pA / (pA + pB);
 
-    let killer, victim, killerAlive, victimAlive;
-    if (Math.random() < probAWins) {
-      killer = fighterA; victim = fighterB;
-      killerAlive = aliveA; victimAlive = aliveB;
+    let killer, victim, kAlive, vAlive;
+    if (Math.random() < prob) {
+      killer = fA; victim = fB; kAlive = aliveA; vAlive = aliveB;
     } else {
-      killer = fighterB; victim = fighterA;
-      killerAlive = aliveB; victimAlive = aliveA;
+      killer = fB; victim = fA; kAlive = aliveB; vAlive = aliveA;
     }
 
-    roundStats[killer.id].kills += 1;
-    roundStats[victim.id].deaths += 1;
-    roundKills[killer.id] += 1;
+    roundStats[killer.id].kills++; roundStats[victim.id].deaths++;
+    roundKills[killer.id]++;
+    const dmg = 100 + Math.round(Math.random() * 50);
+    const kb = KILL_BONUS[Math.min(vAlive.length, 5)] || 70;
+    roundCS[killer.id] += dmg + kb;
 
-    const damageDealt = 100 + Math.round(Math.random() * 50);
-    const enemiesAlive = victimAlive.length;
-    const killBonus = KILL_BONUS[Math.min(enemiesAlive, 5)] || 70;
-    roundCombatScore[killer.id] += damageDealt + killBonus;
+    const asst = checkAssist(killer, kAlive);
+    if (asst) { roundStats[asst.id].assists++; roundCS[asst.id] += 25; }
 
-    const assister = checkAssist(killer, killerAlive);
-    if (assister) {
-      roundStats[assister.id].assists += 1;
-      roundCombatScore[assister.id] += 25;
-    }
+    vAlive.splice(vAlive.indexOf(victim), 1);
 
-    const victimIdx = victimAlive.indexOf(victim);
-    victimAlive.splice(victimIdx, 1);
-
-    // Trade kill mechanic
-    if (victimAlive.length > 0 && killerAlive.length > 0) {
-      if (Math.random() < 0.15) {
-        const trader = pickFighter(victimAlive);
-        roundStats[trader.id].kills += 1;
-        roundStats[killer.id].deaths += 1;
-        roundKills[trader.id] += 1;
-
-        const tradeDamage = 100 + Math.round(Math.random() * 50);
-        const tradeEnemies = killerAlive.length;
-        const tradeBonus = KILL_BONUS[Math.min(tradeEnemies, 5)] || 70;
-        roundCombatScore[trader.id] += tradeDamage + tradeBonus;
-
-        const tradeAssister = checkAssist(trader, victimAlive);
-        if (tradeAssister) {
-          roundStats[tradeAssister.id].assists += 1;
-          roundCombatScore[tradeAssister.id] += 25;
-        }
-
-        const killerIdx = killerAlive.indexOf(killer);
-        killerAlive.splice(killerIdx, 1);
-      }
+    if (vAlive.length > 0 && kAlive.length > 0 && Math.random() < 0.15) {
+      const trader = pickFighter(vAlive, kAlive === aliveA ? assignMapB : assignMapA);
+      roundStats[trader.id].kills++; roundStats[killer.id].deaths++;
+      roundKills[trader.id]++;
+      const td = 100 + Math.round(Math.random() * 50);
+      const tb = KILL_BONUS[Math.min(kAlive.length, 5)] || 70;
+      roundCS[trader.id] += td + tb;
+      const ta = checkAssist(trader, vAlive);
+      if (ta) { roundStats[ta.id].assists++; roundCS[ta.id] += 25; }
+      kAlive.splice(kAlive.indexOf(killer), 1);
     }
   }
 
-  // Multikill bonuses
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
-    if (roundKills[p.id] >= 2) {
-      roundCombatScore[p.id] += (roundKills[p.id] - 1) * 50;
-    }
+    if (roundKills[p.id] >= 2) roundCS[p.id] += (roundKills[p.id] - 1) * 50;
   }
-
-  // Chip damage for non-killers
   const survivors = aliveA.length > 0 ? aliveA : aliveB;
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
     if (roundKills[p.id] === 0) {
-      const isSurvivor = survivors.includes(p);
-      roundCombatScore[p.id] += Math.round(Math.random() * (isSurvivor ? 40 : 20));
+      roundCS[p.id] += Math.round(Math.random() * (survivors.includes(p) ? 40 : 20));
     }
   }
-
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
-    roundStats[p.id].combatScore += roundCombatScore[p.id];
+    roundStats[p.id].combatScore += roundCS[p.id];
   }
-
   return aliveA.length > 0 ? 'A' : 'B';
 }
 
-
-/**
- * Simulate one map. Returns score AND per-player stats for this map.
- *
- * NEW: returns a `playerStats` object keyed by player.id containing
- * { kills, deaths, assists, acs } for this specific map.
- */
 export function simulateMap(teamA, teamB) {
-  let roundsA = 0;
-  let roundsB = 0;
+  let roundsA = 0, roundsB = 0;
+  const assignMapA = buildAssignmentMap(teamA);
+  const assignMapB = buildAssignmentMap(teamB);
+  const iglBonusA = getIglBonus(teamA);
+  const iglBonusB = getIglBonus(teamB);
 
   const roundStats = {};
   for (const p of [...teamA.roster, ...teamB.roster]) {
     roundStats[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
   }
 
-  // Regulation
-  while (roundsA < 13 && roundsB < 13) {
-    if (roundsA === 12 && roundsB === 12) break;
-    const winner = simulateRound(teamA.roster, teamB.roster, roundStats);
-    if (winner === 'A') roundsA++; else roundsB++;
+  function playRound() {
+    const iglDiff = iglBonusA - iglBonusB;
+    const iglSwing = iglDiff * 0.01;
+    if (Math.random() < Math.abs(iglSwing)) {
+      simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB);
+      return iglSwing > 0 ? 'A' : 'B';
+    }
+    return simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB);
   }
 
-  // Overtime
+  while (roundsA < 13 && roundsB < 13) {
+    if (roundsA === 12 && roundsB === 12) break;
+    playRound() === 'A' ? roundsA++ : roundsB++;
+  }
   if (roundsA === 12 && roundsB === 12) {
     while (Math.abs(roundsA - roundsB) < 2) {
-      const w1 = simulateRound(teamA.roster, teamB.roster, roundStats);
-      if (w1 === 'A') roundsA++; else roundsB++;
-      const w2 = simulateRound(teamA.roster, teamB.roster, roundStats);
-      if (w2 === 'A') roundsA++; else roundsB++;
+      playRound() === 'A' ? roundsA++ : roundsB++;
+      playRound() === 'A' ? roundsA++ : roundsB++;
     }
   }
 
@@ -192,26 +186,22 @@ export function simulateMap(teamA, teamB) {
   const winner = roundsA > roundsB ? teamA : teamB;
   const loser = winner === teamA ? teamB : teamA;
 
-  // Build per-player map stats AND accumulate into season totals
+  // Build per-player stats AND snapshot roster IDs at match time
   const playerStats = {};
+  const rosterAIds = teamA.roster.map(p => p.id);
+  const rosterBIds = teamB.roster.map(p => p.id);
 
   for (const player of [...teamA.roster, ...teamB.roster]) {
     const rs = roundStats[player.id];
     const acs = Math.round(rs.combatScore / totalRounds);
-
-    // Per-map stats (stored on the map result for UI display)
     playerStats[player.id] = {
+      id: player.id,
       name: player.name,
       tag: player.tag,
       role: player.role,
-      teamAbbr: teamA.roster.includes(player) ? teamA.abbr : teamB.abbr,
-      kills: rs.kills,
-      deaths: rs.deaths,
-      assists: rs.assists,
-      acs: acs,
+      teamAbbr: rosterAIds.includes(player.id) ? teamA.abbr : teamB.abbr,
+      kills: rs.kills, deaths: rs.deaths, assists: rs.assists, acs,
     };
-
-    // Accumulate into season totals
     player.stats.kills += rs.kills;
     player.stats.deaths += rs.deaths;
     player.stats.assists += rs.assists;
@@ -219,25 +209,24 @@ export function simulateMap(teamA, teamB) {
     player.stats.maps += 1;
   }
 
-  return { roundsA, roundsB, winner, loser, totalRounds, playerStats };
+  return {
+    roundsA, roundsB, winner, loser, totalRounds, playerStats,
+    // Roster snapshots — these IDs won't change even if roster moves happen later
+    rosterAIds,
+    rosterBIds,
+  };
 }
 
-
-/** Simulate a best-of-N series */
 export function simulateSeries(teamA, teamB, bestOf = 3) {
   const mapsNeeded = Math.ceil(bestOf / 2);
   const maps = [];
-  let winsA = 0;
-  let winsB = 0;
-
+  let winsA = 0, winsB = 0;
   while (winsA < mapsNeeded && winsB < mapsNeeded) {
     const result = simulateMap(teamA, teamB);
     maps.push(result);
-    if (result.winner === teamA) winsA++; else winsB++;
+    result.winner === teamA ? winsA++ : winsB++;
   }
-
   const winner = winsA > winsB ? teamA : teamB;
   const loser = winner === teamA ? teamB : teamA;
-
   return { winner, loser, maps, score: [winsA, winsB], teamA, teamB };
 }

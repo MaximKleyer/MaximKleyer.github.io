@@ -1,56 +1,39 @@
 /**
- * Dashboard.jsx — The "home" view showing a summary of everything.
- *
- * ═══════════════════════════════════════════════════════════════
- * REACT CONCEPT: Declarative Rendering
- * ═══════════════════════════════════════════════════════════════
- *
- * VANILLA:
- *   function renderDashboard() {
- *     const el = document.getElementById('content');
- *     el.innerHTML = `<h2>Dashboard</h2><p>${team.name}</p>`;
- *   }
- *   // Must be called manually whenever data changes.
- *
- * REACT:
- *   function Dashboard({ humanTeam }) {
- *     return <h2>Dashboard</h2><p>{humanTeam.name}</p>;
- *   }
- *   // Re-renders automatically when humanTeam changes.
- *
- * The key insight: you describe the UI as a function of data.
- * Same data → same output, every time. React handles the when.
- *
- * ═══════════════════════════════════════════════════════════════
+ * Dashboard.jsx — Uses frozen standings when in bracket phase.
  */
 
 import { getGroupStandings } from '../engine/standings.js';
 
 export default function Dashboard({ gameState, humanTeam }) {
-  // Get standings for the human team's group
-  const groupStandings = getGroupStandings(gameState.teams, humanTeam.group);
+  const isPreseason = gameState.currentWeek === 0;
+  const isBracket = !!gameState.frozenStandings;
 
-  // Find the next upcoming match for the human team
+  // Use frozen standings if available, otherwise compute live
+  let groupStandings;
+  if (isBracket && gameState.frozenStandings[humanTeam.group]) {
+    groupStandings = gameState.frozenStandings[humanTeam.group];
+  } else {
+    groupStandings = getGroupStandings(gameState.teams, humanTeam.group);
+  }
+
   const nextMatch = gameState.schedule.find(
     m => !m.result && (m.teamA === humanTeam || m.teamB === humanTeam)
   );
 
   return (
     <>
-      {/*
-        <> and </> are "fragments" — they let you return multiple
-        elements without adding an extra <div> wrapper to the DOM.
-        In vanilla, you'd just concatenate strings. In React, every
-        component must return a single root element, and fragments
-        give you that without polluting the HTML structure.
-      */}
       <h2>Dashboard</h2>
       <p className="muted">
-        Week {gameState.currentWeek} &middot; {gameState.phase} stage
+        {isPreseason
+          ? 'Preseason — Make roster moves, then start the season'
+          : isBracket
+            ? 'Playoffs — Double Elimination'
+            : `Week ${gameState.currentWeek} · ${gameState.phase} stage`
+        }
       </p>
 
       <div className="dashboard-grid">
-        {/* Team info card */}
+        {/* Team info */}
         <div className="card">
           <h3>Your Team</h3>
           <p><strong>{humanTeam.name}</strong> ({humanTeam.abbr})</p>
@@ -60,12 +43,19 @@ export default function Dashboard({ gameState, humanTeam }) {
           <p>Team OVR: {humanTeam.overallRating}</p>
         </div>
 
-        {/* Next match card */}
+        {/* Next match / phase info */}
         <div className="card">
-          <h3>Next Match</h3>
-          {nextMatch ? (
-            // Ternary in JSX — React's version of if/else for rendering.
-            // {condition ? <ShowThis /> : <ShowThat />}
+          <h3>{isPreseason ? 'Season Preview' : isBracket ? 'Playoffs' : 'Next Match'}</h3>
+          {isPreseason ? (
+            <div>
+              <p>Review your roster and sign free agents.</p>
+              <p className="muted" style={{ marginTop: '8px' }}>
+                Click <strong>▶ Start Season</strong> when ready.
+              </p>
+            </div>
+          ) : isBracket ? (
+            <p className="muted">Check the Bracket tab for playoff matchups.</p>
+          ) : nextMatch ? (
             <p>
               Week {nextMatch.week}:&nbsp;
               <strong>{nextMatch.teamA.abbr}</strong> vs&nbsp;
@@ -76,7 +66,7 @@ export default function Dashboard({ gameState, humanTeam }) {
           )}
         </div>
 
-        {/* Roster summary card */}
+        {/* Roster */}
         <div className="card">
           <h3>Roster ({humanTeam.roster.length}/5)</h3>
           {humanTeam.roster.map(player => (
@@ -85,23 +75,38 @@ export default function Dashboard({ gameState, humanTeam }) {
               <span className="muted"> — {player.role} — {player.overall} OVR</span>
             </p>
           ))}
+          {humanTeam.roster.length < 5 && (
+            <p style={{ color: 'var(--accent)', marginTop: '8px', fontWeight: 600 }}>
+              ⚠ Need {5 - humanTeam.roster.length} more player{5 - humanTeam.roster.length > 1 ? 's' : ''}
+            </p>
+          )}
         </div>
 
-        {/* Group standings card */}
+        {/* Standings */}
         <div className="card">
-          <h3>Group {humanTeam.group} Standings</h3>
+          <h3>
+            Group {humanTeam.group} Standings
+            {isBracket && <span className="muted" style={{ fontSize: '0.7rem' }}> (final)</span>}
+          </h3>
           <table>
             <thead>
               <tr><th>#</th><th>Team</th><th>W-L</th></tr>
             </thead>
             <tbody>
-              {groupStandings.map((team, i) => (
-                <tr key={team.abbr} className={team.isHuman ? 'highlight' : ''}>
-                  <td>{i + 1}</td>
-                  <td>{team.abbr}</td>
-                  <td>{team.recordStr}</td>
-                </tr>
-              ))}
+              {groupStandings.map((entry, i) => {
+                // Frozen entries have abbr/name/record; live entries are team objects
+                const abbr = entry.abbr;
+                const isHuman = entry.isHuman ?? entry.isHuman;
+                const rec = entry.record ?? entry.record;
+
+                return (
+                  <tr key={abbr} className={isHuman ? 'highlight' : ''}>
+                    <td>{i + 1}</td>
+                    <td>{abbr}</td>
+                    <td>{rec.wins}-{rec.losses}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

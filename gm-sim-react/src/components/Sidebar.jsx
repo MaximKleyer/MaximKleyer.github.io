@@ -1,8 +1,9 @@
 /**
- * Sidebar.jsx — Navigation with context-aware advance button.
+ * Sidebar.jsx — Context-aware navigation.
  *
- * During group stage: shows "Advance Week" button.
- * During bracket stage: hides it (bracket advances from the Bracket tab).
+ * Week 0: Shows "Start Season" button (validates rosters first)
+ * Week 1-5: Shows "Advance Week" button
+ * Bracket: Shows "Playoffs" label, no advance button
  */
 
 const NAV_ITEMS = [
@@ -16,6 +17,8 @@ const NAV_ITEMS = [
 ];
 
 export default function Sidebar({ currentView, onNavigate, currentWeek, onAdvanceWeek, phase }) {
+  const isPreseason = currentWeek === 0;
+
   return (
     <nav id="sidebar">
       <div className="sidebar-header">
@@ -36,9 +39,15 @@ export default function Sidebar({ currentView, onNavigate, currentWeek, onAdvanc
       <div className="sidebar-footer">
         {phase === 'group' ? (
           <>
-            <div id="week-display">Week {currentWeek}</div>
-            <button id="btn-advance" onClick={onAdvanceWeek}>
-              Advance Week
+            <div id="week-display">
+              {isPreseason ? 'Preseason' : `Week ${currentWeek}`}
+            </div>
+            <button
+              id="btn-advance"
+              className={isPreseason ? 'btn-start-season' : ''}
+              onClick={onAdvanceWeek}
+            >
+              {isPreseason ? '▶ Start Season' : 'Advance Week'}
             </button>
           </>
         ) : (
