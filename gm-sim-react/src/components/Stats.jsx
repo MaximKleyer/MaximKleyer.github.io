@@ -1,24 +1,36 @@
-/**
- * Stats.jsx — League stat leaders with maps played column.
- */
-
 import { useState } from 'react';
+import RegionSelector from './RegionSelector.jsx';
+import { REGION_KEYS, REGIONS } from '../data/regions.js';
 
-export default function Stats({ teams }) {
+export default function Stats({ regions, viewRegion, onChangeRegion }) {
   const [sortKey, setSortKey] = useState('kills');
+  const showAll = viewRegion === 'all';
 
-  const allPlayers = teams.flatMap(team =>
-    team.roster.map(player => ({ player, teamAbbr: team.abbr }))
-  );
+  // Gather players from selected region(s)
+  const regionKeys = showAll ? REGION_KEYS : [viewRegion];
+  const allPlayers = [];
+  for (const rk of regionKeys) {
+    const region = regions[rk];
+    if (!region) continue;
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        allPlayers.push({
+          player,
+          teamAbbr: team.abbr,
+          regionName: region.name,
+          regionAbbr: region.abbr,
+        });
+      }
+    }
+  }
 
   const sorted = [...allPlayers].sort((a, b) => {
     const pA = a.player, pB = b.player;
     switch (sortKey) {
       case 'kd': return pB.kd - pA.kd;
       case 'avgAcs': return pB.avgAcs - pA.avgAcs;
-      case 'maps': return (pB.player?.stats?.maps || 0) - (pA.player?.stats?.maps || 0);
-      default: return (pB.stats?.[sortKey] || pB.player?.stats?.[sortKey] || 0)
-                    - (pA.stats?.[sortKey] || pA.player?.stats?.[sortKey] || 0);
+      case 'maps': return pB.stats.maps - pA.stats.maps;
+      default: return (pB.stats[sortKey] || 0) - (pA.stats[sortKey] || 0);
     }
   });
 
@@ -31,14 +43,16 @@ export default function Stats({ teams }) {
     { key: 'maps', label: 'Maps' },
   ];
 
+  const title = showAll ? 'All Regions' : (regions[viewRegion]?.name || '');
+
   return (
     <>
-      <h2>Stat Leaders</h2>
+      <h2>Stat Leaders — {title}</h2>
+      <RegionSelector current={viewRegion} onChange={onChangeRegion} showAll={true} />
 
-      <div className="sort-buttons">
+      <div className="sort-buttons" style={{ marginTop: 12 }}>
         {sortOptions.map(opt => (
-          <button key={opt.key} className={sortKey === opt.key ? 'active' : ''}
-            onClick={() => setSortKey(opt.key)}>
+          <button key={opt.key} className={sortKey === opt.key ? 'active' : ''} onClick={() => setSortKey(opt.key)}>
             {opt.label}
           </button>
         ))}
@@ -47,16 +61,18 @@ export default function Stats({ teams }) {
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Player</th><th>Team</th><th>Role</th>
-            <th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
+            <th>#</th><th>Player</th><th>Team</th>
+            {showAll && <th>Region</th>}
+            <th>Role</th><th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map(({ player, teamAbbr }, i) => (
+          {sorted.map(({ player, teamAbbr, regionAbbr }, i) => (
             <tr key={player.id}>
               <td>{i + 1}</td>
               <td>{player.tag}</td>
               <td>{teamAbbr}</td>
+              {showAll && <td>{regionAbbr}</td>}
               <td>{player.role}</td>
               <td>{player.stats.maps}</td>
               <td>{player.stats.kills}</td>

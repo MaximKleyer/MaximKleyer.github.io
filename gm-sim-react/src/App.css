@@ -1057,3 +1057,53 @@
     .mc-format { display: none; }
     .team-select-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
   }
+
+  /* ── 19. Region Selector ───────────────────────────────────── */
+  .region-selector {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  
+  .region-btn {
+    padding: 6px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .region-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--white);
+    background: var(--bg-card-hover);
+  }
+  
+  .region-btn.active {
+    background: var(--bg-card-hover);
+    font-weight: 700;
+  }
+  
+  /* ── Region back button (team select) ──────────────────────── */
+  .region-back-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-bottom: 20px;
+    padding: 4px 0;
+    transition: color 0.2s;
+  }
+  
+  .region-back-btn:hover {
+    color: var(--accent);
+  }
+  

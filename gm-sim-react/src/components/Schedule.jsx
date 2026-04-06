@@ -1,57 +1,38 @@
-/**
- * Schedule.jsx — 3 weeks per row grid layout with shared MatchCard.
- */
-
 import { useState } from 'react';
 import MatchCard from './MatchCard.jsx';
+import RegionSelector from './RegionSelector.jsx';
 
-export default function Schedule({ gameState }) {
-  const { schedule, currentWeek } = gameState;
+export default function Schedule({ regionData, viewRegion, onChangeRegion }) {
+  const { schedule, currentWeek } = regionData;
   const [expanded, setExpanded] = useState(null);
   const weeks = [...new Set(schedule.map(m => m.week))].sort((a, b) => a - b);
 
   return (
     <>
-      <h2>Schedule</h2>
-      <p className="muted" style={{ marginBottom: 16, fontSize: '0.75rem' }}>
+      <h2>Schedule — {regionData.name}</h2>
+      <RegionSelector current={viewRegion} onChange={onChangeRegion} />
+      <p className="muted" style={{ marginTop: 12, fontSize: '0.75rem' }}>
         Click a completed match to view player stats
       </p>
 
       <div className="schedule-weeks-grid">
         {weeks.map(week => (
-          <div
-            key={week}
-            className={`week-block ${week < currentWeek ? 'past' : week === currentWeek ? 'current' : 'future'}`}
-          >
-            <h3>
-              Week {week}
-              {week === currentWeek && <span className="muted"> ← current</span>}
-            </h3>
-
+          <div key={week} className={`week-block ${week < currentWeek ? 'past' : week === currentWeek ? 'current' : 'future'}`}>
+            <h3>Week {week}{week === currentWeek && <span className="muted"> ← current</span>}</h3>
             <div className="schedule-card-grid">
               {schedule.filter(m => m.week === week).map((match) => {
                 const idx = schedule.indexOf(match);
                 const isExp = expanded === idx;
                 const has = !!match.result;
-
                 return (
                   <div key={idx} className="schedule-card-wrapper">
                     <div className="schedule-card-row">
                       <span className="schedule-group-badge">{match.group}</span>
-                      <MatchCard
-                        match={{ teamA: match.teamA, teamB: match.teamB, result: match.result }}
-                        clickable={has}
-                        onClick={() => setExpanded(isExp ? null : idx)}
-                      />
+                      <MatchCard match={{ teamA: match.teamA, teamB: match.teamB, result: match.result }} clickable={has} onClick={() => setExpanded(isExp ? null : idx)} />
                     </div>
-
                     {isExp && has && (
                       <div className="schedule-detail-panel">
-                        <MatchDetail
-                          result={match.result}
-                          teamA={match.teamA}
-                          teamB={match.teamB}
-                        />
+                        <MatchDetail result={match.result} teamA={match.teamA} teamB={match.teamB} />
                       </div>
                     )}
                   </div>
@@ -65,7 +46,6 @@ export default function Schedule({ gameState }) {
   );
 }
 
-
 function MatchDetail({ result, teamA, teamB }) {
   const [selectedMap, setSelectedMap] = useState(0);
   const map = result.maps[selectedMap];
@@ -73,25 +53,16 @@ function MatchDetail({ result, teamA, teamB }) {
   const bIds = map.rosterBIds || [];
   const aStats = aIds.map(id => map.playerStats?.[id]).filter(Boolean).sort((a, b) => b.acs - a.acs);
   const bStats = bIds.map(id => map.playerStats?.[id]).filter(Boolean).sort((a, b) => b.acs - a.acs);
-
   return (
     <div className="match-detail">
       <div className="map-score-row">
-        {result.maps.map((m, i) => {
-          const high = Math.max(m.roundsA, m.roundsB);
-          const low = Math.min(m.roundsA, m.roundsB);
-          return (
-            <button
-              key={i}
-              className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`}
-              onClick={() => setSelectedMap(i)}
-            >
-              <span className="map-pill-label">Map {i + 1}</span>
-              <span className="map-pill-score">{high}-{low}</span>
-              <span className="map-pill-winner">{m.winner.abbr}</span>
-            </button>
-          );
-        })}
+        {result.maps.map((m, i) => (
+          <button key={i} className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`} onClick={() => setSelectedMap(i)}>
+            <span className="map-pill-label">Map {i + 1}</span>
+            <span className="map-pill-score">{Math.max(m.roundsA, m.roundsB)}-{Math.min(m.roundsA, m.roundsB)}</span>
+            <span className="map-pill-winner">{m.winner.abbr}</span>
+          </button>
+        ))}
       </div>
       <div className="map-stats-grid">
         <StatsTable stats={aStats} teamName={teamA.name} teamColor={teamA.color} />
@@ -101,7 +72,6 @@ function MatchDetail({ result, teamA, teamB }) {
   );
 }
 
-
 function StatsTable({ stats, teamName, teamColor }) {
   return (
     <div className="map-stats-team">
@@ -110,21 +80,8 @@ function StatsTable({ stats, teamName, teamColor }) {
         <span>{teamName}</span>
       </div>
       <table className="map-stats-table">
-        <thead>
-          <tr><th>Player</th><th>Role</th><th>K</th><th>D</th><th>A</th><th>ACS</th></tr>
-        </thead>
-        <tbody>
-          {stats.map(s => (
-            <tr key={s.id || s.tag}>
-              <td><strong>{s.tag}</strong></td>
-              <td>{s.role}</td>
-              <td>{s.kills}</td>
-              <td>{s.deaths}</td>
-              <td>{s.assists}</td>
-              <td>{s.acs}</td>
-            </tr>
-          ))}
-        </tbody>
+        <thead><tr><th>Player</th><th>Role</th><th>K</th><th>D</th><th>A</th><th>ACS</th></tr></thead>
+        <tbody>{stats.map(s => (<tr key={s.id || s.tag}><td><strong>{s.tag}</strong></td><td>{s.role}</td><td>{s.kills}</td><td>{s.deaths}</td><td>{s.assists}</td><td>{s.acs}</td></tr>))}</tbody>
       </table>
     </div>
   );

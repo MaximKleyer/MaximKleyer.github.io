@@ -1,15 +1,37 @@
 /**
- * App.jsx — Root component (complete, clean version).
+ * App.jsx — Multi-region. Sidebar "Advance Week" handles everything:
+ *   - Group stage: advances all regions' weeks
+ *   - Bracket stage: advances all regions' brackets one stage
  */
 
 import { useState, useCallback } from 'react';
 
-import { initLeague, getHumanTeam } from './engine/league.js';
+import { initGame, getHumanTeam } from './engine/league.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
-import { generateBracket, advanceBracketStage } from './engine/bracket.js';
+import {
+  generateBracket,
+  advanceBracketStage as runBracketStage,
+  getStageName,
+} from './engine/bracket.js';
+import {
+  initSeason,
+  getCurrentStageName,
+  getCurrentSlot,
+  isStageSlotComplete,
+  completeCurrentStage,
+  isInternationalSlotComplete,
+  completeCurrentInternational,
+  beginNextSlot,
+  awardGroupStageWin,
+} from './engine/season.js';
+import {
+  advanceInternational,
+  isInternationalComplete,
+} from './engine/international.js';
 import { REQUIRED_ROLES } from './data/constants.js';
+import { REGION_KEYS } from './data/regions.js';
 
 import TeamSelect from './components/TeamSelect.jsx';
 import Sidebar from './components/Sidebar.jsx';
@@ -20,7 +42,10 @@ import FreeAgents from './components/FreeAgents.jsx';
 import Standings from './components/Standings.jsx';
 import Bracket from './components/Bracket.jsx';
 import Stats from './components/Stats.jsx';
+import Points from './components/Points.jsx';
+import International from './components/International.jsx';
 import Toast from './components/Toast.jsx';
+import StageTransition from './components/StageTransition.jsx';
 
 function processSeriesResult(result) {
   const { winner, loser, maps, score } = result;
@@ -33,7 +58,7 @@ function processSeriesResult(result) {
   loser.record.mapWins += lm;
   loser.record.mapLosses += wm;
   for (const map of maps) {
-    const teamAIsWinner = (result.teamA === winner);
+    const teamAIsWinner = result.teamA === winner;
     if (teamAIsWinner) {
       winner.record.roundWins += map.roundsA;
       winner.record.roundLosses += map.roundsB;
@@ -48,18 +73,45 @@ function processSeriesResult(result) {
   }
 }
 
+function freezeStandings(teams) {
+  const frozen = {};
+  for (const group of ['A', 'B']) {
+    const sorted = teams
+      .filter(t => t.group === group)
+      .sort((a, b) => {
+        if (b.record.wins !== a.record.wins) return b.record.wins - a.record.wins;
+        const mdB = b.record.mapWins - b.record.mapLosses;
+        const mdA = a.record.mapWins - a.record.mapLosses;
+        if (mdB !== mdA) return mdB - mdA;
+        const rdB = (b.record.roundWins || 0) - (b.record.roundLosses || 0);
+        const rdA = (a.record.roundWins || 0) - (a.record.roundLosses || 0);
+        if (rdB !== rdA) return rdB - rdA;
+        return b.overallRating - a.overallRating;
+      });
+    frozen[group] = sorted.map(t => ({
+      abbr: t.abbr, name: t.name, color: t.color,
+      isHuman: t.isHuman, overallRating: t.overallRating,
+      record: { ...t.record },
+    }));
+  }
+  return frozen;
+}
+
 export default function App() {
   const [started, setStarted] = useState(false);
   const [gameState, setGameState] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
-  const [bracket, setBracket] = useState(null);
   const [toast, setToast] = useState(null);
   const [, forceRender] = useState(0);
+  const [viewRegion, setViewRegion] = useState(null);
 
   const clearToast = useCallback(() => setToast(null), []);
 
-  function handleTeamSelect(teamIndex) {
-    setGameState(initLeague(teamIndex));
+  function handleTeamSelect(regionKey, teamIndex) {
+    const gs = initGame(regionKey, teamIndex);
+    gs.season = initSeason(gs);
+    setGameState(gs);
+    setViewRegion(regionKey);
     setStarted(true);
   }
 
@@ -68,6 +120,17 @@ export default function App() {
   }
 
   const humanTeam = getHumanTeam(gameState);
+  const humanRegionData = gameState.regions[gameState.humanRegion];
+  const vr = viewRegion || gameState.humanRegion;
+
+  const seasonStatus = gameState.season?.status || 'active';
+  const inTransition = seasonStatus === 'transition';
+  const circuitComplete = seasonStatus === 'complete';
+
+  // Determine overall phase: if human region is in bracket, we're in bracket mode
+  const isGroupPhase = humanRegionData.phase === 'group';
+  // Stage slot is "done" when every region has finished its bracket.
+  const allBracketsDone = isStageSlotComplete(gameState) || circuitComplete;
 
   function getMapScoreStrings(result) {
     if (!result?.maps) return [];
@@ -89,118 +152,160 @@ export default function App() {
     });
   }
 
-  // ── Advance Week ──
-  function advanceWeek() {
-    const { schedule, currentWeek } = gameState;
+  // ── Main advance function — handles both group + bracket ──
+  function advanceAll() {
+    // Block advancement while the transition screen is up or circuit is done.
+    if (inTransition || circuitComplete) return;
 
-    // Preseason
-    if (currentWeek === 0) {
-      for (const team of gameState.teams) {
-        while (team.roster.length < 5) {
-          const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length];
-          const fa = gameState.freeAgents.find(p => p.role === role);
-          if (fa) {
-            team.roster.push(fa);
-            gameState.freeAgents.splice(gameState.freeAgents.indexOf(fa), 1);
-          } else {
-            team.roster.push(generatePlayer(role));
-          }
-        }
-        team.validateStrategy();
-      }
-      setGameState(prev => ({ ...prev, currentWeek: 1 }));
-      setToast({ message: 'Season started!', type: 'win', mapScores: null });
+    // If we're inside an international slot, route to the international engine
+    const currentSlot = getCurrentSlot(gameState);
+    if (currentSlot?.type === 'international') {
+      advanceInternationalPhase();
       return;
     }
 
-    // Get this week's matches
-    const weekMatches = schedule.filter(m => m.week === currentWeek && !m.result);
+    // Check if any region still has group stage games
+    const anyInGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
 
-    // No matches left — check if group stage is done
-    if (weekMatches.length === 0) {
-      const remaining = schedule.filter(m => !m.result);
-      if (remaining.length === 0 && gameState.phase !== 'bracket') {
-        // Freeze standings: sort order + records locked permanently
-        const frozenStandings = {};
-        for (const group of ['A', 'B']) {
-          const sorted = gameState.teams
-            .filter(t => t.group === group)
-            .sort((a, b) => {
-              if (b.record.wins !== a.record.wins) return b.record.wins - a.record.wins;
-              const mdA = a.record.mapWins - a.record.mapLosses;
-              const mdB = b.record.mapWins - b.record.mapLosses;
-              if (mdB !== mdA) return mdB - mdA;
-              const rdA = (a.record.roundWins || 0) - (a.record.roundLosses || 0);
-              const rdB = (b.record.roundWins || 0) - (b.record.roundLosses || 0);
-              if (rdB !== rdA) return rdB - rdA;
-              return b.overallRating - a.overallRating;
-            });
-          frozenStandings[group] = sorted.map(t => ({
-            abbr: t.abbr,
-            name: t.name,
-            color: t.color,
-            isHuman: t.isHuman,
-            overallRating: t.overallRating,
-            record: { ...t.record },
-          }));
-        }
-
-        setBracket(generateBracket(gameState.teams));
-        setGameState(prev => ({
-          ...prev,
-          phase: 'bracket',
-          frozenStandings,
-        }));
-        setCurrentView('bracket');
-      }
-      return;
+    if (anyInGroup) {
+      advanceGroupWeek();
+    } else {
+      advanceBracketAll();
     }
-
-    // Simulate matches
-    for (const match of weekMatches) {
-      const result = simulateSeries(match.teamA, match.teamB, 3);
-      match.result = result;
-      processSeriesResult(result);
-      gameState.results.push({
-        week: currentWeek,
-        teamA: match.teamA.abbr,
-        teamB: match.teamB.abbr,
-        winner: result.winner.abbr,
-        score: result.score,
-      });
-    }
-
-    runCpuMoves(gameState);
-
-    const humanMatch = weekMatches.find(m => m.teamA === humanTeam || m.teamB === humanTeam);
-    if (humanMatch?.result) showMatchToast(humanMatch.result, humanTeam);
-
-    setGameState(prev => ({
-      ...prev,
-      currentWeek: prev.currentWeek + 1,
-    }));
   }
 
-  // ── Bracket ──
-  function advanceBracketStageHandler() {
-    if (!bracket || bracket.stage >= 7) return;
-    const updated = advanceBracketStage(bracket);
-    setBracket(updated);
-    const hm = findHumanBracketMatch(updated, humanTeam);
-    if (hm?.result) showMatchToast(hm.result, humanTeam);
+  // ── Advance the currently active international tournament ──
+  function advanceInternationalPhase() {
+    advanceInternational(gameState);
+    // If the international finished during that tick, finalize it:
+    // award points, snapshot history, flip to 'transition'.
+    if (isInternationalComplete(gameState)) {
+      completeCurrentInternational(gameState);
+    }
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Called from the StageTransition "Continue" button ──
+  function handleTransitionContinue() {
+    beginNextSlot(gameState);
+    // Jump the view back to the dashboard so the user lands somewhere sensible
+    // after rollover (old bracket/standings views would show fresh-empty state).
+    setCurrentView('dashboard');
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Advance group stage for all regions ──
+  function advanceGroupWeek() {
+    let toastResult = null;
+    let wasPreseason = humanRegionData.currentWeek === 0;
+
+    for (const regionKey of REGION_KEYS) {
+      const region = gameState.regions[regionKey];
+      if (region.phase === 'bracket') continue;
+
+      if (region.currentWeek === 0) {
+        for (const team of region.teams) {
+          while (team.roster.length < 5) {
+            const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length];
+            const fa = region.freeAgents.find(p => p.role === role);
+            if (fa) {
+              team.roster.push(fa);
+              region.freeAgents.splice(region.freeAgents.indexOf(fa), 1);
+            } else {
+              team.roster.push(generatePlayer(role));
+            }
+          }
+          team.validateStrategy();
+        }
+        region.currentWeek = 1;
+        continue;
+      }
+
+      const weekMatches = region.schedule.filter(
+        m => m.week === region.currentWeek && !m.result
+      );
+
+      if (weekMatches.length === 0) {
+        const remaining = region.schedule.filter(m => !m.result);
+        if (remaining.length === 0 && region.phase !== 'bracket') {
+          region.frozenStandings = freezeStandings(region.teams);
+          region.bracket = generateBracket(region.teams);
+          region.phase = 'bracket';
+        }
+        continue;
+      }
+
+      for (const match of weekMatches) {
+        const result = simulateSeries(match.teamA, match.teamB, 3);
+        match.result = result;
+        processSeriesResult(result);
+        awardGroupStageWin(gameState, regionKey, result.winner);
+        region.results.push({
+          week: region.currentWeek,
+          teamA: match.teamA.abbr, teamB: match.teamB.abbr,
+          winner: result.winner.abbr, score: result.score,
+        });
+
+        if (regionKey === gameState.humanRegion) {
+          if (match.teamA === humanTeam || match.teamB === humanTeam) {
+            toastResult = result;
+          }
+        }
+      }
+
+      runCpuMoves({ teams: region.teams, freeAgents: region.freeAgents });
+      region.currentWeek++;
+    }
+
+    if (toastResult) {
+      showMatchToast(toastResult, humanTeam);
+    } else if (wasPreseason) {
+      setToast({ message: 'Season started across all regions!', type: 'win', mapScores: null });
+    }
+
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Advance bracket for ALL regions simultaneously ──
+  function advanceBracketAll() {
+    if (allBracketsDone) return;
+
+    for (const regionKey of REGION_KEYS) {
+      const region = gameState.regions[regionKey];
+      if (!region.bracket || region.bracket.stage >= 7) continue;
+      region.bracket = runBracketStage(region.bracket);
+    }
+
+    // Toast for human team
+    const humanBracket = humanRegionData.bracket;
+    if (humanBracket) {
+      const hm = findHumanBracketMatch(humanBracket, humanTeam);
+      if (hm?.result) showMatchToast(hm.result, humanTeam);
+    }
+
+    // If this bracket advance finished the stage across all regions,
+    // finalize it (award points, snapshot history, flip to 'transition').
+    if (isStageSlotComplete(gameState) && gameState.season.status === 'active') {
+      completeCurrentStage(gameState);
+    }
+
+    setGameState(prev => ({ ...prev }));
   }
 
   function findHumanBracketMatch(b, team) {
+    if (!b) return null;
     const stageMatches = {
       2: b.ubQF,
-      3: [...b.lbR1, ...b.ubSF],
-      4: [...b.lbQF, [b.ubFinal]],
+      3: [...(b.lbR1 || []), ...(b.ubSF || [])],
+      4: [...(b.lbQF || []), [b.ubFinal]],
       5: [b.lbSF],
       6: [b.lbFinal],
       7: [b.grandFinal],
     };
-    return (stageMatches[b.stage] || []).flat().find(
-      m => m.result && (m.teamA === team || m.teamB === team)
+    const matches = stageMatches[b.stage];
+    if (!matches) return null;
+    return matches.flat().find(
+      m => m && m.result && (m.teamA === team || m.teamB === team)
     ) || null;
   }
 
@@ -209,66 +314,84 @@ export default function App() {
     if (humanTeam.rosterFull) return;
     humanTeam.addPlayer(player);
     humanTeam.validateStrategy();
-    setGameState(prev => ({
-      ...prev,
-      freeAgents: prev.freeAgents.filter(p => p !== player),
-    }));
+    const region = gameState.regions[gameState.humanRegion];
+    region.freeAgents = region.freeAgents.filter(p => p !== player);
+    setGameState(prev => ({ ...prev }));
   }
 
   function releasePlayer(player) {
     if (humanTeam.atMinRoster) return;
     humanTeam.removePlayer(player);
     humanTeam.validateStrategy();
-    setGameState(prev => ({
-      ...prev,
-      freeAgents: [...prev.freeAgents, player],
-    }));
+    gameState.regions[gameState.humanRegion].freeAgents.push(player);
+    setGameState(prev => ({ ...prev }));
   }
 
-  function handleStrategyUpdate() {
-    forceRender(n => n + 1);
+  function handleStrategyUpdate() { forceRender(n => n + 1); }
+
+  // ── Sidebar display ──
+  const currentSlotForSidebar = getCurrentSlot(gameState);
+  const inInternational = currentSlotForSidebar?.type === 'international';
+
+  let sidebarPhase, sidebarWeek, sidebarLabel;
+  if (circuitComplete) {
+    sidebarPhase = 'finished';
+    sidebarWeek = 0;
+    sidebarLabel = null;
+  } else if (inTransition) {
+    sidebarPhase = 'bracket';
+    sidebarWeek = 0;
+    sidebarLabel = inInternational ? 'International Complete' : 'Stage Complete';
+  } else if (inInternational) {
+    // Dedicated international sidebar state — label describes current phase
+    sidebarPhase = 'bracket';
+    sidebarWeek = 0;
+    const intl = gameState.international;
+    if (!intl) {
+      sidebarLabel = 'Loading...';
+    } else if (intl.phase === 'swiss') {
+      sidebarLabel = `Swiss · Round ${intl.swiss.round}`;
+    } else if (intl.phase === 'bracket') {
+      sidebarLabel = `Playoffs · Stage ${intl.bracket.stage}`;
+    } else {
+      sidebarLabel = 'Advancing...';
+    }
+  } else if (isGroupPhase) {
+    sidebarPhase = 'group';
+    sidebarWeek = humanRegionData.currentWeek;
+    sidebarLabel = null;
+  } else {
+    sidebarPhase = 'bracket';
+    sidebarWeek = 0;
+    const hb = humanRegionData.bracket;
+    sidebarLabel = hb && hb.stage < 7 ? getStageName(hb.stage) : 'Advancing...';
   }
+
+  const stageName = getCurrentStageName(gameState);
 
   // ── Views ──
   function renderView() {
+    const regionData = gameState.regions[vr];
+
     switch (currentView) {
       case 'dashboard':
         return <Dashboard gameState={gameState} humanTeam={humanTeam} />;
       case 'schedule':
-        return <Schedule gameState={gameState} />;
+        return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'roster':
-        return (
-          <Roster
-            team={humanTeam}
-            onRelease={releasePlayer}
-            onUpdate={handleStrategyUpdate}
-          />
-        );
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} />;
       case 'freeagents':
-        return (
-          <FreeAgents
-            freeAgents={gameState.freeAgents}
-            canSign={!humanTeam.rosterFull}
-            onSign={signPlayer}
-          />
-        );
+        return <FreeAgents freeAgents={humanRegionData.freeAgents} canSign={!humanTeam.rosterFull} onSign={signPlayer} />;
       case 'standings':
-        return (
-          <Standings
-            teams={gameState.teams}
-            frozenStandings={gameState.frozenStandings}
-          />
-        );
+        return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'bracket':
-        return (
-          <Bracket
-            gameState={gameState}
-            bracket={bracket}
-            onAdvanceBracket={advanceBracketStageHandler}
-          />
-        );
+        return <Bracket regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'stats':
-        return <Stats teams={gameState.teams} />;
+        return <Stats regions={gameState.regions} viewRegion={vr} onChangeRegion={setViewRegion} />;
+      case 'points':
+        return <Points gameState={gameState} viewRegion={vr} onChangeRegion={setViewRegion} />;
+      case 'international':
+        return <International gameState={gameState} />;
       default:
         return <Dashboard gameState={gameState} humanTeam={humanTeam} />;
     }
@@ -279,20 +402,17 @@ export default function App() {
       <Sidebar
         currentView={currentView}
         onNavigate={setCurrentView}
-        currentWeek={gameState.currentWeek}
-        onAdvanceWeek={advanceWeek}
-        phase={gameState.phase}
+        currentWeek={sidebarWeek}
+        onAdvanceWeek={advanceAll}
+        phase={sidebarPhase}
+        bracketLabel={sidebarLabel}
+        allDone={circuitComplete}
+        stageName={stageName}
       />
-      <main id="content">
-        {renderView()}
-      </main>
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          mapScores={toast.mapScores}
-          onClose={clearToast}
-        />
+      <main id="content">{renderView()}</main>
+      {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}
+      {inTransition && (
+        <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
       )}
     </div>
   );
