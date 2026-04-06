@@ -144,25 +144,45 @@ export default function StageTransition({ gameState, onContinue }) {
   if (!lastEntry) return null;
 
   const isInternational = lastEntry.type === 'international';
+  const isWorlds = lastEntry.type === 'worlds';
 
-  // Determine what comes next in the circuit. If the next slot is a real
-  // stage or international it runs immediately; if it's a placeholder
-  // (Worlds in Phase 3), note that we'll be skipping past it.
+  // Determine what comes next in the circuit.
   const nextSlotIdx = season.slotIndex + 1;
   let nextRealSlot = null;
   const skippedSlots = [];
   for (let i = nextSlotIdx; i < CIRCUIT.length; i++) {
     const slot = CIRCUIT[i];
-    // Worlds still a placeholder in Phase 3
-    if (slot.type === 'worlds') { skippedSlots.push(slot); continue; }
     nextRealSlot = slot;
     break;
   }
 
   const humanRegion = gameState.humanRegion;
+
+  // For stage entries: human-region-only table (unchanged).
+  // For international entries: unified table of all 12 attending teams
+  // flattened across regions, sorted by placement then region.
   const humanPointsRows = (lastEntry.pointsAwarded?.[humanRegion] || [])
     .slice()
     .sort((a, b) => a.placement - b.placement);
+
+  const unifiedIntlRows = [];
+  if (isInternational && lastEntry.pointsAwarded) {
+    for (const regionKey of REGION_KEYS) {
+      const rows = lastEntry.pointsAwarded[regionKey] || [];
+      for (const row of rows) {
+        unifiedIntlRows.push({
+          ...row,
+          region: regionKey,
+          regionName: gameState.regions[regionKey].name,
+          totalPoints: season.points[`${regionKey}:${row.abbr}`] || 0,
+        });
+      }
+    }
+    unifiedIntlRows.sort((a, b) => {
+      if (a.placement !== b.placement) return a.placement - b.placement;
+      return a.regionName.localeCompare(b.regionName);
+    });
+  }
 
   let continueLabel;
   if (!nextRealSlot) {
@@ -171,13 +191,19 @@ export default function StageTransition({ gameState, onContinue }) {
     continueLabel = `▶ Begin ${nextRealSlot.name} Preseason`;
   } else if (nextRealSlot.type === 'international') {
     continueLabel = `▶ Begin ${nextRealSlot.name}`;
+  } else if (nextRealSlot.type === 'worlds') {
+    continueLabel = `▶ Begin ${nextRealSlot.name}`;
   } else {
     continueLabel = '▶ Continue';
   }
 
-  const eyebrowLabel = isInternational ? 'International Complete' : 'Stage Complete';
+  let eyebrowLabel;
+  if (isWorlds) eyebrowLabel = 'Group Stage Complete';
+  else if (isInternational) eyebrowLabel = 'International Complete';
+  else eyebrowLabel = 'Stage Complete';
+
   const pointsHeader = isInternational
-    ? `International Points Awarded — ${gameState.regions[humanRegion].name}`
+    ? 'International Results — All Teams'
     : `Circuit Points — ${gameState.regions[humanRegion].name}`;
 
   return (
@@ -186,7 +212,57 @@ export default function StageTransition({ gameState, onContinue }) {
         <div style={eyebrow}>{eyebrowLabel}</div>
         <h1 style={h1}>{lastEntry.name}</h1>
 
-        {isInternational ? (
+        {isWorlds ? (
+          <>
+            <h2 style={sectionHeader}>World Champion</h2>
+            {lastEntry.champion ? (
+              <div style={{
+                padding: '16px 20px',
+                background: 'rgba(255, 209, 102, 0.1)',
+                border: '1px solid rgba(255, 209, 102, 0.4)',
+                borderRadius: 8,
+                fontSize: '1.1rem',
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <span style={{ fontSize: '1.6rem' }}>🏆</span>
+                <span style={{ color: lastEntry.champion.color, fontWeight: 700, fontSize: '1.2rem' }}>
+                  {lastEntry.champion.name}
+                </span>
+                {lastEntry.runnerUp && (
+                  <span style={{ marginLeft: 'auto', color: '#8a98b1', fontSize: '0.85rem' }}>
+                    over <span style={{ color: lastEntry.runnerUp.color }}>
+                      {lastEntry.runnerUp.name}
+                    </span>
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="muted">No champion data.</div>
+            )}
+
+            {lastEntry.bracketPlacements && lastEntry.bracketPlacements.length > 0 && (
+              <>
+                <h2 style={sectionHeader}>Final Standings</h2>
+                <table style={table}>
+                  <tbody>
+                    {[...lastEntry.bracketPlacements]
+                      .sort((a, b) => a.placement - b.placement)
+                      .map(p => (
+                        <tr key={p.abbr}>
+                          <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace", width: '40px' }}>
+                            {p.placement}
+                          </td>
+                          <td style={{ ...td, color: p.color, fontWeight: 600 }}>
+                            {p.name}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </>
+        ) : isInternational ? (
           <>
             <h2 style={sectionHeader}>Champion</h2>
             {lastEntry.champion ? (
@@ -234,43 +310,91 @@ export default function StageTransition({ gameState, onContinue }) {
           </>
         )}
 
-        <h2 style={sectionHeader}>{pointsHeader}</h2>
-        <table style={table}>
-          <thead>
-            <tr>
-              <th style={{ ...th, width: '40px' }}>#</th>
-              <th style={th}>Team</th>
-              <th style={{ ...th, textAlign: 'right', width: '70px' }}>Earned</th>
-              <th style={{ ...th, textAlign: 'right', width: '70px' }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {humanPointsRows.length === 0 && (
-              <tr><td colSpan={4} style={{ ...td, color: '#6f7d93', fontStyle: 'italic' }}>
-                No teams from your region participated.
-              </td></tr>
-            )}
-            {humanPointsRows.map(row => {
-              const total = season.points[`${humanRegion}:${row.abbr}`];
-              return (
-                <tr key={row.abbr}>
-                  <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
-                    {row.placement}
-                  </td>
-                  <td style={{ ...td, color: row.color, fontWeight: 600 }}>
-                    {row.name}
-                  </td>
-                  <td style={{ ...td, textAlign: 'right', color: row.points > 0 ? '#6fe8a8' : '#6f7d93' }}>
-                    {row.points > 0 ? `+${row.points}` : '—'}
-                  </td>
-                  <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
-                    {total}
-                  </td>
+        {!isWorlds && (
+          <>
+            <h2 style={sectionHeader}>{pointsHeader}</h2>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, width: '40px' }}>#</th>
+                  <th style={th}>Team</th>
+                  <th style={{ ...th, textAlign: 'right', width: '70px' }}>Earned</th>
+                  <th style={{ ...th, textAlign: 'right', width: '70px' }}>Total</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {isInternational ? (
+                  <>
+                    {unifiedIntlRows.length === 0 && (
+                      <tr><td colSpan={4} style={{ ...td, color: '#6f7d93', fontStyle: 'italic' }}>
+                        No teams attended.
+                      </td></tr>
+                    )}
+                    {unifiedIntlRows.map((row, i) => {
+                      const isHumanRegion = row.region === humanRegion;
+                      return (
+                        <tr key={`${row.region}:${row.abbr}`} style={{
+                          background: isHumanRegion ? 'rgba(106, 169, 255, 0.04)' : 'transparent',
+                        }}>
+                          <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {row.placement}
+                          </td>
+                          <td style={{ ...td, color: row.color, fontWeight: 600 }}>
+                            {row.name}
+                            <span style={{
+                              marginLeft: 8,
+                              fontSize: '0.64rem',
+                              color: '#6f7d93',
+                              letterSpacing: '0.08em',
+                              textTransform: 'uppercase',
+                              fontWeight: 400,
+                              fontFamily: "'JetBrains Mono', monospace",
+                            }}>
+                              {row.regionName}
+                            </span>
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', color: row.points > 0 ? '#6fe8a8' : '#6f7d93' }}>
+                            {row.points > 0 ? `+${row.points}` : '—'}
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
+                            {row.totalPoints}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </>
+                ) : (
+                  <>
+                    {humanPointsRows.length === 0 && (
+                      <tr><td colSpan={4} style={{ ...td, color: '#6f7d93', fontStyle: 'italic' }}>
+                        No teams from your region participated.
+                      </td></tr>
+                    )}
+                    {humanPointsRows.map(row => {
+                      const total = season.points[`${humanRegion}:${row.abbr}`];
+                      return (
+                        <tr key={row.abbr}>
+                          <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {row.placement}
+                          </td>
+                          <td style={{ ...td, color: row.color, fontWeight: 600 }}>
+                            {row.name}
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', color: row.points > 0 ? '#6fe8a8' : '#6f7d93' }}>
+                            {row.points > 0 ? `+${row.points}` : '—'}
+                          </td>
+                          <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
+                            {total}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
 
         {skippedSlots.length > 0 && (
           <div style={skipNote}>

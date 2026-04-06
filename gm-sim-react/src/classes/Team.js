@@ -4,7 +4,7 @@
  * ADDED: record.roundWins, record.roundLosses
  */
 
-import { ROSTER_MIN, ROSTER_MAX } from '../data/constants.js';
+import { ROSTER_MIN, ROSTER_MAX, ROLE_WEIGHTS } from '../data/constants.js';
 import { DEFAULT_COMP, COMPOSITIONS, getDefaultSubtype } from '../data/strategy.js';
 
 export class Team {
@@ -72,22 +72,58 @@ export class Team {
     const assignments = new Array(slots.length).fill(null);
     const used = new Set();
 
+    // For each slot, pick the unused player whose rating profile best
+    // matches the role's weighted profile. This replaces the old
+    // "player.role === slot.role" matching now that players are
+    // role-agnostic. Greedy — assign slot-by-slot in order, taking the
+    // best remaining fit each time.
     for (let i = 0; i < slots.length; i++) {
       const role = slots[i];
-      const match = this.roster.find(p => p.role === role && !used.has(p.id));
-      if (match) {
-        used.add(match.id);
-        assignments[i] = { playerId: match.id, role, subtypeId: getDefaultSubtype(role) };
+      const weights = ROLE_WEIGHTS[role] || null;
+      let bestPlayer = null;
+      let bestScore = -Infinity;
+      for (const p of this.roster) {
+        if (used.has(p.id)) continue;
+        // Score = sum of (player.ratings[stat] * role weight for stat).
+        // Falls back to overall if no weights defined for this role.
+        let score = 0;
+        if (weights) {
+          for (const [stat, w] of Object.entries(weights)) {
+            score += (p.ratings[stat] || 0) * w;
+          }
+        } else {
+          score = p.overall;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          bestPlayer = p;
+        }
+      }
+      if (bestPlayer) {
+        used.add(bestPlayer.id);
+        assignments[i] = {
+          playerId: bestPlayer.id,
+          role,
+          subtypeId: getDefaultSubtype(role),
+        };
       }
     }
 
-    const unassigned = this.roster.filter(p => !used.has(p.id)).sort((a, b) => b.overall - a.overall);
+    // Fill any remaining slots with unassigned players sorted by overall
+    // (should only trigger if roster is smaller than the comp's slot count)
+    const unassigned = this.roster
+      .filter(p => !used.has(p.id))
+      .sort((a, b) => b.overall - a.overall);
     let ui = 0;
     for (let i = 0; i < slots.length; i++) {
       if (assignments[i] === null && ui < unassigned.length) {
         const player = unassigned[ui++];
         used.add(player.id);
-        assignments[i] = { playerId: player.id, role: slots[i], subtypeId: getDefaultSubtype(slots[i]) };
+        assignments[i] = {
+          playerId: player.id,
+          role: slots[i],
+          subtypeId: getDefaultSubtype(slots[i]),
+        };
       }
     }
 

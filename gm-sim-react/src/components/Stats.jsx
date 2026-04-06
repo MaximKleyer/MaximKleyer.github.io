@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import RegionSelector from './RegionSelector.jsx';
 import { REGION_KEYS, REGIONS } from '../data/regions.js';
+import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function Stats({ regions, viewRegion, onChangeRegion }) {
   const [sortKey, setSortKey] = useState('kills');
@@ -63,7 +64,7 @@ export default function Stats({ regions, viewRegion, onChangeRegion }) {
           <tr>
             <th>#</th><th>Player</th><th>Team</th>
             {showAll && <th>Region</th>}
-            <th>Role</th><th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
+            <th>Nat</th><th>Age</th><th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
           </tr>
         </thead>
         <tbody>
@@ -73,7 +74,10 @@ export default function Stats({ regions, viewRegion, onChangeRegion }) {
               <td>{player.tag}</td>
               <td>{teamAbbr}</td>
               {showAll && <td>{regionAbbr}</td>}
-              <td>{player.role}</td>
+              <td title={nationalityName(player.nationality)}>
+                <span className={flagClass(player.nationality)} />
+              </td>
+              <td>{player.age}</td>
               <td>{player.stats.maps}</td>
               <td>{player.stats.kills}</td>
               <td>{player.stats.deaths}</td>

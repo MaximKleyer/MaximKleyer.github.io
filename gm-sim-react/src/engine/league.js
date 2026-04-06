@@ -10,7 +10,7 @@
 import { Team } from '../classes/Team.js';
 import { generatePlayer, resetTagPool } from '../classes/Player.js';
 import { REGIONS, REGION_KEYS } from '../data/regions.js';
-import { REQUIRED_ROLES, FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
+import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
 /**
@@ -34,18 +34,10 @@ export function initGame(humanRegion, humanTeamIndex) {
       teams[humanTeamIndex].isHuman = true;
     }
 
-    // Generate rosters
-    for (const team of teams) {
-      for (const role of REQUIRED_ROLES) {
-        team.roster.push(generatePlayer(role));
-      }
-    }
-
-    // Validate
+    // Generate rosters — 5 players per team, no role assignment
     for (const team of teams) {
       while (team.roster.length < 5) {
-        const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length];
-        team.roster.push(generatePlayer(role));
+        team.roster.push(generatePlayer({ regionKey }));
       }
     }
 
@@ -60,8 +52,7 @@ export function initGame(humanRegion, humanTeamIndex) {
     // Free agents
     const freeAgents = [];
     for (let i = 0; i < FREE_AGENT_POOL_SIZE; i++) {
-      const role = REQUIRED_ROLES[Math.floor(Math.random() * REQUIRED_ROLES.length)];
-      freeAgents.push(generatePlayer(role));
+      freeAgents.push(generatePlayer({ regionKey }));
     }
 
     // Assign groups

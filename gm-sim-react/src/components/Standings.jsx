@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getGroupStandings } from '../engine/standings.js';
 import { COMPOSITIONS, SUBTYPES } from '../data/strategy.js';
 import RegionSelector from './RegionSelector.jsx';
+import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function Standings({ regionData, viewRegion, onChangeRegion }) {
   const [expanded, setExpanded] = useState(null);
@@ -62,14 +63,19 @@ export default function Standings({ regionData, viewRegion, onChangeRegion }) {
                   {team.igl && <span><strong>IGL:</strong> {team.igl.tag} (IQ: {team.igl.ratings.gamesense})</span>}
                 </div>
                 <table className="team-detail-table">
-                  <thead><tr><th>Player</th><th>Natural</th><th>Assigned</th><th>Subtype</th><th>OVR</th><th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th><th>Maps</th><th>K</th><th>D</th><th>K/D</th><th>ACS</th></tr></thead>
+                  <thead><tr><th>Player</th><th>Nat</th><th>Age</th><th>Assigned</th><th>Subtype</th><th>OVR</th><th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th><th>Maps</th><th>K</th><th>D</th><th>K/D</th><th>ACS</th></tr></thead>
                   <tbody>
                     {team.roster.map(player => {
                       const a = team.strategy.assignments.find(a => a.playerId === player.id);
                       return (
                         <tr key={player.id}>
                           <td><strong>{player.tag}</strong>{player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}</td>
-                          <td>{player.role}</td><td>{a?.role || '—'}</td><td>{a ? getSubtypeLabel(a.subtypeId) : '—'}</td>
+                          <td title={nationalityName(player.nationality)}>
+                            <span className={flagClass(player.nationality)} />
+                          </td>
+                          <td>{player.age}</td>
+                          <td>{a?.role || '—'}</td>
+                          <td>{a ? getSubtypeLabel(a.subtypeId) : '—'}</td>
                           <td>{player.overall}</td><td>{player.ratings.aim}</td><td>{player.ratings.positioning}</td><td>{player.ratings.utility}</td><td>{player.ratings.gamesense}</td><td>{player.ratings.clutch}</td>
                           <td>{player.stats.maps}</td><td>{player.stats.kills}</td><td>{player.stats.deaths}</td><td>{player.kd}</td><td>{player.avgAcs}</td>
                         </tr>

@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { COMPOSITIONS, SUBTYPES, getDefaultSubtype } from '../data/strategy.js';
+import { nationalityName } from '../data/nationalities.js';
 
 // ── Determine which stats are "key" for a subtype ──
 // A stat is considered key if its weight is >= 0.25 (top-weighted)
@@ -138,7 +139,7 @@ export default function Strategy({ team, onUpdate }) {
           <option value="">None</option>
           {team.roster.map(p => (
             <option key={p.id} value={p.id}>
-              {p.tag} — IQ: {p.ratings.gamesense} ({p.role})
+              {p.tag} — IQ: {p.ratings.gamesense} ({nationalityName(p.nationality)}, age {p.age})
             </option>
           ))}
         </select>
@@ -177,7 +178,7 @@ export default function Strategy({ team, onUpdate }) {
                   const isAssigned = assignedIds.has(p.id) && assignment?.playerId !== p.id;
                   return (
                     <option key={p.id} value={p.id} disabled={isAssigned}>
-                      {p.tag} ({p.role}) — {p.overall} OVR
+                      {p.tag} ({nationalityName(p.nationality)}, {p.age}) — {p.overall} OVR
                       {isAssigned ? ' [assigned]' : ''}
                     </option>
                   );

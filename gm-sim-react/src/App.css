@@ -1107,3 +1107,15 @@
     color: var(--accent);
   }
   
+  /* ── Flag icons (flag-icons library) ──────────────────────── */
+  /* Bump flags slightly larger than 1em for better visibility in
+     dense tables, and add a subtle border so light flags don't get
+     lost against the dark background. */
+  .fi {
+    width: 1.4em;
+    height: 1.05em;
+    line-height: 1.05em;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 1px;
+    vertical-align: middle;
+  }

@@ -100,6 +100,15 @@ export function initInternational(gameState, internationalNumber) {
 /**
  * Advance the international by one tick. Called from App.jsx advance button
  * when the current slot is international.
+ *
+ * Phase transitions:
+ *   swiss     → selection (once Swiss completes, pick order is rolled)
+ *   selection → bracket   (after all 4 picks are made)
+ *   bracket   → complete  (once grand final resolves)
+ *
+ * During 'selection', each advance tick reveals one AI pick. If the current
+ * picker is the human, the tick is a no-op — App.jsx should hide/disable the
+ * advance button and wait for submitHumanPick() instead.
  */
 export function advanceInternational(gameState) {
   const intl = gameState.international;
@@ -108,11 +117,15 @@ export function advanceInternational(gameState) {
   if (intl.phase === 'swiss') {
     intl.swiss = advanceSwissRound(intl.swiss);
     if (intl.swiss.status === 'complete') {
-      // Auto-run selection show (Phase 3a — AI picks)
-      intl.selectionShow = runAutoSelectionShow(intl.autoBids, intl.swiss);
-      intl.bracket = initInternationalBracket(intl.selectionShow.picks);
-      intl.phase = 'bracket';
+      beginSelectionShow(intl, gameState);
     }
+    return;
+  }
+
+  if (intl.phase === 'selection') {
+    // If waiting on the human, the advance button does nothing.
+    if (intl.selectionShow.awaitingHuman) return;
+    revealNextPick(intl);
     return;
   }
 
@@ -129,42 +142,153 @@ export function isInternationalComplete(gameState) {
   return gameState.international?.phase === 'complete';
 }
 
-/* ─────────────── Selection show (auto-pick for Phase 3a) ─────────────── */
+/**
+ * True when the selection show is waiting for the human to make a pick.
+ * App.jsx uses this to disable the advance button and show the pick UI.
+ */
+export function isAwaitingHumanPick(gameState) {
+  const intl = gameState.international;
+  return intl?.phase === 'selection' && intl.selectionShow?.awaitingHuman === true;
+}
 
 /**
- * AI selection show: randomize pick order, each auto-bid picks the weakest
- * remaining Swiss survivor (by overall rating). Phase 3b will replace this
- * with an interactive UI when the human is an auto-bid.
+ * Commit a human pick. Called from the International component when the
+ * user clicks a Swiss survivor card during their pick turn.
+ * No-op if we're not waiting on the human or the picked team isn't available.
  */
-function runAutoSelectionShow(autoBids, swissState) {
-  const survivors = getSwissSurvivors(swissState);
+export function submitHumanPick(gameState, pickedTeam) {
+  const intl = gameState.international;
+  if (!intl || intl.phase !== 'selection') return;
+  const show = intl.selectionShow;
+  if (!show?.awaitingHuman) return;
 
-  // Random pick order
-  const pickOrder = [...autoBids];
+  const currentBid = show.pickOrder[show.currentPickIndex];
+  if (!currentBid) return;
+
+  // Validate that the picked team is still available
+  const available = getAvailableSwissSurvivors(intl);
+  if (!available.includes(pickedTeam)) return;
+
+  commitPick(intl, currentBid, pickedTeam);
+}
+
+/* ─────────────── Selection show — interactive state machine ─────────────── */
+
+/**
+ * Initialize the selection show when Swiss completes.
+ * Generates a random pick order and sets up empty state. Does not make any
+ * picks — the first pick happens on the next advance tick (or via human input
+ * if slot 1 belongs to the human).
+ */
+function beginSelectionShow(intl, gameState) {
+  const pickOrder = [...intl.autoBids];
   for (let i = pickOrder.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pickOrder[i], pickOrder[j]] = [pickOrder[j], pickOrder[i]];
   }
 
-  const available = [...survivors];
-  const picks = [];
-  for (let i = 0; i < pickOrder.length; i++) {
-    const bid = pickOrder[i];
-    // AI: pick weakest remaining opponent (lowest overall rating)
-    available.sort((a, b) => a.overallRating - b.overallRating);
-    const picked = available.shift();
-    picks.push({
-      order: i + 1,
-      picker: bid.team,
-      pickerRegion: bid.region,
-      picked,
-    });
+  intl.selectionShow = {
+    pickOrder: pickOrder.map(b => ({ team: b.team, region: b.region })),
+    picks: [],
+    currentPickIndex: 0,
+    awaitingHuman: false,
+  };
+
+  intl.phase = 'selection';
+
+  // If pick slot 1 is the human, flag it so the UI waits for input
+  syncAwaitingHuman(intl, gameState);
+}
+
+/**
+ * Reveal the next pick in the sequence (used for AI picks and non-human
+ * spectator reveals). Picks the weakest-rated remaining survivor.
+ */
+function revealNextPick(intl) {
+  const show = intl.selectionShow;
+  if (show.currentPickIndex >= show.pickOrder.length) return;
+
+  const currentBid = show.pickOrder[show.currentPickIndex];
+  const available = getAvailableSwissSurvivors(intl);
+
+  // AI: pick weakest remaining opponent
+  available.sort((a, b) => a.overallRating - b.overallRating);
+  const picked = available[0];
+  if (!picked) return;
+
+  commitPick(intl, currentBid, picked);
+}
+
+/**
+ * Core commit routine used by both the AI reveal and the human submit path.
+ * Appends to picks[], advances currentPickIndex, and either transitions into
+ * the bracket phase (if all picks are done) or re-evaluates awaitingHuman.
+ */
+function commitPick(intl, bid, pickedTeam) {
+  const show = intl.selectionShow;
+
+  show.picks.push({
+    order: show.currentPickIndex + 1,
+    picker: bid.team,
+    pickerRegion: bid.region,
+    picked: pickedTeam,
+  });
+  show.currentPickIndex++;
+  show.awaitingHuman = false;
+
+  // All picks done → init bracket and flip phase
+  if (show.currentPickIndex >= show.pickOrder.length) {
+    intl.bracket = initInternationalBracket(show.picks);
+    intl.phase = 'bracket';
+    return;
   }
 
-  return {
-    pickOrder: pickOrder.map(b => ({ team: b.team, region: b.region })),
-    picks,
-  };
+  // Otherwise, check if the next picker is the human
+  // We need gameState.humanRegion here — walked up via the intl's autoBids
+  // which carry region keys. Find the human team in autoBids, if any.
+  syncAwaitingHumanFromIntl(intl);
+}
+
+/**
+ * Determine whether the *next* pick belongs to the human. Called after each
+ * commit (and once at selection-show start). We don't have gameState in this
+ * scope so we rely on team.isHuman — the Team class already tracks this.
+ */
+function syncAwaitingHumanFromIntl(intl) {
+  const show = intl.selectionShow;
+  const nextBid = show.pickOrder[show.currentPickIndex];
+  if (!nextBid) {
+    show.awaitingHuman = false;
+    return;
+  }
+  show.awaitingHuman = !!nextBid.team.isHuman;
+}
+
+/**
+ * Convenience wrapper used at selection-show start. Takes gameState for API
+ * symmetry but currently delegates to the isHuman check above.
+ */
+function syncAwaitingHuman(intl, gameState) {
+  syncAwaitingHumanFromIntl(intl);
+}
+
+/**
+ * Get the list of Swiss survivors not yet picked by anyone.
+ */
+function getAvailableSwissSurvivors(intl) {
+  const survivors = getSwissSurvivors(intl.swiss);
+  const picked = new Set(intl.selectionShow?.picks.map(p => p.picked) || []);
+  return survivors.filter(t => !picked.has(t));
+}
+
+/**
+ * Exposed helper so the International component can render the "available
+ * teams to pick" grid during a human turn without reaching into internals.
+ */
+export function getSelectionShowAvailable(gameState) {
+  const intl = gameState.international;
+  if (!intl) return [];
+  return getAvailableSwissSurvivors(intl);
 }
 
 /* ─────────────── Results ─────────────── */

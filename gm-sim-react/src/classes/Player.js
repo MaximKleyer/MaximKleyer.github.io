@@ -1,16 +1,26 @@
 /**
  * Player.js — Player class and generation.
  *
- * FIXED: Guaranteed unique tags, robust ID generation,
- * generatePlayer never fails.
+ * Players are role-agnostic: roles live on strategy assignments (where a
+ * player is slotted into a composition), not on the player itself. This
+ * lets rosters be flexible and lets a player move between roles between
+ * maps without changing their stored identity.
+ *
+ * Stored fields:
+ *   id, name, tag       — identity
+ *   ratings             — { aim, positioning, utility, gamesense, clutch }
+ *   overall             — computed from ratings via a neutral weighting
+ *   age                 — 17–30 in fresh generation; aged +1 each offseason
+ *   nationality         — ISO 3166-1 alpha-2 code (e.g. 'US', 'KR')
+ *   stats               — { kills, deaths, assists, acs, maps } (per-season)
  */
 
-import { ROLE_WEIGHTS, ROLE_FLOORS } from '../data/constants.js';
-import { FIRST_NAMES, TAGS, LAST_NAMES } from '../data/names.js';
+import { TAGS, getNamePool } from '../data/names.js';
+import { randomNationalityForRegion } from '../data/nationalities.js';
 
 // ── Helpers ──
 
-let playerCounter = 0; // Fallback counter for IDs
+let playerCounter = 0;
 
 function randomFrom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -33,9 +43,18 @@ function randRating(min, max) {
 }
 
 /**
- * Generate a unique ID. Uses crypto.randomUUID if available,
- * falls back to a counter-based ID if not.
+ * Age distribution for initial roster generation:
+ * most players 19–24, some 17–18 rookies, some 25–29 vets.
+ * Retirement kicks in at 30 so nobody is generated older than 29.
  */
+function randAge() {
+  const r = Math.random();
+  if (r < 0.10) return 17 + Math.floor(Math.random() * 2);   // 17–18 rookie
+  if (r < 0.70) return 19 + Math.floor(Math.random() * 4);   // 19–22 prime
+  if (r < 0.92) return 23 + Math.floor(Math.random() * 3);   // 23–25 experienced
+  return 26 + Math.floor(Math.random() * 4);                 // 26–29 vet
+}
+
 function makeId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -44,12 +63,10 @@ function makeId() {
   return `player-${playerCounter}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-
 // ── Unique tag tracking ──
 const usedTags = new Set();
 
 function getUniqueTag() {
-  // Try base tags first (shuffled)
   const shuffled = [...TAGS].sort(() => Math.random() - 0.5);
   for (const tag of shuffled) {
     if (!usedTags.has(tag)) {
@@ -57,38 +74,55 @@ function getUniqueTag() {
       return tag;
     }
   }
-
-  // All base tags used — append numbers until unique
-  let tag;
-  let attempts = 0;
-  do {
-    const base = randomFrom(TAGS);
-    const num = Math.floor(Math.random() * 999) + 1;
-    tag = `${base}${num}`;
-    attempts++;
-  } while (usedTags.has(tag) && attempts < 1000);
-
-  usedTags.add(tag);
-  return tag;
+  // Fallback: numeric suffix if all base tags exhausted
+  let suffix = 2;
+  while (true) {
+    const candidate = `${randomFrom(TAGS)}${suffix}`;
+    if (!usedTags.has(candidate)) {
+      usedTags.add(candidate);
+      return candidate;
+    }
+    suffix++;
+    if (suffix > 9999) break;
+  }
+  return `player${Math.floor(Math.random() * 100000)}`;
 }
 
-/** Reset tag tracking (call when starting a new league) */
 export function resetTagPool() {
   usedTags.clear();
-  playerCounter = 0;
 }
 
+// ── Neutral overall weighting (no role dependency) ──
+//
+// Slightly favors aim as the "foundational" skill while keeping all 5
+// ratings meaningful. Sums to exactly 1.0.
+const NEUTRAL_WEIGHTS = {
+  aim:         0.25,
+  positioning: 0.20,
+  utility:     0.20,
+  gamesense:   0.20,
+  clutch:      0.15,
+};
+
+function calcNeutralOverall(ratings) {
+  let sum = 0;
+  for (const [stat, weight] of Object.entries(NEUTRAL_WEIGHTS)) {
+    sum += (ratings[stat] || 0) * weight;
+  }
+  return Math.round(sum);
+}
 
 // ── Player class ──
 
 export class Player {
-  constructor(name, tag, role, ratings) {
+  constructor(name, tag, ratings, { age, nationality } = {}) {
     this.id = makeId();
     this.name = name;
     this.tag = tag;
-    this.role = role;
     this.ratings = ratings;
-    this.overall = this.calcOverall();
+    this.overall = calcNeutralOverall(ratings);
+    this.age = age ?? 20;
+    this.nationality = nationality || 'US';
 
     this.stats = {
       kills: 0,
@@ -100,12 +134,7 @@ export class Player {
   }
 
   calcOverall() {
-    const weights = ROLE_WEIGHTS[this.role];
-    let sum = 0;
-    for (const [stat, weight] of Object.entries(weights)) {
-      sum += (this.ratings[stat] || 0) * weight;
-    }
-    return Math.round(sum);
+    return calcNeutralOverall(this.ratings);
   }
 
   get kd() {
@@ -119,24 +148,54 @@ export class Player {
   }
 }
 
+// ── Player generator ──
 
-// ── Player generator (NEVER returns null) ──
+/**
+ * Generate a new player. Used both for initial roster creation and for
+ * rookie generation during the offseason.
+ *
+ * Accepts an options object:
+ *   regionKey     — used to pick a region-appropriate nationality
+ *   ageOverride   — explicit age (for rookies, set to 17 or 18)
+ *   ratingFloor   — minimum rating on all 5 stats
+ *
+ * No `role` parameter — players are role-agnostic.
+ *
+ * Backward-compat: if called with a string (the old role arg), the string
+ * is silently ignored so legacy callers don't crash during migration.
+ */
+export function generatePlayer(options = {}) {
+  if (typeof options === 'string') options = {};
 
-export function generatePlayer(role) {
-  const firstName = randomFrom(FIRST_NAMES);
-  const lastName = randomFrom(LAST_NAMES);
+  // Pick nationality first, since the name pool depends on it.
+  // If no region is provided, default to 'US' so the name pool lookup
+  // still finds a valid pool.
+  const nationality = options.regionKey
+    ? randomNationalityForRegion(options.regionKey)
+    : 'US';
+
+  // Derive first + last name from the nationality-specific pool so the
+  // name feels authentic to the player's country.
+  const pool = getNamePool(nationality);
+  const firstName = randomFrom(pool.first);
+  const lastName = randomFrom(pool.last);
   const tag = getUniqueTag();
 
-  const floors = ROLE_FLOORS[role] || {};
-  const defaultFloor = 45;
-
+  const floor = options.ratingFloor ?? 45;
   const ratings = {
-    aim:         randRating(floors.aim         || defaultFloor, 99),
-    positioning: randRating(floors.positioning || defaultFloor, 99),
-    utility:     randRating(floors.utility     || defaultFloor, 99),
-    gamesense:   randRating(floors.gamesense   || defaultFloor, 99),
-    clutch:      randRating(floors.clutch      || defaultFloor, 99),
+    aim:         randRating(floor, 99),
+    positioning: randRating(floor, 99),
+    utility:     randRating(floor, 99),
+    gamesense:   randRating(floor, 99),
+    clutch:      randRating(floor, 99),
   };
 
-  return new Player(`${firstName} ${lastName}`, tag, role, ratings);
+  const age = options.ageOverride ?? randAge();
+
+  return new Player(
+    `${firstName} ${lastName}`,
+    tag,
+    ratings,
+    { age, nationality },
+  );
 }

@@ -22,6 +22,7 @@
  */
 
 import { useState } from 'react';
+import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function FreeAgents({ freeAgents, canSign, onSign }) {
   // Local state — only this component uses sortKey
@@ -61,7 +62,7 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
       <table>
         <thead>
           <tr>
-            <th>Tag</th><th>Name</th><th>Role</th><th>OVR</th>
+            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th></th>
           </tr>
@@ -71,7 +72,10 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
             <tr key={player.id}>
               <td><strong>{player.tag}</strong></td>
               <td>{player.name}</td>
-              <td>{player.role}</td>
+              <td title={nationalityName(player.nationality)}>
+                <span className={flagClass(player.nationality)} />
+              </td>
+              <td>{player.age}</td>
               <td>{player.overall}</td>
               <td>{player.ratings.aim}</td>
               <td>{player.ratings.positioning}</td>

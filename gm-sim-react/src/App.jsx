@@ -4,9 +4,15 @@
  *   - Bracket stage: advances all regions' brackets one stage
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+// Flag-icons provides offline SVG country flags via CSS sprites.
+// Imported once here so every component can use <span className="fi fi-xx" />
+// without each one needing its own stylesheet import.
+import 'flag-icons/css/flag-icons.min.css';
 
 import { initGame, getHumanTeam } from './engine/league.js';
+import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
@@ -23,14 +29,23 @@ import {
   completeCurrentStage,
   isInternationalSlotComplete,
   completeCurrentInternational,
+  isWorldsSlotComplete,
+  completeCurrentWorlds,
   beginNextSlot,
   awardGroupStageWin,
 } from './engine/season.js';
 import {
   advanceInternational,
   isInternationalComplete,
+  isAwaitingHumanPick,
+  submitHumanPick,
 } from './engine/international.js';
-import { REQUIRED_ROLES } from './data/constants.js';
+import {
+  advanceWorlds,
+  isWorldsComplete,
+  isWorldsAwaitingHumanPick,
+  submitWorldsPlayoffPick,
+} from './engine/worlds.js';
 import { REGION_KEYS } from './data/regions.js';
 
 import TeamSelect from './components/TeamSelect.jsx';
@@ -44,6 +59,8 @@ import Bracket from './components/Bracket.jsx';
 import Stats from './components/Stats.jsx';
 import Points from './components/Points.jsx';
 import International from './components/International.jsx';
+import Worlds from './components/Worlds.jsx';
+import History from './components/History.jsx';
 import Toast from './components/Toast.jsx';
 import StageTransition from './components/StageTransition.jsx';
 
@@ -98,14 +115,26 @@ function freezeStandings(teams) {
 }
 
 export default function App() {
-  const [started, setStarted] = useState(false);
-  const [gameState, setGameState] = useState(null);
+  // Hydrate from save if one exists. If no save, we start on TeamSelect.
+  // Lazy initializer ensures loadGameState only runs once on mount.
+  const [gameState, setGameState] = useState(() => loadGameState());
+  const [started, setStarted] = useState(() => gameState !== null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [toast, setToast] = useState(null);
   const [, forceRender] = useState(0);
-  const [viewRegion, setViewRegion] = useState(null);
+  const [viewRegion, setViewRegion] = useState(() =>
+    gameState ? gameState.humanRegion : null
+  );
 
   const clearToast = useCallback(() => setToast(null), []);
+
+  // Auto-save whenever the gameState reference changes. Every advance,
+  // transition, roster edit, etc. produces a new reference via setGameState,
+  // so this fires on every meaningful mutation. localStorage writes are
+  // fast enough that we don't bother debouncing.
+  useEffect(() => {
+    if (gameState) saveGameState(gameState);
+  }, [gameState]);
 
   function handleTeamSelect(regionKey, teamIndex) {
     const gs = initGame(regionKey, teamIndex);
@@ -113,6 +142,17 @@ export default function App() {
     setGameState(gs);
     setViewRegion(regionKey);
     setStarted(true);
+  }
+
+  // Called from the "Delete Save" button in the sidebar. Wipes the
+  // localStorage save and returns the app to the TeamSelect screen so
+  // the user can start a fresh game.
+  function handleDeleteSave() {
+    clearSave();
+    setGameState(null);
+    setStarted(false);
+    setViewRegion(null);
+    setCurrentView('dashboard');
   }
 
   if (!started || !gameState) {
@@ -157,10 +197,18 @@ export default function App() {
     // Block advancement while the transition screen is up or circuit is done.
     if (inTransition || circuitComplete) return;
 
-    // If we're inside an international slot, route to the international engine
+    // During international selection show, block advance while waiting for human
+    if (isAwaitingHumanPick(gameState)) return;
+    // During worlds group selection show, same deal
+    if (isWorldsAwaitingHumanPick(gameState)) return;
+
     const currentSlot = getCurrentSlot(gameState);
     if (currentSlot?.type === 'international') {
       advanceInternationalPhase();
+      return;
+    }
+    if (currentSlot?.type === 'worlds') {
+      advanceWorldsPhase();
       return;
     }
 
@@ -177,20 +225,44 @@ export default function App() {
   // ── Advance the currently active international tournament ──
   function advanceInternationalPhase() {
     advanceInternational(gameState);
-    // If the international finished during that tick, finalize it:
-    // award points, snapshot history, flip to 'transition'.
     if (isInternationalComplete(gameState)) {
       completeCurrentInternational(gameState);
     }
     setGameState(prev => ({ ...prev }));
   }
 
+  // ── Advance Worlds ──
+  function advanceWorldsPhase() {
+    advanceWorlds(gameState);
+    if (isWorldsComplete(gameState)) {
+      completeCurrentWorlds(gameState);
+    }
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Called from the International component during a human pick turn ──
+  function handleHumanSelectionPick(pickedTeam) {
+    submitHumanPick(gameState, pickedTeam);
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Called from the Worlds component when the human submits a playoff pick ──
+  function handleWorldsPlayoffPick(pickedTeam) {
+    const ok = submitWorldsPlayoffPick(gameState, pickedTeam);
+    if (ok) setGameState(prev => ({ ...prev }));
+  }
+
   // ── Called from the StageTransition "Continue" button ──
   function handleTransitionContinue() {
     beginNextSlot(gameState);
-    // Jump the view back to the dashboard so the user lands somewhere sensible
-    // after rollover (old bracket/standings views would show fresh-empty state).
-    setCurrentView('dashboard');
+    const nextSlot = getCurrentSlot(gameState);
+    if (nextSlot?.type === 'international') {
+      setCurrentView('international');
+    } else if (nextSlot?.type === 'worlds') {
+      setCurrentView('worlds');
+    } else {
+      setCurrentView('dashboard');
+    }
     setGameState(prev => ({ ...prev }));
   }
 
@@ -205,14 +277,16 @@ export default function App() {
 
       if (region.currentWeek === 0) {
         for (const team of region.teams) {
+          // Fill any missing roster slots. Free agents first (best overall),
+          // then generate fresh players if the FA pool is empty. No role
+          // dependency — players are role-agnostic now.
           while (team.roster.length < 5) {
-            const role = REQUIRED_ROLES[team.roster.length % REQUIRED_ROLES.length];
-            const fa = region.freeAgents.find(p => p.role === role);
-            if (fa) {
-              team.roster.push(fa);
-              region.freeAgents.splice(region.freeAgents.indexOf(fa), 1);
+            const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
+            if (bestFA) {
+              team.roster.push(bestFA);
+              region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
             } else {
-              team.roster.push(generatePlayer(role));
+              team.roster.push(generatePlayer({ regionKey }));
             }
           }
           team.validateStrategy();
@@ -332,6 +406,7 @@ export default function App() {
   // ── Sidebar display ──
   const currentSlotForSidebar = getCurrentSlot(gameState);
   const inInternational = currentSlotForSidebar?.type === 'international';
+  const inWorlds = currentSlotForSidebar?.type === 'worlds';
 
   let sidebarPhase, sidebarWeek, sidebarLabel;
   if (circuitComplete) {
@@ -341,9 +416,32 @@ export default function App() {
   } else if (inTransition) {
     sidebarPhase = 'bracket';
     sidebarWeek = 0;
-    sidebarLabel = inInternational ? 'International Complete' : 'Stage Complete';
+    if (inWorlds) sidebarLabel = 'Worlds Complete';
+    else if (inInternational) sidebarLabel = 'International Complete';
+    else sidebarLabel = 'Stage Complete';
+  } else if (inWorlds) {
+    sidebarPhase = 'bracket';
+    sidebarWeek = 0;
+    const w = gameState.worlds;
+    if (!w) {
+      sidebarLabel = 'Loading...';
+    } else if (w.phase === 'groupSelection') {
+      sidebarLabel = isWorldsAwaitingHumanPick(gameState)
+        ? 'Your Placement'
+        : `Group Draw · ${w.groupSelection.currentRegionIndex + 1}/4`;
+    } else if (w.phase === 'groups') {
+      const round = w.groups?.A?.round || 1;
+      sidebarLabel = `Groups · Round ${round}`;
+    } else if (w.phase === 'playoffSelection') {
+      sidebarLabel = isWorldsAwaitingHumanPick(gameState)
+        ? 'Your Pick'
+        : `Playoff Draw · ${(w.playoffSelection?.currentPickIndex || 0) + 1}/4`;
+    } else if (w.phase === 'bracket') {
+      sidebarLabel = `Playoffs · Stage ${w.bracket?.stage || 1}`;
+    } else {
+      sidebarLabel = 'Advancing...';
+    }
   } else if (inInternational) {
-    // Dedicated international sidebar state — label describes current phase
     sidebarPhase = 'bracket';
     sidebarWeek = 0;
     const intl = gameState.international;
@@ -351,6 +449,10 @@ export default function App() {
       sidebarLabel = 'Loading...';
     } else if (intl.phase === 'swiss') {
       sidebarLabel = `Swiss · Round ${intl.swiss.round}`;
+    } else if (intl.phase === 'selection') {
+      sidebarLabel = isAwaitingHumanPick(gameState)
+        ? 'Your Pick'
+        : `Selection Show · ${(intl.selectionShow?.currentPickIndex || 0) + 1}/4`;
     } else if (intl.phase === 'bracket') {
       sidebarLabel = `Playoffs · Stage ${intl.bracket.stage}`;
     } else {
@@ -390,8 +492,15 @@ export default function App() {
         return <Stats regions={gameState.regions} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'points':
         return <Points gameState={gameState} viewRegion={vr} onChangeRegion={setViewRegion} />;
+      case 'history':
+        return <History gameState={gameState} />;
       case 'international':
-        return <International gameState={gameState} />;
+        return <International gameState={gameState} onHumanPick={handleHumanSelectionPick} />;
+      case 'worlds':
+        return <Worlds
+          gameState={gameState}
+          onPlayoffPick={handleWorldsPlayoffPick}
+        />;
       default:
         return <Dashboard gameState={gameState} humanTeam={humanTeam} />;
     }
@@ -408,6 +517,8 @@ export default function App() {
         bracketLabel={sidebarLabel}
         allDone={circuitComplete}
         stageName={stageName}
+        advanceDisabled={isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)}
+        onDeleteSave={handleDeleteSave}
       />
       <main id="content">{renderView()}</main>
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}

@@ -1,11 +1,18 @@
 /**
  * ai.js — CPU roster decisions.
  *
- * UPDATED: Calls team.validateStrategy() after every roster change
- * so assignments stay in sync.
+ * Players no longer have roles, so FA moves are driven by raw overall
+ * ratings and roster size. The CPU will:
+ *   1. Fill its roster up to ROSTER_MIN if it's short
+ *   2. Look for clear upgrades — an FA whose overall beats the team's
+ *      worst player by at least SIM.UPGRADE_THRESHOLD — and swap them in
+ *
+ * Phase 6e will replace this with team-archetype-flavored behavior
+ * (big spenders, talent seekers, balanced) tied to FA windows. For now
+ * this is the simple fallback that keeps rosters at valid size.
  */
 
-import { SIM } from '../data/constants.js';
+import { SIM, ROSTER_MIN } from '../data/constants.js';
 
 export function runCpuMoves(gameState) {
   const { teams, freeAgents } = gameState;
@@ -21,36 +28,27 @@ function cpuRosterMoves(team, freeAgents) {
   let madeChanges = false;
 
   // Step 1: Fill gaps
-  const filledRoles = new Set(team.roster.map(p => p.role));
-  const allRoles = ['duelist', 'initiator', 'controller', 'sentinel', 'flex'];
+  while (team.roster.length < ROSTER_MIN && freeAgents.length > 0) {
+    const best = [...freeAgents].sort((a, b) => b.overall - a.overall)[0];
+    if (!best) break;
+    team.addPlayer(best);
+    freeAgents.splice(freeAgents.indexOf(best), 1);
+    madeChanges = true;
+  }
 
-  for (const role of allRoles) {
-    if (filledRoles.has(role)) continue;
-    const best = freeAgents
-      .filter(p => p.role === role)
-      .sort((a, b) => b.overall - a.overall)[0];
-    if (best) {
-      team.addPlayer(best);
-      freeAgents.splice(freeAgents.indexOf(best), 1);
+  // Step 2: Look for a clear upgrade
+  if (team.roster.length >= ROSTER_MIN && freeAgents.length > 0) {
+    const weakest = [...team.roster].sort((a, b) => a.overall - b.overall)[0];
+    const bestFA = [...freeAgents].sort((a, b) => b.overall - a.overall)[0];
+    if (weakest && bestFA && bestFA.overall > weakest.overall + SIM.UPGRADE_THRESHOLD) {
+      team.removePlayer(weakest);
+      freeAgents.push(weakest);
+      team.addPlayer(bestFA);
+      freeAgents.splice(freeAgents.indexOf(bestFA), 1);
       madeChanges = true;
     }
   }
 
-  // Step 2: Upgrade
-  for (const player of [...team.roster]) {
-    const upgrade = freeAgents
-      .filter(p => p.role === player.role && p.overall > player.overall + SIM.UPGRADE_THRESHOLD)
-      .sort((a, b) => b.overall - a.overall)[0];
-    if (upgrade) {
-      team.removePlayer(player);
-      freeAgents.push(player);
-      team.addPlayer(upgrade);
-      freeAgents.splice(freeAgents.indexOf(upgrade), 1);
-      madeChanges = true;
-    }
-  }
-
-  // Always re-validate strategy after any roster changes
   if (madeChanges) {
     team.validateStrategy();
   }

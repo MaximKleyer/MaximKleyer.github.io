@@ -282,43 +282,223 @@ function SwissMatches({ swiss, onMatchClick, expandedId, compact = false }) {
 
 /* ─────────────── Selection show summary ─────────────── */
 
-function SelectionShowSummary({ selectionShow }) {
-  if (!selectionShow) return null;
+/* ─────────────── Selection show ─────────────── */
+/**
+ * Single component that handles all selection-show display states:
+ *
+ *   1. IN PROGRESS — not your turn (AI or spectator):
+ *        - Shows all 4 pick slots, revealed ones filled, current one highlighted
+ *        - Shows a hint telling the user to press Advance to reveal the next pick
+ *
+ *   2. IN PROGRESS — your pick turn:
+ *        - Same slot display, your slot highlighted in accent color
+ *        - Shows a grid of remaining Swiss survivors; clicking one submits the pick
+ *        - The pick grid replaces the "press advance" hint
+ *
+ *   3. COMPLETE (bracket or complete phase):
+ *        - All 4 slots filled with a concise read-back
+ *        - Collapsed styling, no interaction
+ */
+
+function SelectionShow({ intl, available, onHumanPick, compact = false }) {
+  const show = intl?.selectionShow;
+  if (!show) return null;
+
+  const { pickOrder, picks, currentPickIndex, awaitingHuman } = show;
+  const allDone = currentPickIndex >= pickOrder.length;
+
+  // Build a row entry for each of the 4 slots (filled or empty)
+  const slotRows = pickOrder.map((bid, idx) => {
+    const pick = picks[idx] || null;
+    const isCurrent = !allDone && idx === currentPickIndex;
+    return { idx, bid, pick, isCurrent };
+  });
+
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{
         fontSize: '0.66rem',
         letterSpacing: '0.14em',
         textTransform: 'uppercase',
-        color: '#8a98b1',
+        color: awaitingHuman ? 'var(--accent, #ff4655)' : '#8a98b1',
         fontFamily: "'JetBrains Mono', monospace",
         marginBottom: 10,
       }}>
         Selection Show
+        {!allDone && !awaitingHuman && (
+          <span style={{ marginLeft: 10, color: '#6f7d93', textTransform: 'none', letterSpacing: 0 }}>
+            — Pick {currentPickIndex + 1} of 4
+          </span>
+        )}
+        {awaitingHuman && (
+          <span style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
+            — Your turn to pick
+          </span>
+        )}
+      </div>
+
+      {/* 4 slot cards in a row */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: 10,
+        marginBottom: allDone ? 0 : 16,
+      }}>
+        {slotRows.map(({ idx, bid, pick, isCurrent }) => (
+          <SlotCard
+            key={idx}
+            slotNumber={idx + 1}
+            picker={bid.team}
+            pickerRegion={bid.region}
+            pick={pick}
+            isCurrent={isCurrent}
+            isYou={bid.team.isHuman}
+          />
+        ))}
+      </div>
+
+      {/* Active interaction below the row */}
+      {!allDone && awaitingHuman && (
+        <HumanPickGrid available={available} onPick={onHumanPick} />
+      )}
+      {!allDone && !awaitingHuman && (
+        <div style={{
+          padding: '10px 14px',
+          background: 'rgba(255,255,255,0.02)',
+          border: '1px dashed rgba(255,255,255,0.1)',
+          borderRadius: 6,
+          fontSize: '0.78rem',
+          color: '#8a98b1',
+          textAlign: 'center',
+          fontStyle: 'italic',
+        }}>
+          Press <strong style={{ color: '#e8ecf3' }}>Advance</strong> in the sidebar to reveal the next pick.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SlotCard({ slotNumber, picker, pickerRegion, pick, isCurrent, isYou }) {
+  const borderColor = isCurrent
+    ? (isYou ? 'var(--accent, #ff4655)' : '#6aa9ff')
+    : 'rgba(255,255,255,0.08)';
+  const bg = isCurrent
+    ? (isYou ? 'rgba(255, 70, 85, 0.06)' : 'rgba(106, 169, 255, 0.05)')
+    : 'rgba(255,255,255,0.015)';
+
+  return (
+    <div style={{
+      border: `1px solid ${borderColor}`,
+      borderRadius: 8,
+      background: bg,
+      padding: 12,
+      minHeight: 90,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        fontSize: '0.6rem',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        color: '#6f7d93',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        <span>Pick {slotNumber}</span>
+        <span>{REGION_ABBR[pickerRegion] || pickerRegion.toUpperCase()}</span>
       </div>
       <div style={{
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 8,
-        background: 'rgba(255,255,255,0.015)',
-        padding: '10px 14px',
+        fontSize: '0.9rem',
+        fontWeight: 600,
+        color: picker.color,
       }}>
-        {selectionShow.picks.map((p, i) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '5px 0',
-            borderTop: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.04)',
-            fontSize: '0.84rem',
-          }}>
-            <span style={{
-              width: 22, textAlign: 'center',
-              color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem',
-            }}>
-              {p.order}
+        {picker.abbr}
+        {isYou && (
+          <span style={{
+            marginLeft: 6, fontSize: '0.6rem', color: '#6aa9ff',
+            letterSpacing: '0.1em', textTransform: 'uppercase',
+          }}>You</span>
+        )}
+      </div>
+      <div style={{
+        marginTop: 'auto',
+        paddingTop: 6,
+        borderTop: '1px solid rgba(255,255,255,0.05)',
+        fontSize: '0.78rem',
+      }}>
+        {pick ? (
+          <div>
+            <span style={{ color: '#6f7d93' }}>vs </span>
+            <span style={{ color: pick.picked.color, fontWeight: 600 }}>
+              {pick.picked.abbr}
             </span>
-            <span style={{ color: p.picker.color, fontWeight: 600 }}>{p.picker.name}</span>
-            <span style={{ color: '#6f7d93' }}>picked</span>
-            <span style={{ color: p.picked.color, fontWeight: 600 }}>{p.picked.name}</span>
           </div>
+        ) : isCurrent ? (
+          <span style={{ color: isYou ? 'var(--accent, #ff4655)' : '#6aa9ff', fontStyle: 'italic' }}>
+            {isYou ? 'Awaiting your pick…' : 'On the clock…'}
+          </span>
+        ) : (
+          <span style={{ color: '#5a6678', fontStyle: 'italic' }}>Waiting</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HumanPickGrid({ available, onPick }) {
+  if (!available || available.length === 0) return null;
+  return (
+    <div>
+      <div style={{
+        fontSize: '0.74rem', color: '#a8b5c9', marginBottom: 10,
+      }}>
+        Click a team to select your Round 1 opponent:
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${Math.min(available.length, 4)}, 1fr)`,
+        gap: 10,
+      }}>
+        {available.map(team => (
+          <button
+            key={team.abbr}
+            onClick={() => onPick(team)}
+            style={{
+              textAlign: 'left',
+              padding: '12px 14px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 8,
+              background: 'rgba(255,255,255,0.02)',
+              color: '#e8ecf3',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              transition: 'border-color 0.15s, background 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = team.color || '#6aa9ff';
+              e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+              e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+            }}
+          >
+            <div style={{
+              fontSize: '0.6rem',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: '#6f7d93',
+              fontFamily: "'JetBrains Mono', monospace",
+              marginBottom: 4,
+            }}>
+              OVR {team.overallRating}
+            </div>
+            <div style={{ color: team.color, fontSize: '0.95rem', fontWeight: 600 }}>
+              {team.name}
+            </div>
+          </button>
         ))}
       </div>
     </div>
@@ -604,7 +784,7 @@ function IntlBracketGrid({ bracket, onMatchClick, allMatches }) {
 
 /* ─────────────── Main component ─────────────── */
 
-export default function International({ gameState }) {
+export default function International({ gameState, onHumanPick }) {
   const [expanded, setExpanded] = useState(null); // { source: 'swiss'|'bracket', id: string }
 
   const intl = gameState.international;
@@ -658,22 +838,40 @@ export default function International({ gameState }) {
     }
   }
 
+  const inSelection = intl.phase === 'selection';
   const showBracket = intl.phase === 'bracket' || intl.phase === 'complete';
-  const swissCompact = showBracket;
+  const swissCompact = inSelection || showBracket;
+
+  // Compute available survivors for the pick grid (only when awaiting human).
+  // We avoid importing gameState-bound helpers here and instead derive it
+  // locally from the intl state.
+  let availableForPick = [];
+  if (inSelection && intl.selectionShow?.awaitingHuman) {
+    const survivors = (intl.swiss?.teams || [])
+      .filter(e => e.advanced)
+      .map(e => e.team);
+    const picked = new Set((intl.selectionShow.picks || []).map(p => p.picked));
+    availableForPick = survivors.filter(t => !picked.has(t));
+  }
 
   return (
     <div>
       <h2>{intl.name}</h2>
       <p className="muted" style={{ fontSize: '0.78rem', marginBottom: 18 }}>
         {intl.phase === 'swiss' && 'Swiss stage in progress. Use Advance in the sidebar to play the next round. Click a completed match to view stats.'}
+        {intl.phase === 'selection' && (
+          intl.selectionShow?.awaitingHuman
+            ? 'Selection show — your turn. Click a team below to choose your Round 1 opponent.'
+            : 'Selection show in progress. Press Advance to reveal the next pick.'
+        )}
         {intl.phase === 'bracket' && 'Playoffs in progress. Use Advance to play the next stage. Click a completed match to view stats.'}
         {intl.phase === 'complete' && 'Tournament complete. Continue to the next stage from the transition screen.'}
       </p>
 
       <AutoBidRow autoBids={intl.autoBids} />
 
-      {/* Swiss section — compact during bracket phase, full during swiss phase */}
-      <div style={{ marginBottom: showBracket ? 24 : 32 }}>
+      {/* Swiss section — compact during selection/bracket phases, full during swiss phase */}
+      <div style={{ marginBottom: swissCompact ? 24 : 32 }}>
         <div style={{
           fontSize: swissCompact ? '0.62rem' : '0.68rem',
           letterSpacing: '0.14em',
@@ -716,11 +914,19 @@ export default function International({ gameState }) {
         )}
       </div>
 
+      {/* Selection show — visible during selection phase and as a read-back
+          during bracket/complete phases. Hidden during swiss phase. */}
+      {(inSelection || showBracket) && (
+        <SelectionShow
+          intl={intl}
+          available={availableForPick}
+          onHumanPick={onHumanPick}
+        />
+      )}
+
       {/* Bracket section — only in bracket and complete phases */}
       {showBracket && (
         <>
-          <SelectionShowSummary selectionShow={intl.selectionShow} />
-
           <div style={{
             fontSize: '0.68rem',
             letterSpacing: '0.14em',

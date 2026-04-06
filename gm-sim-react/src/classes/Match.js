@@ -57,7 +57,9 @@ function buildAssignmentMap(team) {
 function pickFighter(alivePlayers, assignmentMap) {
   const weights = alivePlayers.map(p => {
     const a = assignmentMap[p.id];
-    return ROLE_AGGRESSION[a ? a.role : p.role] || 1.0;
+    // Role-based aggression comes from the strategy assignment only.
+    // Players without an assignment get a neutral 1.0 weight.
+    return a ? (ROLE_AGGRESSION[a.role] || 1.0) : 1.0;
   });
   const total = weights.reduce((s, w) => s + w, 0);
   let roll = Math.random() * total;
@@ -191,6 +193,16 @@ export function simulateMap(teamA, teamB) {
   const rosterAIds = teamA.roster.map(p => p.id);
   const rosterBIds = teamB.roster.map(p => p.id);
 
+  // Build assignment → role lookup so each player's match stats can
+  // record the role they played. Assignment is authoritative — the
+  // player itself no longer carries a role field.
+  const roleByPlayerId = {};
+  for (const t of [teamA, teamB]) {
+    for (const a of (t.strategy?.assignments || [])) {
+      if (a.playerId && a.role) roleByPlayerId[a.playerId] = a.role;
+    }
+  }
+
   for (const player of [...teamA.roster, ...teamB.roster]) {
     const rs = roundStats[player.id];
     const acs = Math.round(rs.combatScore / totalRounds);
@@ -198,7 +210,7 @@ export function simulateMap(teamA, teamB) {
       id: player.id,
       name: player.name,
       tag: player.tag,
-      role: player.role,
+      role: roleByPlayerId[player.id] || '—',
       teamAbbr: rosterAIds.includes(player.id) ? teamA.abbr : teamB.abbr,
       kills: rs.kills, deaths: rs.deaths, assists: rs.assists, acs,
     };

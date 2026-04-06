@@ -1,5 +1,6 @@
 import { getGroupStandings } from '../engine/standings.js';
 import { REGIONS } from '../data/regions.js';
+import { flagClass } from '../data/nationalities.js';
 
 export default function Dashboard({ gameState, humanTeam }) {
   const region = gameState.regions[gameState.humanRegion];
@@ -60,7 +61,12 @@ export default function Dashboard({ gameState, humanTeam }) {
         <div className="card">
           <h3>Roster ({humanTeam.roster.length}/5)</h3>
           {humanTeam.roster.map(p => (
-            <p key={p.id}><strong>{p.tag}</strong><span className="muted"> — {p.role} — {p.overall} OVR</span></p>
+            <p key={p.id}>
+              <strong>{p.tag}</strong>
+              <span className="muted"> — </span>
+              <span className={flagClass(p.nationality)} style={{ marginRight: 4 }} />
+              <span className="muted">age {p.age} — {p.overall} OVR</span>
+            </p>
           ))}
           {humanTeam.roster.length < 5 && (
             <p style={{ color: 'var(--accent)', marginTop: 8, fontWeight: 600 }}>

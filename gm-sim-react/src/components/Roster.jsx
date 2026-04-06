@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import Strategy from './Strategy.jsx';
+import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function Roster({ team, onRelease, onUpdate }) {
   const [, forceUpdate] = useState(0);
@@ -21,7 +22,7 @@ export default function Roster({ team, onRelease, onUpdate }) {
       <table>
         <thead>
           <tr>
-            <th>Tag</th><th>Name</th><th>Role</th><th>OVR</th>
+            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
             <th></th>
@@ -35,7 +36,10 @@ export default function Roster({ team, onRelease, onUpdate }) {
                 {player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}
               </td>
               <td>{player.name}</td>
-              <td>{player.role}</td>
+              <td title={nationalityName(player.nationality)}>
+                <span className={flagClass(player.nationality)} />
+              </td>
+              <td>{player.age}</td>
               <td>{player.overall}</td>
               <td>{player.ratings.aim}</td>
               <td>{player.ratings.positioning}</td>
