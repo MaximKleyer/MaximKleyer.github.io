@@ -4,12 +4,20 @@ import { COMPOSITIONS, SUBTYPES } from '../data/strategy.js';
 import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import DeltaIndicator from './DeltaIndicator.jsx';
+import EditableCell from './EditableCell.jsx';
+import NationalitySelect from './NationalitySelect.jsx';
+import { ARCHETYPE_INFO } from '../data/archetypes.js';
 
-export default function Standings({ regionData, viewRegion, onChangeRegion }) {
+export default function Standings({
+  regionData, viewRegion, onChangeRegion,
+  godMode = false, onEditPlayer,
+}) {
   const [expanded, setExpanded] = useState(null);
   const frozen = regionData.frozenStandings;
 
   function toggleExpand(abbr) { setExpanded(prev => prev === abbr ? null : abbr); }
+
+  const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
 
   function getSubtypeLabel(subtypeId) {
     for (const role of Object.keys(SUBTYPES)) {
@@ -62,6 +70,14 @@ export default function Standings({ regionData, viewRegion, onChangeRegion }) {
                 <div className="team-detail-header">
                   <span><strong>Comp:</strong> {comp?.label || 'Default'}</span>
                   {team.igl && <span><strong>IGL:</strong> {team.igl.tag} (IQ: {team.igl.ratings.gamesense})</span>}
+                  {team.archetype && ARCHETYPE_INFO[team.archetype] && (
+                    <span title={`Offseason behavior: ${ARCHETYPE_INFO[team.archetype].label}`}>
+                      <strong>Style:</strong>{' '}
+                      <span style={{ color: ARCHETYPE_INFO[team.archetype].color }}>
+                        {ARCHETYPE_INFO[team.archetype].emoji} {ARCHETYPE_INFO[team.archetype].label}
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <table className="team-detail-table">
                   <thead><tr><th>Player</th><th>Nat</th><th>Age</th><th>Assigned</th><th>Subtype</th><th>OVR</th><th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th><th>Maps</th><th>K</th><th>D</th><th>K/D</th><th>ACS</th></tr></thead>
@@ -71,19 +87,49 @@ export default function Standings({ regionData, viewRegion, onChangeRegion }) {
                       const d = player.lastOffseasonDelta;
                       return (
                         <tr key={player.id}>
-                          <td><strong>{player.tag}</strong>{player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}</td>
-                          <td title={nationalityName(player.nationality)}>
-                            <span className={flagClass(player.nationality)} />
+                          <td>
+                            {godMode ? (
+                              <EditableCell value={player.tag} editable width={72}
+                                onCommit={v => onEditPlayer(player, 'tag', v)} />
+                            ) : (
+                              <strong>{player.tag}</strong>
+                            )}
+                            {player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}
                           </td>
-                          <td>{player.age}</td>
+                          <td title={nationalityName(player.nationality)}>
+                            <NationalitySelect
+                              value={player.nationality}
+                              editable={godMode}
+                              onCommit={v => onEditPlayer(player, 'nationality', v)}
+                            />
+                          </td>
+                          <td>
+                            <EditableCell value={player.age} type="number" editable={godMode} min={16} max={40}
+                              onCommit={v => onEditPlayer(player, 'age', v)} />
+                          </td>
                           <td>{a?.role || '—'}</td>
                           <td>{a ? getSubtypeLabel(a.subtypeId) : '—'}</td>
                           <td>{player.overall}<DeltaIndicator delta={d?.overall} size="small" /></td>
-                          <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
-                          <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
-                          <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
-                          <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
-                          <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
+                          <td>
+                            <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
+                            <DeltaIndicator delta={d?.aim} size="small" />
+                          </td>
+                          <td>
+                            <EditableCell value={player.ratings.positioning} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'positioning')} />
+                            <DeltaIndicator delta={d?.positioning} size="small" />
+                          </td>
+                          <td>
+                            <EditableCell value={player.ratings.utility} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'utility')} />
+                            <DeltaIndicator delta={d?.utility} size="small" />
+                          </td>
+                          <td>
+                            <EditableCell value={player.ratings.gamesense} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'gamesense')} />
+                            <DeltaIndicator delta={d?.gamesense} size="small" />
+                          </td>
+                          <td>
+                            <EditableCell value={player.ratings.clutch} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'clutch')} />
+                            <DeltaIndicator delta={d?.clutch} size="small" />
+                          </td>
                           <td>{player.stats.maps}</td><td>{player.stats.kills}</td><td>{player.stats.deaths}</td><td>{player.kd}</td><td>{player.avgAcs}</td>
                         </tr>
                       );

@@ -24,6 +24,7 @@ import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/po
 import { generateSchedule } from './league.js';
 import { generatePlayer } from '../classes/Player.js';
 import { computeFinalStagePlacements } from './placements.js';
+import { runOffseasonAISignings } from './offseason.js';
 import {
   initInternational,
   computeInternationalResults,
@@ -77,14 +78,27 @@ export function initSeason(gameState) {
   return {
     circuit: CIRCUIT,
     slotIndex: 0,
-    // 'active'         — circuit running (group play, brackets, intl, worlds)
-    // 'transition'     — between slots, transition overlay showing
-    // 'season-complete' — season done, awaiting "Start New Season" click
+    // 'active'            — circuit running (group play, brackets, intl, worlds)
+    // 'transition'        — between slots, transition overlay showing
+    // 'season-complete'   — season done, awaiting "Start New Season" click
+    // 'offseason-active'  — Phase 6e: between seasons, user reviews offseason
+    //                       report and manages FA roster. Advance is blocked
+    //                       until user clicks "Start Preseason" which flips
+    //                       status back to 'active'.
     // (legacy 'complete' status no longer used; replaced by 'season-complete')
     status: 'active',
     points,
     history: [],
     currentStageGroupWins,
+    // Log of AI team moves during the most recent offseason. Populated by
+    // runOffseasonAISignings() and runReactiveAISignings() in offseason.js.
+    // Displayed on the Offseason view. Cleared on new season init.
+    aiOffseasonLog: [],
+    // Phase 6e+ Ask 3: in-flight series played one map at a time.
+    // Managed by engine/activeSeries.js. Populated when advance handlers
+    // seed a week/round/stage, drained as series complete over successive
+    // Advance clicks. Empty between ticks.
+    activeSeries: [],
   };
 }
 
@@ -784,6 +798,17 @@ function developPlayer(player) {
 export function beginNewSeason(gameState) {
   if (gameState.season?.status !== 'season-complete') return;
 
+  // Defensive: ensure top-level Phase 6c+ fields exist. Saves created
+  // before these fields were added (or partially-migrated saves) might
+  // have them missing, which would throw on .push() below and silently
+  // break the click handler.
+  if (typeof gameState.seasonNumber !== 'number') {
+    gameState.seasonNumber = 2025;
+  }
+  if (!Array.isArray(gameState.archive)) {
+    gameState.archive = [];
+  }
+
   // ── 1. Archive the completed season ──
   const completedYear = gameState.seasonNumber;
   const completedHistory = gameState.season.history || [];
@@ -982,6 +1007,18 @@ export function beginNewSeason(gameState) {
   // Fresh season object. initSeason preserves seasonNumber and archive
   // (already at the top level) and re-zeroes points/history.
   gameState.season = initSeason(gameState);
+
+  // Phase 6e: land in the dedicated Offseason view, not straight into
+  // preseason. User clicks "Start Preseason" from that view (which flips
+  // status back to 'active') when they've finished roster moves.
+  gameState.season.status = 'offseason-active';
+
+  // Phase 6e: AI archetype-driven signings. Runs AFTER the season swap
+  // so the log lands on the new season object. AI teams roll for signings
+  // on the freshly-populated FA pool (includes rookies from step 6).
+  // The user's subsequent releases can trigger additional reactive AI
+  // moves via runReactiveAISignings() called from App.jsx.
+  runOffseasonAISignings(gameState);
 }
 
 

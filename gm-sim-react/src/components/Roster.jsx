@@ -5,15 +5,23 @@
 import { useState } from 'react';
 import Strategy from './Strategy.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
+import EditableCell from './EditableCell.jsx';
+import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 
-export default function Roster({ team, onRelease, onUpdate }) {
+export default function Roster({
+  team, onRelease, onUpdate, allowMinRelease = false,
+  godMode = false, onEditPlayer,
+}) {
   const [, forceUpdate] = useState(0);
 
   function handleStrategyUpdate() {
     forceUpdate(n => n + 1);
     if (onUpdate) onUpdate();
   }
+
+  // Adapter: rating edits flow through a single handler
+  const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
 
   return (
     <>
@@ -35,23 +43,66 @@ export default function Roster({ team, onRelease, onUpdate }) {
             return (
             <tr key={player.id}>
               <td>
-                <strong>{player.tag}</strong>
+                {godMode ? (
+                  <EditableCell
+                    value={player.tag}
+                    editable
+                    width={80}
+                    onCommit={v => onEditPlayer(player, 'tag', v)}
+                  />
+                ) : (
+                  <strong>{player.tag}</strong>
+                )}
                 {player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}
               </td>
-              <td>{player.name}</td>
-              <td title={nationalityName(player.nationality)}>
-                <span className={flagClass(player.nationality)} />
+              <td>
+                <EditableCell
+                  value={player.name}
+                  editable={godMode}
+                  width={130}
+                  onCommit={v => onEditPlayer(player, 'name', v)}
+                />
               </td>
-              <td>{player.age}</td>
+              <td title={nationalityName(player.nationality)}>
+                <NationalitySelect
+                  value={player.nationality}
+                  editable={godMode}
+                  onCommit={v => onEditPlayer(player, 'nationality', v)}
+                />
+              </td>
+              <td>
+                <EditableCell
+                  value={player.age}
+                  type="number"
+                  editable={godMode}
+                  min={16} max={40}
+                  onCommit={v => onEditPlayer(player, 'age', v)}
+                />
+              </td>
               <td>
                 {player.overall}
                 <DeltaIndicator delta={d?.overall} />
               </td>
-              <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
-              <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
-              <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
-              <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
-              <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
+              <td>
+                <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
+                <DeltaIndicator delta={d?.aim} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.positioning} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'positioning')} />
+                <DeltaIndicator delta={d?.positioning} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.utility} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'utility')} />
+                <DeltaIndicator delta={d?.utility} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.gamesense} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'gamesense')} />
+                <DeltaIndicator delta={d?.gamesense} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.clutch} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'clutch')} />
+                <DeltaIndicator delta={d?.clutch} size="small" />
+              </td>
               <td>{player.stats.maps}</td>
               <td>{player.stats.kills}</td>
               <td>{player.stats.deaths}</td>
@@ -59,9 +110,9 @@ export default function Roster({ team, onRelease, onUpdate }) {
               <td>{player.kd}</td>
               <td>{player.avgAcs}</td>
               <td>
-                <button className="btn-small btn-danger" disabled={team.atMinRoster}
+                <button className="btn-small btn-danger" disabled={team.atMinRoster && !allowMinRelease}
                   onClick={() => onRelease(player)}>
-                  {team.atMinRoster ? 'Min 5' : 'Release'}
+                  {team.atMinRoster && !allowMinRelease ? 'Min 5' : 'Release'}
                 </button>
               </td>
             </tr>

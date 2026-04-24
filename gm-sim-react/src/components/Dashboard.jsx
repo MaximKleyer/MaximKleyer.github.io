@@ -117,7 +117,7 @@ export default function Dashboard({ gameState, humanTeam, onStartNewSeason }) {
                   letterSpacing: '0.04em',
                 }}
               >
-                ▶ Start Season {seasonNumber + 1}
+                ▶ Enter Offseason
               </button>
             )}
             <span style={{ fontSize: '0.78rem', color: '#8a98b1', fontStyle: 'italic' }}>

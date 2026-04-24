@@ -49,6 +49,95 @@ function playMatch(match, bestOf = 3) {
   processMatchResult(match.result);
 }
 
+/**
+ * Get the list of matches that should be PLAYED in the current stage.
+ * Returns an array of { match, bestOf } objects. Used by the per-map
+ * advance flow to know what to seed as active series.
+ *
+ * Unlike advanceBracketStage(), this does NOT play anything — just
+ * enumerates the work that needs doing this stage.
+ */
+export function getStageMatches(bracket) {
+  switch (bracket.stage) {
+    case 1: return bracket.ubQF.map(m => ({ match: m, bestOf: 3 }));
+    case 2: return [
+      ...bracket.lbR1.map(m => ({ match: m, bestOf: 3 })),
+      ...bracket.ubSF.map(m => ({ match: m, bestOf: 3 })),
+    ];
+    case 3: return [
+      ...bracket.lbQF.map(m => ({ match: m, bestOf: 3 })),
+      { match: bracket.ubFinal, bestOf: 3 },
+    ];
+    case 4: return [{ match: bracket.lbSF, bestOf: 3 }];
+    case 5: return [{ match: bracket.lbFinal, bestOf: 5 }];
+    case 6: return [{ match: bracket.grandFinal, bestOf: 5 }];
+    default: return [];
+  }
+}
+
+/**
+ * Mirror of advanceBracketStage but assumes match.result is ALREADY set
+ * by external per-map play. Performs the seeding/routing of next-stage
+ * matchups + records eliminations + bumps stage.
+ *
+ * Use this in the per-map advance flow:
+ *   1. seed all matches from getStageMatches as active series
+ *   2. play maps until isSeriesComplete(every series)
+ *   3. drain — caller copies series.result into match.result + runs processSeriesResult
+ *   4. call routeBracketStage to set up the next stage
+ */
+export function routeBracketStage(bracket) {
+  const b = { ...bracket };
+  switch (b.stage) {
+    case 1: {
+      b.ubSF[0].teamB = b.ubQF[0].result.winner;
+      b.ubSF[1].teamB = b.ubQF[1].result.winner;
+      b.lbR1[0].teamA = b.ubQF[0].result.loser;
+      b.lbR1[1].teamA = b.ubQF[1].result.loser;
+      b.stage = 2;
+      break;
+    }
+    case 2: {
+      b.ubFinal.teamA = b.ubSF[0].result.winner;
+      b.ubFinal.teamB = b.ubSF[1].result.winner;
+      b.lbQF[0].teamA = b.ubSF[1].result.loser;
+      b.lbQF[0].teamB = b.lbR1[0].result.winner;
+      b.lbQF[1].teamA = b.ubSF[0].result.loser;
+      b.lbQF[1].teamB = b.lbR1[1].result.winner;
+      b.eliminated = [...b.eliminated, b.lbR1[0].result.loser, b.lbR1[1].result.loser];
+      b.stage = 3;
+      break;
+    }
+    case 3: {
+      b.lbSF.teamA = b.lbQF[0].result.winner;
+      b.lbSF.teamB = b.lbQF[1].result.winner;
+      b.eliminated = [...b.eliminated, b.lbQF[0].result.loser, b.lbQF[1].result.loser];
+      b.stage = 4;
+      break;
+    }
+    case 4: {
+      b.lbFinal.teamA = b.ubFinal.result.loser;
+      b.lbFinal.teamB = b.lbSF.result.winner;
+      b.eliminated = [...b.eliminated, b.lbSF.result.loser];
+      b.stage = 5;
+      break;
+    }
+    case 5: {
+      b.grandFinal.teamA = b.ubFinal.result.winner;
+      b.grandFinal.teamB = b.lbFinal.result.winner;
+      b.eliminated = [...b.eliminated, b.lbFinal.result.loser];
+      b.stage = 6;
+      break;
+    }
+    case 6: {
+      b.eliminated = [...b.eliminated, b.grandFinal.result.loser];
+      b.stage = 7;
+      break;
+    }
+  }
+  return b;
+}
+
 export function generateBracket(teams) {
   const groupA = getGroupStandings(teams, 'A');
   const groupB = getGroupStandings(teams, 'B');

@@ -23,9 +23,14 @@
 
 import { useState } from 'react';
 import DeltaIndicator from './DeltaIndicator.jsx';
+import EditableCell from './EditableCell.jsx';
+import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 
-export default function FreeAgents({ freeAgents, canSign, onSign }) {
+export default function FreeAgents({
+  freeAgents, canSign, onSign,
+  godMode = false, onEditPlayer,
+}) {
   // Local state — only this component uses sortKey
   const [sortKey, setSortKey] = useState('overall');
 
@@ -44,6 +49,8 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
       {label}
     </button>
   );
+
+  const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
 
   return (
     <>
@@ -73,18 +80,50 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
             const d = player.lastOffseasonDelta;
             return (
             <tr key={player.id}>
-              <td><strong>{player.tag}</strong></td>
-              <td>{player.name}</td>
-              <td title={nationalityName(player.nationality)}>
-                <span className={flagClass(player.nationality)} />
+              <td>
+                {godMode ? (
+                  <EditableCell value={player.tag} editable width={80}
+                    onCommit={v => onEditPlayer(player, 'tag', v)} />
+                ) : (
+                  <strong>{player.tag}</strong>
+                )}
               </td>
-              <td>{player.age}</td>
+              <td>
+                <EditableCell value={player.name} editable={godMode} width={130}
+                  onCommit={v => onEditPlayer(player, 'name', v)} />
+              </td>
+              <td title={nationalityName(player.nationality)}>
+                <NationalitySelect
+                  value={player.nationality}
+                  editable={godMode}
+                  onCommit={v => onEditPlayer(player, 'nationality', v)}
+                />
+              </td>
+              <td>
+                <EditableCell value={player.age} type="number" editable={godMode} min={16} max={40}
+                  onCommit={v => onEditPlayer(player, 'age', v)} />
+              </td>
               <td>{player.overall}<DeltaIndicator delta={d?.overall} /></td>
-              <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
-              <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
-              <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
-              <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
-              <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
+              <td>
+                <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
+                <DeltaIndicator delta={d?.aim} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.positioning} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'positioning')} />
+                <DeltaIndicator delta={d?.positioning} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.utility} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'utility')} />
+                <DeltaIndicator delta={d?.utility} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.gamesense} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'gamesense')} />
+                <DeltaIndicator delta={d?.gamesense} size="small" />
+              </td>
+              <td>
+                <EditableCell value={player.ratings.clutch} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'clutch')} />
+                <DeltaIndicator delta={d?.clutch} size="small" />
+              </td>
               <td>
                 <button
                   className="btn-small"

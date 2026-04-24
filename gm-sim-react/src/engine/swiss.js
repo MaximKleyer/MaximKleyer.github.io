@@ -66,6 +66,76 @@ export function initSwiss(teams) {
 }
 
 /**
+ * Per-map advance support (Phase 6e+ Ask 3 message 4).
+ *
+ * The original advanceSwissRound() plays the round atomically. For per-map
+ * advance, App.jsx wants to enumerate the round's matches (seed them as
+ * active series), play them map-by-map, then call routeSwissRound() to do
+ * the post-play bookkeeping (update Swiss records, set up next round
+ * pairings, mark Swiss complete if all rounds done).
+ *
+ * Both functions are pure of `simulateSeries` — they don't play matches
+ * themselves. The caller is responsible for calling simulateNextMap() on
+ * the seeded series and then injecting results back into match.result
+ * before calling routeSwissRound().
+ */
+
+/**
+ * Returns the list of matches that need PLAYING in the current round
+ * (i.e., have both teams set + no result yet). Each entry is { match, bestOf }
+ * for parity with the regional bracket helper.
+ *
+ * Used by App.jsx to enumerate what to seed as active series.
+ */
+export function getRoundMatches(swissState) {
+  const round = swissState.round;
+  const matches = swissState.matches[`round${round}`] || [];
+  return matches
+    .filter(m => !m.result && m.teamA && m.teamB)
+    .map(m => ({ match: m, bestOf: 3 }));
+}
+
+/**
+ * Post-play routing: assumes match.result has been set on each match in
+ * the current round. Updates Swiss team records, marks advanced/eliminated,
+ * generates next-round pairings (or marks the Swiss complete).
+ *
+ * Mutates swissState in place AND returns it for chaining symmetry with
+ * the existing advanceSwissRound API.
+ */
+export function routeSwissRound(swissState) {
+  const current = swissState.round;
+  const matches = swissState.matches[`round${current}`];
+
+  // Update records for any played matches we haven't yet processed.
+  // (Simplest approach: re-process them all idempotently. updateSwissRecord
+  // currently appends to opponentAbbrs unconditionally, which would corrupt
+  // state if called twice — so we guard with a flag on each match.)
+  for (const match of matches) {
+    if (!match.result) continue;
+    if (match._swissProcessed) continue;
+    updateSwissRecord(swissState, match.result);
+    match._swissProcessed = true;
+  }
+
+  if (current >= swissState.maxRounds) {
+    swissState.status = 'complete';
+    return swissState;
+  }
+
+  const nextRound = current + 1;
+  const nextMatches = generateNextRoundPairings(swissState, nextRound);
+  swissState.round = nextRound;
+  swissState.matches[`round${nextRound}`] = nextMatches;
+
+  if (nextMatches.length === 0) {
+    swissState.status = 'complete';
+  }
+
+  return swissState;
+}
+
+/**
  * Play the current round and generate pairings for the next one.
  * Returns a new swiss state. Caller should replace `intl.swiss` with the result.
  */
@@ -79,6 +149,7 @@ export function advanceSwissRound(swissState) {
       const result = simulateSeries(match.teamA, match.teamB, 3);
       match.result = result;
       updateSwissRecord(swissState, result);
+      match._swissProcessed = true;
     }
   }
 

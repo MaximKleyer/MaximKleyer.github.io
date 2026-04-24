@@ -6,6 +6,7 @@
 
 import { ROSTER_MIN, ROSTER_MAX, ROLE_WEIGHTS } from '../data/constants.js';
 import { DEFAULT_COMP, COMPOSITIONS, getDefaultSubtype } from '../data/strategy.js';
+import { archetypeFor } from '../data/archetypes.js';
 
 export class Team {
   constructor(name, abbr, color) {
@@ -14,6 +15,12 @@ export class Team {
     this.color = color;
     this.roster = [];
     this.isHuman = false;
+
+    // Archetype governs AI offseason behavior (see data/archetypes.js).
+    // Resolved from the hardcoded abbr map; defaults to BALANCED.
+    // Human team's archetype is unused by the engine but kept for
+    // consistency (the Standings UI can still display it as flavor).
+    this.archetype = archetypeFor({ abbr });
 
     this.record = {
       wins: 0,

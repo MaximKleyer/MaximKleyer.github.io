@@ -16,10 +16,21 @@ import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persi
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
+import { runReactiveAISignings } from './engine/offseason.js';
+import {
+  ensureActiveSeries,
+  hasActiveSeries,
+  seedActiveSeries,
+  advanceOneMap,
+  drainCompleted,
+} from './engine/activeSeries.js';
+import { isSeriesComplete, seriesToResult, finishSeries } from './classes/Match.js';
 import {
   generateBracket,
   advanceBracketStage as runBracketStage,
   getStageName,
+  getStageMatches,
+  routeBracketStage,
 } from './engine/bracket.js';
 import {
   initSeason,
@@ -41,6 +52,12 @@ import {
   isAwaitingHumanPick,
   submitHumanPick,
 } from './engine/international.js';
+import { getRoundMatches as getSwissRoundMatches, routeSwissRound } from './engine/swiss.js';
+import {
+  getStageMatches as getIntlStageMatches,
+  routeBracketStage as routeIntlBracketStage,
+  isInternationalBracketComplete,
+} from './engine/bracketInternational.js';
 import {
   advanceWorlds,
   isWorldsComplete,
@@ -62,6 +79,7 @@ import Points from './components/Points.jsx';
 import International from './components/International.jsx';
 import Worlds from './components/Worlds.jsx';
 import History from './components/History.jsx';
+import Offseason from './components/Offseason.jsx';
 import Toast from './components/Toast.jsx';
 import StageTransition from './components/StageTransition.jsx';
 
@@ -156,6 +174,63 @@ export default function App() {
     setCurrentView('dashboard');
   }
 
+  // ── God Mode ──
+  // Power-user toggle for editing any player's stats across the league.
+  // Scope: every player, every team, every FA pool. Persists to localStorage
+  // via the normal gameState save loop, so it survives refresh but requires
+  // a deliberate toggle to turn off.
+  //
+  // Not meant for normal play — for testing match-sim calculations, debugging
+  // edge cases, and QoL edits. When ON, a purple "GOD MODE" badge shows in
+  // the sidebar and rating/age/name cells become editable inputs.
+  function handleToggleGodMode() {
+    const nextValue = !gameState.godMode;
+    if (nextValue) {
+      // Warn on first activation so nobody accidentally flips it mid-playthrough
+      const ok = typeof window !== 'undefined' && window.confirm(
+        'Enable God Mode?\n\n' +
+        'You\'ll be able to edit any player\'s ratings, age, name, and tag from the Roster, Free Agents, and Standings views. ' +
+        'This is intended for testing and QoL edits, not normal gameplay.\n\n' +
+        'You can turn it off again anytime from the sidebar.'
+      );
+      if (!ok) return;
+    }
+    gameState.godMode = nextValue;
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // Single entry point for all player edits from the UI. Mutates the
+  // player in-place, recomputes overall from ratings, triggers re-render.
+  //
+  // field: 'name' | 'tag' | 'age' | 'aim' | 'positioning' | 'utility' | 'gamesense' | 'clutch'
+  // value: string or number (caller ensures correct type)
+  function handleEditPlayer(player, field, value) {
+    if (!gameState.godMode) return; // defensive guard
+
+    if (field === 'name' || field === 'tag') {
+      player[field] = String(value);
+    } else if (field === 'nationality') {
+      // Validate against the known nationality map so bad codes don't
+      // break the flag rendering. If invalid, silently drop the edit.
+      const code = String(value).toUpperCase();
+      // Lazy import avoided — we already have the map via the dropdown's
+      // generated options, so we just accept any non-empty string and
+      // rely on the UI to only offer valid codes. The flag helpers fall
+      // back to a placeholder emoji for unknown codes anyway.
+      if (code) player.nationality = code;
+    } else if (field === 'age') {
+      const n = Math.max(16, Math.min(40, parseInt(value, 10) || player.age));
+      player.age = n;
+    } else if (['aim', 'positioning', 'utility', 'gamesense', 'clutch'].includes(field)) {
+      const n = Math.max(1, Math.min(99, parseInt(value, 10) || 0));
+      player.ratings[field] = n;
+      player.overall = player.calcOverall();
+    } else {
+      return; // unknown field, ignore
+    }
+    setGameState(prev => ({ ...prev }));
+  }
+
   if (!started || !gameState) {
     return <TeamSelect onSelect={handleTeamSelect} />;
   }
@@ -171,6 +246,9 @@ export default function App() {
   // ripple — semantics are now "season is over, awaiting new-season click"
   // rather than "game is over forever".
   const circuitComplete = seasonStatus === 'season-complete';
+  // Phase 6e: the offseason view is active. User is reviewing retirees,
+  // managing roster, and will click "Start Preseason" when ready.
+  const offseasonActive = seasonStatus === 'offseason-active';
 
   // Determine overall phase: if human region is in bracket, we're in bracket mode
   const isGroupPhase = humanRegionData.phase === 'group';
@@ -200,7 +278,9 @@ export default function App() {
   // ── Main advance function — handles both group + bracket ──
   function advanceAll() {
     // Block advancement while the transition screen is up or circuit is done.
-    if (inTransition || circuitComplete) return;
+    // Phase 6e: also block during offseason-active — user must click
+    // "Start Preseason" from the Offseason view to progress.
+    if (inTransition || circuitComplete || offseasonActive) return;
 
     // During international selection show, block advance while waiting for human
     if (isAwaitingHumanPick(gameState)) return;
@@ -229,10 +309,129 @@ export default function App() {
 
   // ── Advance the currently active international tournament ──
   function advanceInternationalPhase() {
-    advanceInternational(gameState);
-    if (isInternationalComplete(gameState)) {
-      completeCurrentInternational(gameState);
+    const intl = gameState.international;
+    if (!intl || intl.phase === 'complete') {
+      // Defensive — shouldn't be called in this state
+      setGameState(prev => ({ ...prev }));
+      return;
     }
+
+    // Selection phase isn't series-based — defer to the existing engine
+    // function, which atomically reveals one pick (or no-ops if waiting
+    // on the human).
+    if (intl.phase === 'selection') {
+      advanceInternational(gameState);
+      if (isInternationalComplete(gameState)) {
+        completeCurrentInternational(gameState);
+      }
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    ensureActiveSeries(gameState);
+
+    // ── Swiss phase per-map ──
+    if (intl.phase === 'swiss') {
+      // Seed if no active intl-swiss series exist
+      if (!hasActiveSeries(gameState, 'international-swiss')) {
+        const matches = getSwissRoundMatches(intl.swiss);
+        const seeded = matches.map((entry, i) => ({
+          seriesId: `intl:swiss:r${intl.swiss.round}:${i}`,
+          phase: 'international-swiss',
+          intlRoundRef: { round: intl.swiss.round, idx: i },
+          intlMatchRef: entry.match,
+          teamA: entry.match.teamA,
+          teamB: entry.match.teamB,
+          bestOf: entry.bestOf,
+        }));
+        if (seeded.length > 0) seedActiveSeries(gameState, seeded);
+      }
+
+      // Play one map
+      const { completed } = advanceOneMap(gameState);
+
+      // Drain completions: copy results into the swiss match objects.
+      // Don't call updateSwissRecord here — routeSwissRound handles that
+      // (it walks all matches with results and processes ones not yet
+      // marked _swissProcessed, idempotent).
+      let toastResult = null;
+      for (const entry of completed) {
+        if (entry.phase !== 'international-swiss') continue;
+        const result = seriesToResult(entry.series);
+        entry.intlMatchRef.result = result;
+        // Toast for human team
+        if (entry.teamA === humanTeam || entry.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+
+      // If all current-round matches are resolved, route to the next round.
+      // Use the same predicate as getRoundMatches: any match that needs
+      // playing AND doesn't have a result yet. If empty → round done.
+      const stillToPlay = getSwissRoundMatches(intl.swiss);
+      if (stillToPlay.length === 0) {
+        intl.swiss = routeSwissRound(intl.swiss);
+        if (intl.swiss.status === 'complete') {
+          // Let the existing engine transition swiss → selection
+          advanceInternational(gameState);
+        }
+      }
+
+      if (toastResult) showMatchToast(toastResult, humanTeam);
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    // ── Bracket phase per-map ──
+    if (intl.phase === 'bracket') {
+      if (!hasActiveSeries(gameState, 'international-bracket')) {
+        const matches = getIntlStageMatches(intl.bracket);
+        const seeded = matches
+          .filter(({ match }) => !match.result && match.teamA && match.teamB)
+          .map((entry, i) => ({
+            seriesId: `intl:bracket:s${intl.bracket.stage}:${i}`,
+            phase: 'international-bracket',
+            intlBracketStage: intl.bracket.stage,
+            intlMatchRef: entry.match,
+            teamA: entry.match.teamA,
+            teamB: entry.match.teamB,
+            bestOf: entry.bestOf,
+          }));
+        if (seeded.length > 0) seedActiveSeries(gameState, seeded);
+      }
+
+      const { completed } = advanceOneMap(gameState);
+
+      let toastResult = null;
+      for (const entry of completed) {
+        if (entry.phase !== 'international-bracket') continue;
+        const result = seriesToResult(entry.series);
+        entry.intlMatchRef.result = result;
+        processSeriesResult(result);
+        if (entry.teamA === humanTeam || entry.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+
+      // All current stage matches resolved? Route to next stage.
+      const stageMatches = getIntlStageMatches(intl.bracket);
+      const allDone = stageMatches.length > 0 && stageMatches.every(({ match }) => match.result);
+      if (allDone) {
+        intl.bracket = routeIntlBracketStage(intl.bracket);
+        if (isInternationalBracketComplete(intl.bracket)) {
+          intl.phase = 'complete';
+        }
+      }
+
+      if (toastResult) showMatchToast(toastResult, humanTeam);
+      if (isInternationalComplete(gameState)) {
+        completeCurrentInternational(gameState);
+      }
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    // Unknown phase — defensive
     setGameState(prev => ({ ...prev }));
   }
 
@@ -281,22 +480,185 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
+  // ── Called from the Offseason view "Start Preseason" button ──
+  // Phase 6e: flips status from 'offseason-active' to 'active' so the
+  // normal dashboard/advance flow takes over. User's roster must be ≥5
+  // (the button is disabled in the Offseason view otherwise), so this
+  // handler assumes a valid roster and doesn't re-check.
+  function handleStartPreseason() {
+    if (gameState.season?.status !== 'offseason-active') return;
+    if (humanTeam.roster.length < 5) return; // defensive
+    gameState.season.status = 'active';
+    setCurrentView('dashboard');
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Fast-forward handlers (Phase 6e+ Ask 3) ──
+  // Sim Series: finishes the current ROUND (group week / bracket stage /
+  // intl Swiss round / worlds round) to completion in one click. Restores
+  // the pre-per-map "batch advance" experience for users who want to skip
+  // the click chain. Always available during a playable phase, even when
+  // no series are currently active — in that case it seeds the next round
+  // first then immediately drains it.
+  //
+  // Stops at the boundary of the current round. To skip multiple rounds
+  // (e.g. all the way to brackets), use Sim Group Stage / Sim Playoffs.
+  function handleSimSeries() {
+    if (inTransition || circuitComplete || offseasonActive) return;
+    if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return;
+
+    // Snapshot what defines the "current round" so we know when to stop.
+    // For group: each region's currentWeek. For brackets: each region's
+    // bracket.stage. For intl/worlds: still batch-mode internally so one
+    // call advances the whole round.
+    const slot = getCurrentSlot(gameState);
+    const isGroupPhase = slot?.type === 'stage'
+      && REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
+    const isBracketPhase = slot?.type === 'stage'
+      && REGION_KEYS.every(k => gameState.regions[k].phase !== 'group')
+      && !allBracketsDone;
+
+    const startWeeks = {};
+    const startStages = {};
+    if (isGroupPhase) {
+      for (const k of REGION_KEYS) startWeeks[k] = gameState.regions[k].currentWeek;
+    } else if (isBracketPhase) {
+      for (const k of REGION_KEYS) {
+        startStages[k] = gameState.regions[k].bracket?.stage ?? null;
+      }
+    }
+
+    // Pump the advance loop until either:
+    //   - the current round boundary is crossed (week/stage incremented for at least one region), OR
+    //   - we hit a transition/complete/await state (intl/worlds atomically transition after their batch)
+    //
+    // Safety cap protects against pathological infinite loops.
+    let safety = 200;
+    while (safety-- > 0) {
+      const s = gameState.season?.status;
+      if (s === 'transition' || s === 'season-complete' || s === 'offseason-active') break;
+      if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) break;
+
+      const cur = getCurrentSlot(gameState);
+      if (cur?.type === 'international') {
+        // intl is still batch-mode this round of work — one call advances
+        // a whole Swiss round / bracket stage atomically. Single call is
+        // enough to "sim the current round."
+        advanceInternationalPhase();
+        break;
+      }
+      if (cur?.type === 'worlds') {
+        advanceWorldsPhase();
+        break;
+      }
+
+      // Stage slot — group or bracket
+      if (isGroupPhase) {
+        advanceGroupWeek();
+        // Stop when ANY region has crossed the week boundary OR all regions
+        // exited group phase. Avoids pumping into the next week.
+        const advanced = REGION_KEYS.some(k => {
+          const r = gameState.regions[k];
+          return r.phase !== 'group' || r.currentWeek > (startWeeks[k] ?? 0);
+        });
+        if (advanced) break;
+      } else if (isBracketPhase) {
+        advanceBracketAll();
+        const advanced = REGION_KEYS.some(k => {
+          const r = gameState.regions[k];
+          if (!r.bracket) return false;
+          return r.bracket.stage > (startStages[k] ?? 0);
+        });
+        if (advanced) break;
+        if (allBracketsDone) break;
+      } else {
+        // Unknown phase — bail safely
+        break;
+      }
+    }
+  }
+
+  // Sim Group Stage: keeps clicking advance until all 4 regions exit
+  // group phase. Confirmation prompt because this skips a lot of content.
+  function handleSimGroupStage() {
+    const anyInGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
+    if (!anyInGroup) return;
+
+    const ok = typeof window !== 'undefined' && window.confirm(
+      'Sim to end of regular season?\n\n' +
+      'All 4 regions will play through every remaining group stage week. ' +
+      'You\'ll land at the start of the regional brackets.\n\n' +
+      'This action cannot be undone.'
+    );
+    if (!ok) return;
+
+    let safety = 1000;
+    while (safety-- > 0 && REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) {
+      advanceGroupWeek();
+    }
+  }
+
+  // Sim Playoffs: depending on the current slot, sims either the regional
+  // bracket OR the international tournament OR worlds to completion.
+  function handleSimPlayoffs() {
+    const slot = getCurrentSlot(gameState);
+    let label = 'this stage';
+    if (slot?.type === 'international') label = 'this international tournament';
+    else if (slot?.type === 'worlds') label = 'Worlds';
+    else label = 'all regional brackets';
+
+    const ok = typeof window !== 'undefined' && window.confirm(
+      `Sim ${label} to completion?\n\n` +
+      'Every remaining match will be played. You\'ll land at the next stage transition.\n\n' +
+      'This action cannot be undone.'
+    );
+    if (!ok) return;
+
+    let safety = 200;
+    while (safety-- > 0) {
+      const s = gameState.season?.status;
+      if (s === 'transition' || s === 'season-complete' || s === 'offseason-active') break;
+
+      const cur = getCurrentSlot(gameState);
+      if (cur?.type === 'international') {
+        if (isInternationalComplete(gameState)) break;
+        advanceInternationalPhase();
+        continue;
+      }
+      if (cur?.type === 'worlds') {
+        if (isWorldsComplete(gameState)) break;
+        advanceWorldsPhase();
+        continue;
+      }
+      // Stage slot — group or bracket
+      if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) break; // not in playoffs
+      if (allBracketsDone) break;
+      advanceBracketAll();
+    }
+  }
+
   // ── Advance group stage for all regions ──
+  // Per-map version: each click plays exactly one map across every active
+  // series in the league. If no series are active (between weeks), this
+  // first seeds the next week's series across all 4 regions, then plays
+  // the opening map. So every click does something visible.
+  //
+  // Bracket transition (after final week) still happens here: when a
+  // region runs out of matches AND has no active series, we freeze its
+  // standings and generate the bracket. The next click will then enter
+  // bracket-advance mode (still batch — Ask 3 message 3 will convert
+  // brackets to per-map too).
   function advanceGroupWeek() {
     let toastResult = null;
-    let wasPreseason = humanRegionData.currentWeek === 0;
 
-    for (const regionKey of REGION_KEYS) {
-      const region = gameState.regions[regionKey];
-      if (region.phase === 'bracket') continue;
-
-      if (region.currentWeek === 0) {
+    // ── Preseason → Week 1 transition (one-time per season) ──
+    // Triggered when ALL regions are at week 0. Auto-fills AI rosters.
+    // Does NOT play any maps — the very next click starts week 1's series.
+    if (REGION_KEYS.every(k => gameState.regions[k].currentWeek === 0)) {
+      for (const regionKey of REGION_KEYS) {
+        const region = gameState.regions[regionKey];
+        if (region.phase === 'bracket') continue;
         for (const team of region.teams) {
-          // Phase 6d: human teams are NEVER auto-filled. The user must
-          // manually sign players in the offseason/preseason — the Advance
-          // button is blocked upstream when the human team is understrength.
-          // AI teams still auto-fill as a safety net in case offseason
-          // backfill + rookie generation didn't leave enough room.
           if (team.isHuman) continue;
           while (team.roster.length < 5) {
             const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
@@ -310,51 +672,121 @@ export default function App() {
           team.validateStrategy();
         }
         region.currentWeek = 1;
-        continue;
+      }
+      setToast({ message: 'Season started across all regions!', type: 'win', mapScores: null });
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    ensureActiveSeries(gameState);
+
+    // ── If nothing is active, seed the next week of series ──
+    if (!hasActiveSeries(gameState, 'group')) {
+      const seeded = [];
+      for (const regionKey of REGION_KEYS) {
+        const region = gameState.regions[regionKey];
+        if (region.phase === 'bracket') continue;
+
+        const weekMatches = region.schedule.filter(
+          m => m.week === region.currentWeek && !m.result
+        );
+
+        if (weekMatches.length === 0) {
+          // This region has no more matches in its current week. Either
+          // we need to advance to the next week (handled at end of this
+          // function) or the season is done and we transition to bracket.
+          const remaining = region.schedule.filter(m => !m.result);
+          if (remaining.length === 0 && region.phase !== 'bracket') {
+            region.frozenStandings = freezeStandings(region.teams);
+            region.bracket = generateBracket(region.teams);
+            region.phase = 'bracket';
+          }
+          continue;
+        }
+
+        for (const m of weekMatches) {
+          // scheduleIdx lookup: we need the actual index into region.schedule
+          // so the completion handler can locate the match and set match.result.
+          const scheduleIdx = region.schedule.indexOf(m);
+          seeded.push({
+            seriesId: `${regionKey}:w${region.currentWeek}:${scheduleIdx}`,
+            phase: 'group',
+            regionKey,
+            week: region.currentWeek,
+            scheduleIdx,
+            teamA: m.teamA,
+            teamB: m.teamB,
+            bestOf: 3,
+          });
+        }
       }
 
-      const weekMatches = region.schedule.filter(
+      if (seeded.length === 0) {
+        // No region has matches AND no series got seeded. Could mean every
+        // region is in bracket phase, or we're in a degenerate state. The
+        // outer advanceAll() loop should re-route to advanceBracketAll on
+        // the next click.
+        setGameState(prev => ({ ...prev }));
+        return;
+      }
+
+      seedActiveSeries(gameState, seeded);
+    }
+
+    // ── Play one map across all active group series ──
+    const { completed } = advanceOneMap(gameState);
+
+    // ── Process any series that just finished this tick ──
+    for (const entry of completed) {
+      if (entry.phase !== 'group') continue;
+      const region = gameState.regions[entry.regionKey];
+      const match = region.schedule[entry.scheduleIdx];
+      if (!match) continue; // safety
+
+      const result = seriesToResult(entry.series);
+      match.result = result;
+      processSeriesResult(result);
+      awardGroupStageWin(gameState, entry.regionKey, result.winner);
+      region.results.push({
+        week: entry.week,
+        teamA: match.teamA.abbr, teamB: match.teamB.abbr,
+        winner: result.winner.abbr, score: result.score,
+      });
+
+      // Toast only for human team — Ask 3 option (a)
+      if (entry.regionKey === gameState.humanRegion) {
+        if (match.teamA === humanTeam || match.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+    }
+
+    // ── Per-region week advance: if a region has no more active series
+    // AND no more unplayed matches in the current week, increment its week.
+    for (const regionKey of REGION_KEYS) {
+      const region = gameState.regions[regionKey];
+      if (region.phase === 'bracket') continue;
+
+      const stillActiveInRegion = (gameState.season.activeSeries || [])
+        .some(a => a.phase === 'group' && a.regionKey === regionKey);
+      if (stillActiveInRegion) continue;
+
+      const unplayedThisWeek = region.schedule.some(
         m => m.week === region.currentWeek && !m.result
       );
+      if (unplayedThisWeek) continue;
 
-      if (weekMatches.length === 0) {
-        const remaining = region.schedule.filter(m => !m.result);
-        if (remaining.length === 0 && region.phase !== 'bracket') {
-          region.frozenStandings = freezeStandings(region.teams);
-          region.bracket = generateBracket(region.teams);
-          region.phase = 'bracket';
-        }
-        continue;
+      // Week complete for this region — bump to next week + run AI roster moves
+      const remaining = region.schedule.some(m => !m.result);
+      if (remaining) {
+        runCpuMoves({ teams: region.teams, freeAgents: region.freeAgents });
+        region.currentWeek++;
       }
-
-      for (const match of weekMatches) {
-        const result = simulateSeries(match.teamA, match.teamB, 3);
-        match.result = result;
-        processSeriesResult(result);
-        awardGroupStageWin(gameState, regionKey, result.winner);
-        region.results.push({
-          week: region.currentWeek,
-          teamA: match.teamA.abbr, teamB: match.teamB.abbr,
-          winner: result.winner.abbr, score: result.score,
-        });
-
-        if (regionKey === gameState.humanRegion) {
-          if (match.teamA === humanTeam || match.teamB === humanTeam) {
-            toastResult = result;
-          }
-        }
-      }
-
-      runCpuMoves({ teams: region.teams, freeAgents: region.freeAgents });
-      region.currentWeek++;
     }
 
     if (toastResult) {
       showMatchToast(toastResult, humanTeam);
-    } else if (wasPreseason) {
-      setToast({ message: 'Season started across all regions!', type: 'win', mapScores: null });
     }
-
     setGameState(prev => ({ ...prev }));
   }
 
@@ -362,21 +794,79 @@ export default function App() {
   function advanceBracketAll() {
     if (allBracketsDone) return;
 
+    ensureActiveSeries(gameState);
+
+    // ── If no active bracket series, seed the current stage across all regions ──
+    if (!hasActiveSeries(gameState, 'bracket')) {
+      const seeded = [];
+      for (const regionKey of REGION_KEYS) {
+        const region = gameState.regions[regionKey];
+        if (!region.bracket || region.bracket.stage >= 7) continue;
+
+        const stageMatches = getStageMatches(region.bracket);
+        for (let i = 0; i < stageMatches.length; i++) {
+          const { match, bestOf } = stageMatches[i];
+          if (match.result) continue; // defensive — already played
+
+          seeded.push({
+            seriesId: `${regionKey}:bracket:s${region.bracket.stage}:${i}`,
+            phase: 'bracket',
+            regionKey,
+            bracketStage: region.bracket.stage,
+            bracketMatchRef: match, // direct ref so we can set match.result on completion
+            teamA: match.teamA,
+            teamB: match.teamB,
+            bestOf,
+          });
+        }
+      }
+
+      if (seeded.length > 0) {
+        seedActiveSeries(gameState, seeded);
+      }
+    }
+
+    // ── Play one map across active bracket series ──
+    const { completed } = advanceOneMap(gameState);
+
+    // ── Process completed series ──
+    let toastResult = null;
+    for (const entry of completed) {
+      if (entry.phase !== 'bracket') continue;
+      const result = seriesToResult(entry.series);
+      entry.bracketMatchRef.result = result;
+      processSeriesResult(result);
+
+      // Toast only for human team's match
+      if (entry.regionKey === gameState.humanRegion) {
+        if (entry.teamA === humanTeam || entry.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+    }
+
+    // ── For each region whose stage is fully resolved, route the bracket
+    // (sets up next-stage matchups + bumps stage indexer)
     for (const regionKey of REGION_KEYS) {
       const region = gameState.regions[regionKey];
       if (!region.bracket || region.bracket.stage >= 7) continue;
-      region.bracket = runBracketStage(region.bracket);
+
+      // Are there any active series for this region's bracket?
+      const stillActive = (gameState.season.activeSeries || [])
+        .some(a => a.phase === 'bracket' && a.regionKey === regionKey);
+      if (stillActive) continue;
+
+      // All matches this stage have results — route to next stage
+      const stageMatches = getStageMatches(region.bracket);
+      const allDone = stageMatches.every(({ match }) => match.result);
+      if (!allDone) continue;
+
+      region.bracket = routeBracketStage(region.bracket);
     }
 
-    // Toast for human team
-    const humanBracket = humanRegionData.bracket;
-    if (humanBracket) {
-      const hm = findHumanBracketMatch(humanBracket, humanTeam);
-      if (hm?.result) showMatchToast(hm.result, humanTeam);
-    }
+    if (toastResult) showMatchToast(toastResult, humanTeam);
 
-    // If this bracket advance finished the stage across all regions,
-    // finalize it (award points, snapshot history, flip to 'transition').
+    // Stage completion check
     if (isStageSlotComplete(gameState) && gameState.season.status === 'active') {
       completeCurrentStage(gameState);
     }
@@ -412,10 +902,34 @@ export default function App() {
   }
 
   function releasePlayer(player) {
-    if (humanTeam.atMinRoster) return;
+    // During regular season, enforce the 5-player minimum to prevent the
+    // user from accidentally going understrength mid-year. During the
+    // offseason, allow going below 5 — the user might want to release
+    // then sign, and the Start Preseason button is the safeguard that
+    // prevents starting with <5.
+    if (!offseasonActive && humanTeam.atMinRoster) return;
     humanTeam.removePlayer(player);
     humanTeam.validateStrategy();
     gameState.regions[gameState.humanRegion].freeAgents.push(player);
+
+    // Phase 6e: during the offseason, user releases are market events.
+    // AI teams that haven't hit their per-offseason move cap yet get ONE
+    // reactive opportunity each, BUT scoped only to the newly-released
+    // player. Keeps the cascade bounded — a release triggers interest
+    // in that specific player, not a league-wide free-for-all.
+    if (offseasonActive) {
+      const newMoves = runReactiveAISignings(gameState, player);
+      if (newMoves.length > 0) {
+        // Small toast so the user knows AI teams moved in response
+        const first = newMoves[0];
+        const extra = newMoves.length > 1 ? ` (+${newMoves.length - 1} more move${newMoves.length > 2 ? 's' : ''})` : '';
+        setToast({
+          type: 'info',
+          message: `${first.teamAbbr} signed ${first.signed.tag}${extra}`,
+        });
+      }
+    }
+
     setGameState(prev => ({ ...prev }));
   }
 
@@ -493,17 +1007,33 @@ export default function App() {
   function renderView() {
     const regionData = gameState.regions[vr];
 
+    // Phase 6e: during the offseason, take over the Dashboard slot with
+    // the Offseason view. All other tabs remain navigable — the user can
+    // check Stats/History/Standings etc. while deciding on roster moves.
+    if (offseasonActive && (currentView === 'dashboard' || !currentView)) {
+      return (
+        <Offseason
+          gameState={gameState}
+          humanTeam={humanTeam}
+          humanRegionData={humanRegionData}
+          onSign={signPlayer}
+          onRelease={releasePlayer}
+          onStartPreseason={handleStartPreseason}
+        />
+      );
+    }
+
     switch (currentView) {
       case 'dashboard':
         return <Dashboard gameState={gameState} humanTeam={humanTeam} onStartNewSeason={circuitComplete ? handleStartNewSeason : null} />;
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} />;
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'freeagents':
-        return <FreeAgents freeAgents={humanRegionData.freeAgents} canSign={!humanTeam.rosterFull} onSign={signPlayer} />;
+        return <FreeAgents freeAgents={humanRegionData.freeAgents} canSign={!humanTeam.rosterFull} onSign={signPlayer} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'standings':
-        return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
+        return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'bracket':
         return <Bracket regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'stats':
@@ -555,6 +1085,34 @@ export default function App() {
         onDeleteSave={handleDeleteSave}
         onStartNewSeason={circuitComplete ? handleStartNewSeason : null}
         seasonNumber={gameState.seasonNumber}
+        isOffseason={offseasonActive}
+        onStartPreseason={handleStartPreseason}
+        humanRosterSize={humanTeam.roster.length}
+        godMode={!!gameState.godMode}
+        onToggleGodMode={handleToggleGodMode}
+        hasActiveSeries={(() => {
+          // Sim Series available any time games are playable — not just
+          // when series are mid-flight. Same conditions as the regular
+          // Advance button being enabled.
+          if (inTransition || circuitComplete || offseasonActive) return false;
+          if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return false;
+          const slot = getCurrentSlot(gameState);
+          if (slot?.type === 'international' || slot?.type === 'worlds') return true;
+          // Stage slot — playable if any region still has unfinished work
+          if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) return true;
+          return !allBracketsDone;
+        })()}
+        canSimGroup={REGION_KEYS.some(k => gameState.regions[k].phase === 'group') && !inTransition && !circuitComplete && !offseasonActive}
+        canSimPlayoffs={(() => {
+          if (inTransition || circuitComplete || offseasonActive) return false;
+          const slot = getCurrentSlot(gameState);
+          if (slot?.type === 'international' || slot?.type === 'worlds') return true;
+          // Stage slot — only show "Sim Playoffs" when in bracket phase
+          return REGION_KEYS.every(k => gameState.regions[k].phase !== 'group') && !allBracketsDone;
+        })()}
+        onSimSeries={handleSimSeries}
+        onSimGroupStage={handleSimGroupStage}
+        onSimPlayoffs={handleSimPlayoffs}
       />
       <main id="content">{renderView()}</main>
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}

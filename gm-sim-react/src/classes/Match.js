@@ -242,3 +242,112 @@ export function simulateSeries(teamA, teamB, bestOf = 3) {
   const loser = winner === teamA ? teamB : teamA;
   return { winner, loser, maps, score: [winsA, winsB], teamA, teamB };
 }
+
+/* ─────────────── Stateful per-map series API (Phase 6e+ Ask 3) ─────────────── */
+
+/*
+ * The original simulateSeries() plays a whole series atomically and
+ * returns the final result. That's what drives the "batch" advance mode
+ * and is kept intact for fast-forward buttons (Sim Series / Sim Group /
+ * Sim Playoffs).
+ *
+ * These new functions let the engine play a series ONE MAP AT A TIME
+ * across multiple Advance clicks. A series is a persistent object that
+ * lives in gameState.season.activeSeries[] between clicks until it
+ * resolves. Each click calls simulateNextMap() on every active series,
+ * then completed ones are drained and processed via the normal
+ * processSeriesResult() pipeline in App.jsx.
+ *
+ * Series objects:
+ *   {
+ *     teamA, teamB,       // live Team refs
+ *     bestOf,             // 3 or 5
+ *     maps: [...],        // simulateMap result objects, appended per map
+ *     winsA, winsB,       // running map wins
+ *     winner, loser,      // null until the series finishes
+ *     score,              // [winsA, winsB] snapshot when finished
+ *     // metadata used by the caller to know WHERE this series came from
+ *     // (scheduleIdx for group stage, bracketMatchRef for brackets, etc.)
+ *     origin,             // opaque payload set by caller
+ *   }
+ */
+
+export function startSeries(teamA, teamB, bestOf = 3, origin = null) {
+  return {
+    teamA, teamB,
+    bestOf,
+    maps: [],
+    winsA: 0, winsB: 0,
+    winner: null,
+    loser: null,
+    score: null,
+    origin,
+  };
+}
+
+export function isSeriesComplete(series) {
+  if (!series) return false;
+  if (series.winner) return true; // short-circuit
+  const mapsNeeded = Math.ceil(series.bestOf / 2);
+  return series.winsA >= mapsNeeded || series.winsB >= mapsNeeded;
+}
+
+/**
+ * Play one map of this series, appending the result and updating win
+ * counts. If the series is already complete (winner set) this is a no-op.
+ * Returns the map result (or null if the series was already done).
+ *
+ * Finalization: if this map pushes either team to the required wins,
+ * set winner/loser/score so downstream code can detect completion via
+ * isSeriesComplete() or by checking series.winner.
+ */
+export function simulateNextMap(series) {
+  if (isSeriesComplete(series)) return null;
+  const { teamA, teamB } = series;
+  const mapResult = simulateMap(teamA, teamB);
+  series.maps.push(mapResult);
+  if (mapResult.winner === teamA) series.winsA++;
+  else series.winsB++;
+
+  const mapsNeeded = Math.ceil(series.bestOf / 2);
+  if (series.winsA >= mapsNeeded || series.winsB >= mapsNeeded) {
+    series.winner = series.winsA > series.winsB ? teamA : teamB;
+    series.loser  = series.winner === teamA ? teamB : teamA;
+    series.score  = [series.winsA, series.winsB];
+  }
+  return mapResult;
+}
+
+/**
+ * Adapter: builds the same shape that simulateSeries() returns, from a
+ * completed series object. Lets existing callers process the result via
+ * the same pipeline whether the series was batch-played or map-by-map.
+ * Throws if the series isn't complete yet — caller should gate on
+ * isSeriesComplete() first.
+ */
+export function seriesToResult(series) {
+  if (!isSeriesComplete(series)) {
+    throw new Error('seriesToResult: series not yet complete');
+  }
+  return {
+    winner: series.winner,
+    loser: series.loser,
+    maps: series.maps,
+    score: series.score,
+    teamA: series.teamA,
+    teamB: series.teamB,
+  };
+}
+
+/**
+ * Play a stateful series to completion in one call. Used by the fast-
+ * forward "Sim Series" button and internally when batch-simulating a
+ * whole group stage or bracket. Equivalent to repeatedly calling
+ * simulateNextMap() until isSeriesComplete().
+ */
+export function finishSeries(series) {
+  while (!isSeriesComplete(series)) {
+    simulateNextMap(series);
+  }
+  return series;
+}

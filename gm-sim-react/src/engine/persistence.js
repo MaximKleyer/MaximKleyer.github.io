@@ -210,6 +210,23 @@ function deserialize(json) {
   // any, this is defensive).
   walkAndReplace(data, teamMap, new Set());
 
+  // Pass 3: schema migration. Older saves predate Phase 6c's seasonNumber
+  // and archive fields; if we don't fill them in here, the first call to
+  // beginNewSeason() will throw (cannot push to undefined) and the user
+  // will see "Start Season button does nothing." Idempotent — only adds
+  // missing fields, never overwrites existing values.
+  if (typeof data.seasonNumber !== 'number') {
+    data.seasonNumber = 2025;
+  }
+  if (!Array.isArray(data.archive)) {
+    data.archive = [];
+  }
+  // Legacy status migration: very old saves used 'complete' for end-of-season,
+  // Phase 6c renamed it to 'season-complete'. Translate so the new flow works.
+  if (data.season?.status === 'complete') {
+    data.season.status = 'season-complete';
+  }
+
   return data;
 }
 

@@ -98,6 +98,90 @@ export function initInternationalBracket(selectionPicks) {
   };
 }
 
+/**
+ * Per-map advance support. Returns the matches that should be played at
+ * the current stage. Used by App.jsx to seed active series. Pure read —
+ * doesn't play or mutate.
+ */
+export function getStageMatches(bracket) {
+  switch (bracket.stage) {
+    case 1: return bracket.ubR1.map(m => ({ match: m, bestOf: 3 }));
+    case 2: return [
+      ...bracket.ubSF.map(m => ({ match: m, bestOf: 3 })),
+      ...bracket.lbR1.map(m => ({ match: m, bestOf: 3 })),
+    ];
+    case 3: return [
+      { match: bracket.ubFinal, bestOf: 3 },
+      ...bracket.lbR2.map(m => ({ match: m, bestOf: 3 })),
+    ];
+    case 4: return [{ match: bracket.lbR3, bestOf: 3 }];
+    case 5: return [{ match: bracket.lbFinal, bestOf: 5 }];
+    case 6: return [{ match: bracket.grandFinal, bestOf: 5 }];
+    default: return [];
+  }
+}
+
+/**
+ * Mirror of advanceInternationalBracket but assumes match.result is
+ * ALREADY set externally. Routes next-stage matchups + records
+ * eliminations + bumps stage. Used by per-map advance flow.
+ */
+export function routeBracketStage(bracket) {
+  const b = { ...bracket };
+  switch (b.stage) {
+    case 1: {
+      b.ubSF[0].teamA = b.ubR1[0].result.winner;
+      b.ubSF[0].teamB = b.ubR1[1].result.winner;
+      b.ubSF[1].teamA = b.ubR1[2].result.winner;
+      b.ubSF[1].teamB = b.ubR1[3].result.winner;
+      b.lbR1[0].teamA = b.ubR1[0].result.loser;
+      b.lbR1[0].teamB = b.ubR1[1].result.loser;
+      b.lbR1[1].teamA = b.ubR1[2].result.loser;
+      b.lbR1[1].teamB = b.ubR1[3].result.loser;
+      b.stage = 2;
+      break;
+    }
+    case 2: {
+      b.ubFinal.teamA = b.ubSF[0].result.winner;
+      b.ubFinal.teamB = b.ubSF[1].result.winner;
+      b.lbR2[0].teamA = b.lbR1[0].result.winner;
+      b.lbR2[0].teamB = b.ubSF[1].result.loser;
+      b.lbR2[1].teamA = b.lbR1[1].result.winner;
+      b.lbR2[1].teamB = b.ubSF[0].result.loser;
+      b.eliminated = [...b.eliminated, b.lbR1[0].result.loser, b.lbR1[1].result.loser];
+      b.stage = 3;
+      break;
+    }
+    case 3: {
+      b.lbR3.teamA = b.lbR2[0].result.winner;
+      b.lbR3.teamB = b.lbR2[1].result.winner;
+      b.eliminated = [...b.eliminated, b.lbR2[0].result.loser, b.lbR2[1].result.loser];
+      b.stage = 4;
+      break;
+    }
+    case 4: {
+      b.lbFinal.teamA = b.lbR3.result.winner;
+      b.lbFinal.teamB = b.ubFinal.result.loser;
+      b.eliminated = [...b.eliminated, b.lbR3.result.loser];
+      b.stage = 5;
+      break;
+    }
+    case 5: {
+      b.grandFinal.teamA = b.ubFinal.result.winner;
+      b.grandFinal.teamB = b.lbFinal.result.winner;
+      b.eliminated = [...b.eliminated, b.lbFinal.result.loser];
+      b.stage = 6;
+      break;
+    }
+    case 6: {
+      b.eliminated = [...b.eliminated, b.grandFinal.result.loser];
+      b.stage = 7;
+      break;
+    }
+  }
+  return b;
+}
+
 export function advanceInternationalBracket(bracket) {
   const b = { ...bracket };
 
