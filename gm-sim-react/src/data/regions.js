@@ -8,18 +8,18 @@ export const REGIONS = {
     abbr: 'AMR',
     color: '#ff4655',
     teams: [
-      { name: 'Sentinels',      abbr: 'SEN',  color: '#e4002b' },
-      { name: 'Cloud9',         abbr: 'C9',   color: '#009cde' },
+      { name: 'Sentinels',      abbr: 'SEN',  color: '#ff002f' }, // changed
+      { name: 'Cloud9',         abbr: 'C9',   color: '#00aeef' }, // changed
       { name: 'NRG Esports',    abbr: 'NRG',  color: '#e74c3c' },
-      { name: 'LOUD',           abbr: 'LLL',  color: '#5bbd00' },
-      { name: '100 Thieves',    abbr: '100T', color: '#ff0000' },
-      { name: 'MIBR',           abbr: 'MBR',  color: '#f5c400' },
-      { name: 'Evil Geniuses',  abbr: 'EG',   color: '#1e90ff' },
-      { name: 'KRÜ Esports',   abbr: 'KRU',  color: '#6f2dbd' },
-      { name: 'Leviatán',      abbr: 'LEV',  color: '#00c389' },
-      { name: 'FURIA',          abbr: 'FUR',  color: '#333333' },
-      { name: 'G2 Esports',     abbr: 'G2',   color: '#ef2020' },
-      { name: '2Game Esports',  abbr: '2G',   color: '#f58220' },
+      { name: 'LOUD',           abbr: 'LOUD', color: '#5bbd00' },
+      { name: '100 Thieves',    abbr: '100T', color: '#ef3232' }, // changed
+      { name: 'MIBR',           abbr: 'MIBR', color: '#808080' }, // changed
+      { name: 'Evil Geniuses',  abbr: 'EG',   color: '#004d99' }, // changed
+      { name: 'KRÜ Esports',    abbr: 'KRU',  color: '#ff0066' }, // changed
+      { name: 'Leviatán',       abbr: 'LEV',  color: '#33d6ff' }, // changed
+      { name: 'FURIA',          abbr: 'FUR',  color: '#ffffff' }, // changed
+      { name: 'G2 Esports',     abbr: 'G2',   color: '#f57070' }, // changed
+      { name: 'ENVY',           abbr: 'ENVY', color: '#00004d' }, // changed
     ],
   },
   emea: {
@@ -29,16 +29,16 @@ export const REGIONS = {
     teams: [
       { name: 'Fnatic',         abbr: 'FNC',  color: '#ff5900' },
       { name: 'Team Vitality',  abbr: 'VIT',  color: '#ffdd00' },
-      { name: 'Team Heretics',  abbr: 'TH',   color: '#9d4dbb' },
-      { name: 'Gentle Mates',   abbr: 'M8',   color: '#72e8a0' },
-      { name: 'Karmine Corp',   abbr: 'KC',   color: '#0055a4' },
-      { name: 'BBL Esports',    abbr: 'BBL',  color: '#e31e24' },
-      { name: 'FUT Esports',    abbr: 'FUT',  color: '#00b4d8' },
-      { name: 'Navi',           abbr: 'NAVI', color: '#ffd700' },
-      { name: 'Team Liquid',    abbr: 'TL',   color: '#0070de' },
-      { name: 'Giants Gaming',  abbr: 'GIA',  color: '#ff8200' },
-      { name: 'Apeks',          abbr: 'APK',  color: '#c8102e' },
-      { name: 'KOI',            abbr: 'KOI',  color: '#00b5a3' },
+      { name: 'Team Heretics',  abbr: 'TH',   color: '#cc9900' }, // changed
+      { name: 'Gentlemates',    abbr: 'M8',   color: '#ff99ff' }, // changed
+      { name: 'Karmine Corp',   abbr: 'KC',   color: '#339cff' }, // changed
+      { name: 'BBL Esports',    abbr: 'BBL',  color: '#ffc34d' }, // changed
+      { name: 'FUT Esports',    abbr: 'FUT',  color: '#ff3300' }, // changed
+      { name: 'Navi',           abbr: 'NAVI', color: '#ffd700' }, 
+      { name: 'Team Liquid',    abbr: 'TL',   color: '#004080' }, // changed
+      { name: 'Giants Gaming',  abbr: 'GX',   color: '#333333' }, // changed
+      { name: 'PCIFIC',         abbr: 'PCFC', color: '#4d94ff' }, // changed
+      { name: 'Eternal Fire',   abbr: 'EF',   color: '#ffe699' }, // changed
     ],
   },
   pacific: {
@@ -46,17 +46,17 @@ export const REGIONS = {
     abbr: 'PAC',
     color: '#ff9632',
     teams: [
-      { name: 'DRX',            abbr: 'DRX',  color: '#5b9bd5' },
+      { name: 'DRX',            abbr: 'DRX',  color: '#2a68a2' }, // changed
       { name: 'Gen.G',          abbr: 'GEN',  color: '#cba135' },
       { name: 'T1',             abbr: 'T1',   color: '#e2012d' },
-      { name: 'Global Esports', abbr: 'GE',   color: '#2eb82e' },
-      { name: 'Paper Rex',      abbr: 'PRX',  color: '#e63946' },
+      { name: 'Global Esports', abbr: 'GE',   color: '#ff471a' }, // changed
+      { name: 'Paper Rex',      abbr: 'PRX',  color: '#ffffff' }, // changed
       { name: 'Team Secret',    abbr: 'TS',   color: '#999999' },
-      { name: 'Talon Esports',  abbr: 'TLN',  color: '#d4af37' },
-      { name: 'ZETA DIVISION',  abbr: 'ZET',  color: '#00d4aa' },
-      { name: 'DetonatioN FM',  abbr: 'DFM',  color: '#1a1a2e' },
-      { name: 'Rex Regum Qeon', abbr: 'RRQ',  color: '#ff6b00' },
-      { name: 'Bleed Esports',  abbr: 'BLD',  color: '#dc143c' },
+      { name: 'Full Sense',     abbr: 'FS',   color: '#ff6600' }, // chnaged
+      { name: 'ZETA DIVISION',  abbr: 'ZETA', color: '#737373' }, // changed
+      { name: 'DetonatioN FM',  abbr: 'DFM',  color: '#404072' }, // changed
+      { name: 'Rex Regum Qeon', abbr: 'RRQ',  color: '#ffa666' }, // changed
+      { name: 'Varrel',         abbr: 'VAR',  color: '#5d091a' }, // changed
       { name: 'NS RedForce',    abbr: 'NS',   color: '#cc0000' },
     ],
   },
@@ -65,18 +65,18 @@ export const REGIONS = {
     abbr: 'CN',
     color: '#e8c840',
     teams: [
-      { name: 'EDward Gaming',  abbr: 'EDG',  color: '#1a1a1a' },
-      { name: 'Bilibili Gaming',abbr: 'BLG',  color: '#00a1d6' },
-      { name: 'FunPlus Phoenix',abbr: 'FPX',  color: '#ee2737' },
-      { name: 'Nova Esports',   abbr: 'NOVA', color: '#ff6ec7' },
-      { name: 'Trace Esports',  abbr: 'TE',   color: '#3cb371' },
-      { name: 'All Gamers',     abbr: 'AG',   color: '#6c5ce7' },
-      { name: 'Wolves Esports', abbr: 'WOL',  color: '#555555' },
-      { name: 'Dragon Ranger',  abbr: 'DRG',  color: '#b22222' },
-      { name: 'JD Gaming',      abbr: 'JDG',  color: '#c41e3a' },
-      { name: 'Rare Atom',      abbr: 'RA',   color: '#00bfff' },
-      { name: 'TyLoo',          abbr: 'TYL',  color: '#ff4500' },
-      { name: 'Attacking Soul', abbr: 'ASE',  color: '#8b0000' },
+      { name: 'EDward Gaming',  abbr: 'EDG',  color: '#ffffff' }, // changed
+      { name: 'Bilibili Gaming',abbr: 'BLG',  color: '#80dfff' }, // changed
+      { name: 'FunPlus Phoenix',abbr: 'FPX',  color: '#ee2737' }, 
+      { name: 'Nova Esports',   abbr: 'NOVA', color: '#b3006e' }, // changed
+      { name: 'Trace Esports',  abbr: 'TE',   color: '#0033cc' }, // changed
+      { name: 'All Gamers',     abbr: 'AG',   color: '#ff0000' }, // changed
+      { name: 'Wolves Esports', abbr: 'WOL',  color: '#cc7a00' }, // changed
+      { name: 'Dragon Ranger',  abbr: 'DRG',  color: '#66ff99' }, // changed
+      { name: 'JD Gaming',      abbr: 'JDG',  color: '#cc0000' }, // changed
+      { name: 'Titan Esports',  abbr: 'TITN', color: '#990000' }, // changed
+      { name: 'TyLoo',          abbr: 'TYL',  color: '#ff1a1a' }, // changed
+      { name: 'Xi Lai Gaming',  abbr: 'XLG',  color: '#006680' }, // changed
     ],
   },
 };

@@ -294,11 +294,21 @@ function IntlConnectorOverlay() {
   );
 }
 
-function InternationalBracketGrid({ bracket }) {
+/**
+ * Renders an 8-team double-elim bracket. Same layout for international
+ * and worlds — only difference is worlds plays UB Final as BO5 and uses
+ * "BO5" suffixes on the relevant labels for clarity.
+ */
+function InternationalBracketGrid({ bracket, isWorlds = false }) {
   if (!bracket) {
     return <div className="muted" style={{ fontSize: '0.82rem' }}>No bracket data.</div>;
   }
   const champion = bracket.grandFinal?.result?.winner || null;
+
+  const ubFinalBestOf = isWorlds ? 'bo5' : 'bo3';
+  const ubFinalLabel = isWorlds ? 'UB Final · BO5' : 'UB Final';
+  const lbFinalLabel = isWorlds ? 'LB Final · BO5' : 'LB Final';
+  const gfLabel = isWorlds ? 'Grand Final · BO5' : 'Grand Final';
 
   return (
     <div style={{ overflowX: 'auto', paddingBottom: 16 }}>
@@ -307,12 +317,12 @@ function InternationalBracketGrid({ bracket }) {
 
         <IntlRoundLabel x={I_COL_X[0]} y={I_UB1_Y[0] - 28}>UB Round 1</IntlRoundLabel>
         <IntlRoundLabel x={I_COL_X[1]} y={I_UBSF_Y[0] - 28}>UB Semifinals</IntlRoundLabel>
-        <IntlRoundLabel x={I_COL_X[2]} y={I_UBF_Y - 28}>UB Final</IntlRoundLabel>
-        <IntlRoundLabel x={I_COL_X[4]} y={I_GF_Y - 28} gold>Grand Final</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[2]} y={I_UBF_Y - 28}>{ubFinalLabel}</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[4]} y={I_GF_Y - 28} gold>{gfLabel}</IntlRoundLabel>
         <IntlRoundLabel x={I_COL_X[0]} y={I_LB1_Y[0] - 28}>LB Round 1</IntlRoundLabel>
         <IntlRoundLabel x={I_COL_X[1]} y={I_LB1_Y[0] - 28}>LB Round 2</IntlRoundLabel>
         <IntlRoundLabel x={I_COL_X[2]} y={I_LB3_Y - 28}>LB Round 3</IntlRoundLabel>
-        <IntlRoundLabel x={I_COL_X[3]} y={I_LBF_Y - 28}>LB Final</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[3]} y={I_LBF_Y - 28}>{lbFinalLabel}</IntlRoundLabel>
 
         <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[0]} match={bracket.ubR1?.[0]} />
         <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[1]} match={bracket.ubR1?.[1]} />
@@ -320,7 +330,7 @@ function InternationalBracketGrid({ bracket }) {
         <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[3]} match={bracket.ubR1?.[3]} />
         <IntlPositionedMatch x={I_COL_X[1]} y={I_UBSF_Y[0]} match={bracket.ubSF?.[0]} />
         <IntlPositionedMatch x={I_COL_X[1]} y={I_UBSF_Y[1]} match={bracket.ubSF?.[1]} />
-        <IntlPositionedMatch x={I_COL_X[2]} y={I_UBF_Y} match={bracket.ubFinal} />
+        <IntlPositionedMatch x={I_COL_X[2]} y={I_UBF_Y} match={bracket.ubFinal} bestOf={ubFinalBestOf} />
         <IntlPositionedMatch x={I_COL_X[0]} y={I_LB1_Y[0]} match={bracket.lbR1?.[0]} />
         <IntlPositionedMatch x={I_COL_X[0]} y={I_LB1_Y[1]} match={bracket.lbR1?.[1]} />
         <IntlPositionedMatch x={I_COL_X[1]} y={I_LB1_Y[0]} match={bracket.lbR2?.[0]} />
@@ -351,72 +361,67 @@ function InternationalBracketGrid({ bracket }) {
 
 /* ─────────────── Left rail ─────────────── */
 
-function EventList({ history, selectedKey, onSelect, circuitComplete }) {
-  // Build entries in chronological order (history is already chronological)
-  const entries = [
+/**
+ * Left rail event list. Shows the current season's events at the top
+ * (expanded by default) followed by collapsible sections for each
+ * archived past season.
+ *
+ * selectedKey format:
+ *   'overview'                           — current season's overview
+ *   '{type}-{slotIndex}'                 — current season event
+ *   'archive-{year}-overview'            — archived season overview
+ *   'archive-{year}-{type}-{slotIndex}'  — archived season event
+ */
+function EventList({ history, archive, currentYear, selectedKey, onSelect, circuitComplete }) {
+  // Track which archived season sections are expanded. Starts with all
+  // collapsed; user clicks the header to open one.
+  const [expandedYears, setExpandedYears] = useState(() => new Set());
+
+  function toggleYear(year) {
+    setExpandedYears(prev => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year);
+      else next.add(year);
+      return next;
+    });
+  }
+
+  // Current season entries (existing behavior)
+  const currentEntries = [
     { key: 'overview', label: 'Season Overview', type: 'overview' },
     ...history
       .filter(e => !e.placeholder)
-      .map((e, i) => ({
+      .map(e => ({
         key: `${e.type}-${e.slotIndex}`,
         label: e.name,
         type: e.type,
-        entry: e,
       })),
   ];
+
+  // Archived seasons in reverse chronological order (newest first)
+  const archivedSeasons = [...(archive || [])].reverse();
 
   return (
     <nav style={{
       ...card,
-      width: 220,
+      width: 240,
       flexShrink: 0,
     }}>
-      <div style={{
-        padding: '10px 14px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(255,255,255,0.02)',
-        fontSize: '0.66rem',
-        letterSpacing: '0.14em',
-        textTransform: 'uppercase',
-        color: '#8a98b1',
-        fontFamily: "'JetBrains Mono', monospace",
-      }}>
-        Events
+      {/* ── Current season section ── */}
+      <div style={eventListSectionHeader}>
+        Season {currentYear}
       </div>
-      {entries.map(e => {
+      {currentEntries.map(e => {
         const isSelected = e.key === selectedKey;
         return (
           <button
             key={e.key}
             onClick={() => onSelect(e.key)}
-            style={{
-              display: 'block',
-              width: '100%',
-              textAlign: 'left',
-              padding: '10px 14px',
-              border: 'none',
-              background: isSelected ? 'rgba(106, 169, 255, 0.08)' : 'transparent',
-              color: isSelected ? '#e8ecf3' : '#a8b5c9',
-              borderTop: '1px solid rgba(255,255,255,0.04)',
-              borderLeft: isSelected ? '2px solid #6aa9ff' : '2px solid transparent',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontSize: '0.84rem',
-              fontWeight: isSelected ? 600 : 400,
-            }}
+            style={navBtn(isSelected)}
           >
             {e.label}
             {e.type !== 'overview' && (
-              <div style={{
-                fontSize: '0.6rem',
-                color: '#6f7d93',
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                marginTop: 2,
-              }}>
-                {e.type}
-              </div>
+              <div style={navBtnSubtext}>{e.type}</div>
             )}
           </button>
         );
@@ -431,12 +436,127 @@ function EventList({ history, selectedKey, onSelect, circuitComplete }) {
           fontFamily: "'JetBrains Mono', monospace",
           letterSpacing: '0.08em',
         }}>
-          🏆 CIRCUIT COMPLETE
+          🏆 SEASON COMPLETE
+        </div>
+      )}
+
+      {/* ── Archived seasons (collapsible) ── */}
+      {archivedSeasons.length > 0 && (
+        <div style={{
+          marginTop: 8,
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
+          <div style={{
+            ...eventListSectionHeader,
+            borderTop: 'none',
+            color: '#6f7d93',
+          }}>
+            Past Seasons
+          </div>
+          {archivedSeasons.map(arch => {
+            const isExpanded = expandedYears.has(arch.year);
+            const archEntries = (arch.history || []).filter(e => !e.placeholder);
+            return (
+              <div key={`arch-${arch.year}`}>
+                <button
+                  onClick={() => toggleYear(arch.year)}
+                  style={{
+                    ...navBtn(false),
+                    background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <span>
+                    <span style={{ color: '#a8b5c9', fontWeight: 600 }}>
+                      Season {arch.year}
+                    </span>
+                    {arch.worldChampion && (
+                      <div style={{
+                        fontSize: '0.66rem',
+                        color: 'var(--gold, #ffd166)',
+                        marginTop: 2,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        letterSpacing: '0.04em',
+                      }}>
+                        🏆 {arch.worldChampion.name}
+                      </div>
+                    )}
+                  </span>
+                  <span style={{
+                    color: '#6f7d93',
+                    fontSize: '0.7rem',
+                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.15s',
+                  }}>
+                    ▶
+                  </span>
+                </button>
+                {isExpanded && archEntries.map(e => {
+                  const archKey = `archive-${arch.year}-${e.type}-${e.slotIndex}`;
+                  const isSelected = archKey === selectedKey;
+                  return (
+                    <button
+                      key={archKey}
+                      onClick={() => onSelect(archKey)}
+                      style={{
+                        ...navBtn(isSelected),
+                        paddingLeft: 24,
+                      }}
+                    >
+                      {e.name}
+                      <div style={navBtnSubtext}>{e.type}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
       )}
     </nav>
   );
 }
+
+const eventListSectionHeader = {
+  padding: '10px 14px',
+  borderBottom: '1px solid rgba(255,255,255,0.06)',
+  background: 'rgba(255,255,255,0.02)',
+  fontSize: '0.66rem',
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  color: '#8a98b1',
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+function navBtn(isSelected) {
+  return {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '10px 14px',
+    border: 'none',
+    background: isSelected ? 'rgba(106, 169, 255, 0.08)' : 'transparent',
+    color: isSelected ? '#e8ecf3' : '#a8b5c9',
+    borderTop: '1px solid rgba(255,255,255,0.04)',
+    borderLeft: isSelected ? '2px solid #6aa9ff' : '2px solid transparent',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: '0.84rem',
+    fontWeight: isSelected ? 600 : 400,
+  };
+}
+
+const navBtnSubtext = {
+  fontSize: '0.6rem',
+  color: '#6f7d93',
+  fontFamily: "'JetBrains Mono', monospace",
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  marginTop: 2,
+};
 
 /* ─────────────── Detail: Season Overview ─────────────── */
 
@@ -869,6 +989,45 @@ function WorldsDetail({ entry, gameState }) {
           </div>
         </>
       )}
+
+      {entry.playoffSelection && entry.playoffSelection.picks?.length > 0 && (
+        <>
+          <div style={subHeader}>Playoff Selection Show</div>
+          <div style={card}>
+            <table style={table}>
+              <tbody>
+                {entry.playoffSelection.picks.map((p, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, color: '#6f7d93', width: 36, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' }}>
+                      #{p.order}
+                    </td>
+                    <td style={{ ...td, color: p.picker.color, fontWeight: 600 }}>
+                      {p.picker.name}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 60 }}>
+                      Grp {p.pickerGroup}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 50 }}>picked</td>
+                    <td style={{ ...td, color: p.picked.color, fontWeight: 600 }}>
+                      {p.picked.name}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 60 }}>
+                      Grp {p.pickedGroup}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {entry.bracket && (
+        <>
+          <div style={subHeader}>Playoff Bracket</div>
+          <InternationalBracketGrid bracket={entry.bracket} isWorlds={true} />
+        </>
+      )}
     </div>
   );
 }
@@ -877,9 +1036,11 @@ function WorldsDetail({ entry, gameState }) {
 
 export default function History({ gameState }) {
   const history = gameState.season.history || [];
-  const circuitComplete = gameState.season.status === 'complete';
+  const archive = gameState.archive || [];
+  const currentYear = gameState.seasonNumber || 2025;
+  const circuitComplete = gameState.season.status === 'season-complete';
 
-  // Default selection: most recent event if any, else overview
+  // Default selection: most recent event in current season, else overview
   const mostRecent = history.filter(e => !e.placeholder).slice(-1)[0];
   const defaultKey = mostRecent
     ? `${mostRecent.type}-${mostRecent.slotIndex}`
@@ -887,10 +1048,34 @@ export default function History({ gameState }) {
 
   const [selectedKey, setSelectedKey] = useState(defaultKey);
 
-  // Resolve selected entry
+  // Resolve selected entry. Three cases:
+  //   1. 'overview'                       — current season overview
+  //   2. '{type}-{slotIndex}'             — current season event
+  //   3. 'archive-{year}-{type}-{slot}'   — past season event
   let detail = null;
+
   if (selectedKey === 'overview') {
     detail = <SeasonOverview gameState={gameState} />;
+  } else if (selectedKey.startsWith('archive-')) {
+    // Parse archive key. Format: archive-{year}-{type}-{slotIndex}
+    // Year is always numeric, type is always one of stage/international/worlds.
+    const m = selectedKey.match(/^archive-(\d+)-(stage|international|worlds)-(\d+)$/);
+    if (m) {
+      const year = parseInt(m[1], 10);
+      const eventType = m[2];
+      const slotIdx = parseInt(m[3], 10);
+      const archEntry = archive.find(a => a.year === year);
+      if (archEntry) {
+        const found = (archEntry.history || []).find(
+          e => e.type === eventType && e.slotIndex === slotIdx
+        );
+        if (found) {
+          if (found.type === 'stage') detail = <StageDetail entry={found} gameState={gameState} />;
+          else if (found.type === 'international') detail = <InternationalDetail entry={found} gameState={gameState} />;
+          else if (found.type === 'worlds') detail = <WorldsDetail entry={found} gameState={gameState} />;
+        }
+      }
+    }
   } else {
     const found = history.find(e => `${e.type}-${e.slotIndex}` === selectedKey);
     if (found) {
@@ -904,13 +1089,15 @@ export default function History({ gameState }) {
     <div>
       <h2>History</h2>
       <p className="muted" style={{ fontSize: '0.78rem', marginBottom: 18 }}>
-        Browse completed events from this circuit. Data persists until you
-        start a new save.
+        Browse events from the current season and past seasons. Past seasons
+        are stored in your save and persist until you delete it.
       </p>
 
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
         <EventList
           history={history}
+          archive={archive}
+          currentYear={currentYear}
           selectedKey={selectedKey}
           onSelect={setSelectedKey}
           circuitComplete={circuitComplete}

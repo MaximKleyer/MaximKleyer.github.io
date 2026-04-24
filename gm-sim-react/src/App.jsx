@@ -32,6 +32,7 @@ import {
   isWorldsSlotComplete,
   completeCurrentWorlds,
   beginNextSlot,
+  beginNewSeason,
   awardGroupStageWin,
 } from './engine/season.js';
 import {
@@ -165,7 +166,11 @@ export default function App() {
 
   const seasonStatus = gameState.season?.status || 'active';
   const inTransition = seasonStatus === 'transition';
-  const circuitComplete = seasonStatus === 'complete';
+  // circuitComplete is true when the season has ended and the user is
+  // browsing the season-complete state. Kept the old name to minimize
+  // ripple — semantics are now "season is over, awaiting new-season click"
+  // rather than "game is over forever".
+  const circuitComplete = seasonStatus === 'season-complete';
 
   // Determine overall phase: if human region is in bracket, we're in bracket mode
   const isGroupPhase = humanRegionData.phase === 'group';
@@ -266,6 +271,16 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
+  // ── Called from the dashboard / sidebar "Start New Season" button ──
+  // Phase 6c: stub. Resets records, keeps rosters intact, increments
+  // gameState.seasonNumber. Phase 6d will hook in offseason logic
+  // (aging, retirements, rookies, archive push) before the reset.
+  function handleStartNewSeason() {
+    beginNewSeason(gameState);
+    setCurrentView('dashboard');
+    setGameState(prev => ({ ...prev }));
+  }
+
   // ── Advance group stage for all regions ──
   function advanceGroupWeek() {
     let toastResult = null;
@@ -277,9 +292,12 @@ export default function App() {
 
       if (region.currentWeek === 0) {
         for (const team of region.teams) {
-          // Fill any missing roster slots. Free agents first (best overall),
-          // then generate fresh players if the FA pool is empty. No role
-          // dependency — players are role-agnostic now.
+          // Phase 6d: human teams are NEVER auto-filled. The user must
+          // manually sign players in the offseason/preseason — the Advance
+          // button is blocked upstream when the human team is understrength.
+          // AI teams still auto-fill as a safety net in case offseason
+          // backfill + rookie generation didn't leave enough room.
+          if (team.isHuman) continue;
           while (team.roster.length < 5) {
             const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
             if (bestFA) {
@@ -477,7 +495,7 @@ export default function App() {
 
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard gameState={gameState} humanTeam={humanTeam} />;
+        return <Dashboard gameState={gameState} humanTeam={humanTeam} onStartNewSeason={circuitComplete ? handleStartNewSeason : null} />;
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'roster':
@@ -502,9 +520,18 @@ export default function App() {
           onPlayoffPick={handleWorldsPlayoffPick}
         />;
       default:
-        return <Dashboard gameState={gameState} humanTeam={humanTeam} />;
+        return <Dashboard gameState={gameState} humanTeam={humanTeam} onStartNewSeason={circuitComplete ? handleStartNewSeason : null} />;
     }
   }
+
+  // Phase 6d: block Advance when the human team is below ROSTER_MIN during
+  // preseason. Applies only when the user is in preseason (week 0, group
+  // phase) — once the season is underway, the user can't drop below 5 via
+  // normal UI anyway (Release button respects atMinRoster).
+  const humanUnderstrength =
+    humanRegionData.phase === 'group' &&
+    humanRegionData.currentWeek === 0 &&
+    humanTeam.roster.length < 5;
 
   return (
     <div className="app">
@@ -517,8 +544,17 @@ export default function App() {
         bracketLabel={sidebarLabel}
         allDone={circuitComplete}
         stageName={stageName}
-        advanceDisabled={isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)}
+        advanceDisabled={
+          isAwaitingHumanPick(gameState) ||
+          isWorldsAwaitingHumanPick(gameState) ||
+          humanUnderstrength
+        }
+        advanceBlockReason={humanUnderstrength
+          ? `Sign ${5 - humanTeam.roster.length} more player${5 - humanTeam.roster.length > 1 ? 's' : ''} to start the season`
+          : null}
         onDeleteSave={handleDeleteSave}
+        onStartNewSeason={circuitComplete ? handleStartNewSeason : null}
+        seasonNumber={gameState.seasonNumber}
       />
       <main id="content">{renderView()}</main>
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}

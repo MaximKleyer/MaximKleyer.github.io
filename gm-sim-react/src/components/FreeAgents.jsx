@@ -22,6 +22,7 @@
  */
 
 import { useState } from 'react';
+import DeltaIndicator from './DeltaIndicator.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function FreeAgents({ freeAgents, canSign, onSign }) {
@@ -68,7 +69,9 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map(player => (
+          {sorted.map(player => {
+            const d = player.lastOffseasonDelta;
+            return (
             <tr key={player.id}>
               <td><strong>{player.tag}</strong></td>
               <td>{player.name}</td>
@@ -76,12 +79,12 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
                 <span className={flagClass(player.nationality)} />
               </td>
               <td>{player.age}</td>
-              <td>{player.overall}</td>
-              <td>{player.ratings.aim}</td>
-              <td>{player.ratings.positioning}</td>
-              <td>{player.ratings.utility}</td>
-              <td>{player.ratings.gamesense}</td>
-              <td>{player.ratings.clutch}</td>
+              <td>{player.overall}<DeltaIndicator delta={d?.overall} /></td>
+              <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
+              <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
+              <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
+              <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
+              <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
               <td>
                 <button
                   className="btn-small"
@@ -92,7 +95,8 @@ export default function FreeAgents({ freeAgents, canSign, onSign }) {
                 </button>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </>

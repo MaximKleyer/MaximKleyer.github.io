@@ -186,7 +186,7 @@ export default function StageTransition({ gameState, onContinue }) {
 
   let continueLabel;
   if (!nextRealSlot) {
-    continueLabel = '🏆 Finish Circuit';
+    continueLabel = '🏆 Finish Season';
   } else if (nextRealSlot.type === 'stage') {
     continueLabel = `▶ Begin ${nextRealSlot.name} Preseason`;
   } else if (nextRealSlot.type === 'international') {

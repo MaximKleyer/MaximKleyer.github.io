@@ -32,7 +32,7 @@ export const ROLE_FLOORS = {
 export const ROSTER_MIN = 5;
 export const ROSTER_MAX = 10;
 export const REQUIRED_ROLES = ['duelist', 'initiator', 'controller', 'sentinel', 'flex'];
-export const FREE_AGENT_POOL_SIZE = 30;
+export const FREE_AGENT_POOL_SIZE = 100;
 
 // ── Simulation tuning ──
 export const SIM = {

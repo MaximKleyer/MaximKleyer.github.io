@@ -3,6 +3,7 @@ import { getGroupStandings } from '../engine/standings.js';
 import { COMPOSITIONS, SUBTYPES } from '../data/strategy.js';
 import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import DeltaIndicator from './DeltaIndicator.jsx';
 
 export default function Standings({ regionData, viewRegion, onChangeRegion }) {
   const [expanded, setExpanded] = useState(null);
@@ -67,6 +68,7 @@ export default function Standings({ regionData, viewRegion, onChangeRegion }) {
                   <tbody>
                     {team.roster.map(player => {
                       const a = team.strategy.assignments.find(a => a.playerId === player.id);
+                      const d = player.lastOffseasonDelta;
                       return (
                         <tr key={player.id}>
                           <td><strong>{player.tag}</strong>{player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}</td>
@@ -76,7 +78,12 @@ export default function Standings({ regionData, viewRegion, onChangeRegion }) {
                           <td>{player.age}</td>
                           <td>{a?.role || '—'}</td>
                           <td>{a ? getSubtypeLabel(a.subtypeId) : '—'}</td>
-                          <td>{player.overall}</td><td>{player.ratings.aim}</td><td>{player.ratings.positioning}</td><td>{player.ratings.utility}</td><td>{player.ratings.gamesense}</td><td>{player.ratings.clutch}</td>
+                          <td>{player.overall}<DeltaIndicator delta={d?.overall} size="small" /></td>
+                          <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
+                          <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
+                          <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
+                          <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
+                          <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
                           <td>{player.stats.maps}</td><td>{player.stats.kills}</td><td>{player.stats.deaths}</td><td>{player.kd}</td><td>{player.avgAcs}</td>
                         </tr>
                       );

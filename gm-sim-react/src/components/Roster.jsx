@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import Strategy from './Strategy.jsx';
+import DeltaIndicator from './DeltaIndicator.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 
 export default function Roster({ team, onRelease, onUpdate }) {
@@ -29,7 +30,9 @@ export default function Roster({ team, onRelease, onUpdate }) {
           </tr>
         </thead>
         <tbody>
-          {team.roster.map(player => (
+          {team.roster.map(player => {
+            const d = player.lastOffseasonDelta;
+            return (
             <tr key={player.id}>
               <td>
                 <strong>{player.tag}</strong>
@@ -40,12 +43,15 @@ export default function Roster({ team, onRelease, onUpdate }) {
                 <span className={flagClass(player.nationality)} />
               </td>
               <td>{player.age}</td>
-              <td>{player.overall}</td>
-              <td>{player.ratings.aim}</td>
-              <td>{player.ratings.positioning}</td>
-              <td>{player.ratings.utility}</td>
-              <td>{player.ratings.gamesense}</td>
-              <td>{player.ratings.clutch}</td>
+              <td>
+                {player.overall}
+                <DeltaIndicator delta={d?.overall} />
+              </td>
+              <td>{player.ratings.aim}<DeltaIndicator delta={d?.aim} size="small" /></td>
+              <td>{player.ratings.positioning}<DeltaIndicator delta={d?.positioning} size="small" /></td>
+              <td>{player.ratings.utility}<DeltaIndicator delta={d?.utility} size="small" /></td>
+              <td>{player.ratings.gamesense}<DeltaIndicator delta={d?.gamesense} size="small" /></td>
+              <td>{player.ratings.clutch}<DeltaIndicator delta={d?.clutch} size="small" /></td>
               <td>{player.stats.maps}</td>
               <td>{player.stats.kills}</td>
               <td>{player.stats.deaths}</td>
@@ -59,7 +65,8 @@ export default function Roster({ team, onRelease, onUpdate }) {
                 </button>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
 

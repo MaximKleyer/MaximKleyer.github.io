@@ -23,7 +23,9 @@ const NAV_ITEMS = [
 export default function Sidebar({
   currentView, onNavigate, currentWeek, onAdvanceWeek,
   phase, bracketLabel, allDone, stageName, advanceDisabled,
+  advanceBlockReason,
   onDeleteSave,
+  onStartNewSeason, seasonNumber,
 }) {
   const isPreseason = currentWeek === 0 && phase === 'group';
 
@@ -72,10 +74,24 @@ export default function Sidebar({
             <div id="week-display">
               {isPreseason ? 'Preseason' : `Week ${currentWeek}`}
             </div>
+            {advanceBlockReason && (
+              <div style={{
+                textAlign: 'center',
+                fontSize: '0.64rem',
+                color: 'var(--accent, #ff4655)',
+                marginBottom: '6px',
+                padding: '0 4px',
+                lineHeight: 1.3,
+              }}>
+                ⚠ {advanceBlockReason}
+              </div>
+            )}
             <button
               id="btn-advance"
               className={isPreseason ? 'btn-start-season' : ''}
               onClick={onAdvanceWeek}
+              disabled={advanceDisabled}
+              style={advanceDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
             >
               {isPreseason ? '▶ Start Season' : 'Advance Week'}
             </button>
@@ -101,9 +117,31 @@ export default function Sidebar({
             </button>
           </>
         ) : (
-          <div id="week-display" style={{ textAlign: 'center' }}>
-            {allDone ? '🏆 Circuit Complete' : 'Playoffs'}
-          </div>
+          <>
+            <div id="week-display" style={{ textAlign: 'center', marginBottom: 6 }}>
+              {allDone ? `🏆 Season ${seasonNumber || 2025} Complete` : 'Playoffs'}
+            </div>
+            {allDone && onStartNewSeason && (
+              <button
+                onClick={onStartNewSeason}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  background: 'var(--accent, #ff4655)',
+                  border: '1px solid var(--accent, #ff4655)',
+                  color: '#fff',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                ▶ Start Season {(seasonNumber || 2025) + 1}
+              </button>
+            )}
+          </>
         )}
 
         {onDeleteSave && (

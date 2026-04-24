@@ -19,9 +19,10 @@
  */
 
 import { REGION_KEYS } from '../data/regions.js';
-import { GROUP_SIZE } from '../data/constants.js';
+import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
 import { generateSchedule } from './league.js';
+import { generatePlayer } from '../classes/Player.js';
 import { computeFinalStagePlacements } from './placements.js';
 import {
   initInternational,
@@ -63,13 +64,27 @@ export function initSeason(gameState) {
     }
   }
 
+  // First-time init only — preserve existing values across resets
+  if (typeof gameState.seasonNumber !== 'number') {
+    // Year-based labeling. Season 1 = 2025; each new season is +1 year.
+    // Stored as a number so it serializes cleanly and ordering works.
+    gameState.seasonNumber = 2025;
+  }
+  if (!Array.isArray(gameState.archive)) {
+    gameState.archive = [];
+  }
+
   return {
     circuit: CIRCUIT,
-    slotIndex: 0,                  // index into CIRCUIT
-    status: 'active',              // 'active' | 'transition' | 'complete'
-    points,                        // { 'americas:SEN': 6, ... }
-    history: [],                   // one entry per completed slot
-    currentStageGroupWins,         // { regionKey: { abbr: count } } — reset on stage rollover
+    slotIndex: 0,
+    // 'active'         — circuit running (group play, brackets, intl, worlds)
+    // 'transition'     — between slots, transition overlay showing
+    // 'season-complete' — season done, awaiting "Start New Season" click
+    // (legacy 'complete' status no longer used; replaced by 'season-complete')
+    status: 'active',
+    points,
+    history: [],
+    currentStageGroupWins,
   };
 }
 
@@ -332,6 +347,12 @@ export function completeCurrentWorlds(gameState) {
     champion: championEntry ? teamCard(championEntry.team) : null,
     runnerUp: runnerUpEntry ? teamCard(runnerUpEntry.team) : null,
     pointsAwarded: {}, // no circuit points from Worlds
+    // Full state refs for History tab rendering. Same rationale as stage
+    // and international: gameState.worlds gets nulled out below but the
+    // underlying bracket/playoffSelection objects aren't mutated, so
+    // these refs stay valid indefinitely.
+    bracket: worlds.bracket,
+    playoffSelection: worlds.playoffSelection,
   });
 
   gameState.worlds = null;
@@ -403,7 +424,9 @@ export function beginNextSlot(gameState) {
   while (true) {
     s.slotIndex++;
     if (s.slotIndex >= s.circuit.length) {
-      s.status = 'complete';
+      // End of circuit → season is complete. User can browse freely until
+      // they click "Start New Season" which calls beginNewSeason() below.
+      s.status = 'season-complete';
       return;
     }
 
@@ -565,4 +588,400 @@ function assignGroupsBySnakeDraft(teams, priorPlacements) {
   for (const t of groupA) t.group = 'A';
   for (const t of groupB) t.group = 'B';
 }
+
+/* ─────────────── New season ─────────────── */
+
+/**
+ * Exponential retirement curve. Returns probability (0–1) that a player
+ * of the given age retires during the offseason.
+ *
+ * Design (from user spec):
+ *   - Age < 25: 0% (no retirement)
+ *   - Age 25–29: exponentially increasing
+ *   - Age 30+: 100% (hard cutoff)
+ *
+ * Actual values (roughly doubling each year to feel "exponential"):
+ *   25 →  2%
+ *   26 →  5%
+ *   27 → 11%
+ *   28 → 22%
+ *   29 → 42%
+ *   30 → 100%
+ *
+ * Over a typical 5-year window (25→29) this retires roughly 60–70% of
+ * players who reach age 25, with the rest hitting the hard 30 wall.
+ */
+function retirementChance(age) {
+  if (age >= 30) return 1.0;
+  if (age < 25) return 0.0;
+  // Table lookup — simpler than a formula and easier to tune
+  const curve = { 25: 0.02, 26: 0.05, 27: 0.11, 28: 0.22, 29: 0.42 };
+  return curve[age] || 0;
+}
+
+/**
+ * Check whether a player should retire this offseason. Age 30+ always
+ * retires; ages 25–29 roll against the exponential curve.
+ */
+function shouldRetire(player) {
+  return Math.random() < retirementChance(player.age);
+}
+
+/**
+ * Generate an age for a rookie entering the FA pool. Most rookies are
+ * 17–18 fresh prospects; some are 19–20 late entrants who took a longer
+ * path to the scene. Deliberately skewed younger than initial roster
+ * generation since these are specifically "new to the league".
+ */
+function randRookieAge() {
+  const r = Math.random();
+  if (r < 0.55) return 17;              // 55% — fresh 17
+  if (r < 0.85) return 18;              // 30% — 18
+  if (r < 0.97) return 19;              // 12% — 19 late entrant
+  return 20;                            //  3% — 20 extreme late bloomer
+}
+
+/**
+ * Inclusive random integer in [min, max].
+ */
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Age-based stat delta baseline. Applied per-stat independently so the
+ * same player can gain aim and lose positioning in the same offseason.
+ *
+ * Uses the age the player JUST PLAYED (before the +1 aging tick), since
+ * development represents what happened during the completed season.
+ *
+ * Design (from user spec):
+ *   17–20: heavy growth skew, small downside risk
+ *   21–22: moderate growth
+ *   23–24: flat with noise
+ *   25–26: declining
+ *   27–29: steep decline (forced retirement at 30 handles the tail)
+ */
+function ageDelta(age) {
+  if (age <= 20) return randInt(-1, 4);
+  if (age <= 22) return randInt(-2, 3);
+  if (age <= 24) return randInt(-2, 2);
+  if (age <= 26) return randInt(-3, 1);
+  return randInt(-4, 0); // 27–29
+}
+
+/**
+ * Score a player's season into a performance tier 0–3 based on K/D and
+ * average ACS. Only players with ≥3 maps are scored (smaller samples are
+ * too noisy to trust). Players with <3 maps return null — no performance
+ * modifier, they just get the age baseline.
+ *
+ * Tier 3 = elite season (K/D ≥ 1.3 AND ACS ≥ 230)
+ * Tier 2 = strong season (K/D ≥ 1.1 AND ACS ≥ 200)
+ * Tier 1 = average season (K/D ≥ 0.9 AND ACS ≥ 170)
+ * Tier 0 = bad season (anything worse)
+ */
+function performanceTier(player) {
+  const s = player.stats;
+  if (!s || s.maps < 3) return null;
+  const kd = s.kills / Math.max(1, s.deaths);
+  const acs = s.acs / s.maps;
+  if (kd >= 1.3 && acs >= 230) return 3;
+  if (kd >= 1.1 && acs >= 200) return 2;
+  if (kd >= 0.9 && acs >= 170) return 1;
+  return 0;
+}
+
+/**
+ * Performance-based delta added to each stat's age baseline.
+ *
+ * Tier 3 (elite):  +1 to +3 per stat — breakout season rewards growth
+ * Tier 2 (strong): +0 to +1 per stat — solid work, small boost
+ * Tier 1 (average): 0 — no change
+ * Tier 0 (bad):    -2 to  0 per stat — dragged down
+ * null (no data):  0 — unplayed or too-small sample, no modifier
+ */
+function performanceDelta(tier) {
+  if (tier === null) return 0;
+  if (tier === 3) return randInt(1, 3);
+  if (tier === 2) return randInt(0, 1);
+  if (tier === 1) return 0;
+  return randInt(-2, 0); // tier 0
+}
+
+/**
+ * Run the full rating development pass on a player. Mutates the player's
+ * ratings, recomputes overall, and stashes a lastOffseasonDelta object
+ * so the UI can show (+N)/(-N) indicators on roster/FA tables during the
+ * new season.
+ *
+ * Clamping: ratings are clamped to [1, 99]. No artificial rating floor —
+ * older players with bad seasons can genuinely drop below the rookie
+ * generation floor of 45, creating "should I release this declining vet?"
+ * decisions.
+ *
+ * Only called during the offseason, before aging and retirement rolls.
+ * Rookies entering via generatePlayer don't get a delta stashed (no
+ * previous state to diff against).
+ */
+function developPlayer(player) {
+  // Snapshot pre-development state for the delta
+  const oldRatings = { ...player.ratings };
+  const oldOverall = player.overall;
+
+  // Compute performance tier ONCE per player (same tier drives all 5
+  // stat perf modifiers — but each stat still rolls its own random value
+  // within the tier's range, so you can gain aim and not gain positioning)
+  const tier = performanceTier(player);
+
+  // Apply per-stat deltas
+  const newRatings = {};
+  for (const stat of ['aim', 'positioning', 'utility', 'gamesense', 'clutch']) {
+    const age = player.age; // pre-aging, the age they just played at
+    const base = ageDelta(age);
+    const perf = performanceDelta(tier);
+    const newVal = Math.max(1, Math.min(99, (oldRatings[stat] || 0) + base + perf));
+    newRatings[stat] = newVal;
+  }
+
+  player.ratings = newRatings;
+  player.overall = player.calcOverall();
+
+  // Stash the delta for UI display. Includes per-stat deltas and the
+  // overall delta (computed from new vs old). Only stats with non-zero
+  // deltas are worth showing, but we store everything for completeness
+  // — the UI can decide what to render.
+  player.lastOffseasonDelta = {
+    aim: newRatings.aim - oldRatings.aim,
+    positioning: newRatings.positioning - oldRatings.positioning,
+    utility: newRatings.utility - oldRatings.utility,
+    gamesense: newRatings.gamesense - oldRatings.gamesense,
+    clutch: newRatings.clutch - oldRatings.clutch,
+    overall: player.overall - oldOverall,
+    tier, // null or 0-3, useful for UI if we ever want to show "elite season" badges
+  };
+}
+
+/**
+ * Begin a new season. Called from the dashboard/sidebar "Start New Season"
+ * button when status === 'season-complete'.
+ *
+ * Phase 6d offseason sequence:
+ *   1. Archive the completed season (history + champion)
+ *   2. Rating development — per-player age curve + performance modifier
+ *      (reads player.stats BEFORE they get reset in step 6)
+ *   3. Age all players +1 (rosters + free agents)
+ *   4. Retirement pass — exponential curve age 25–29, hard cutoff at 30
+ *   5. AI team backfill — auto-sign best FAs to reach ROSTER_MIN (skips human team)
+ *   6. Rookie generation — refill each region's FA pool to FREE_AGENT_POOL_SIZE
+ *   7. Reset records, clear state, reassign groups, regen schedules
+ *
+ * Human teams are NOT auto-filled — if the user's team is below 5 after
+ * retirements, they'll see the gap on the dashboard and the Advance button
+ * will be blocked until they manually sign players. This preserves user
+ * agency over roster decisions.
+ */
+export function beginNewSeason(gameState) {
+  if (gameState.season?.status !== 'season-complete') return;
+
+  // ── 1. Archive the completed season ──
+  const completedYear = gameState.seasonNumber;
+  const completedHistory = gameState.season.history || [];
+  const lastWorlds = [...completedHistory].reverse().find(e => e.type === 'worlds');
+
+  // Offseason summary stub — populated as we go. Stored on the archive
+  // entry for future surfacing (Phase 6g history selector can display it).
+  const offseasonSummary = {
+    retiredCount: 0,
+    rookiesGenerated: 0,
+    aiSigningsCount: 0,
+    // Development tally — filled in during the development pass below.
+    // Useful for the "top movers" view in a future offseason report.
+    developedCount: 0,
+    biggestGainers: [], // top 5 by overall delta
+    biggestLosers: [],  // bottom 5 by overall delta
+  };
+
+  gameState.archive.push({
+    year: completedYear,
+    history: completedHistory,
+    worldChampion: lastWorlds?.champion || null,
+    runnerUp: lastWorlds?.runnerUp || null,
+    offseasonSummary,
+  });
+
+  // Increment year
+  gameState.seasonNumber = completedYear + 1;
+
+  // ── 2. Rating development ──
+  // Run BEFORE aging so the age curve reads the age the player just
+  // played at. Also MUST run before step 7 (stat reset) since performance
+  // is computed from player.stats.
+  //
+  // After this pass, every non-rookie player has a lastOffseasonDelta
+  // object attached for the UI to render (+N)/(-N) indicators.
+  const allMovers = []; // for gainer/loser leaderboards
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        developPlayer(player);
+        offseasonSummary.developedCount++;
+        allMovers.push(player);
+      }
+    }
+    for (const player of region.freeAgents) {
+      developPlayer(player);
+      offseasonSummary.developedCount++;
+      allMovers.push(player);
+    }
+  }
+
+  // Top 5 gainers and losers by overall delta. Stored as lightweight
+  // summaries (tag, team/FA, delta) so they survive across seasons
+  // without holding live player references.
+  const sorted = [...allMovers].sort(
+    (a, b) => (b.lastOffseasonDelta?.overall || 0) - (a.lastOffseasonDelta?.overall || 0)
+  );
+  const moverCard = (p) => ({
+    tag: p.tag,
+    name: p.name,
+    age: p.age, // this is still the pre-aging age — aging hasn't happened yet
+    overall: p.overall,
+    delta: p.lastOffseasonDelta?.overall || 0,
+  });
+  offseasonSummary.biggestGainers = sorted.slice(0, 5).map(moverCard);
+  offseasonSummary.biggestLosers = sorted.slice(-5).reverse().map(moverCard);
+
+  // ── 3 + 4. Age everyone, then retire by age curve ──
+  // ── 3 + 4. Age everyone, then retire by age curve ──
+  // Process per region. Rosters and free agent pools are handled together:
+  //   - Increment age on every player
+  //   - Roll retirement on every player
+  //   - Rostered retirees are removed from their team (and strategy cleaned up)
+  //   - FA retirees are just spliced out of the pool
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+
+    // Roster aging + retirement
+    for (const team of region.teams) {
+      const survivors = [];
+      for (const player of team.roster) {
+        player.age += 1;
+        if (shouldRetire(player)) {
+          offseasonSummary.retiredCount++;
+        } else {
+          survivors.push(player);
+        }
+      }
+      team.roster = survivors;
+      team.validateStrategy();
+    }
+
+    // Free agent aging + retirement
+    const faSurvivors = [];
+    for (const player of region.freeAgents) {
+      player.age += 1;
+      if (shouldRetire(player)) {
+        offseasonSummary.retiredCount++;
+      } else {
+        faSurvivors.push(player);
+      }
+    }
+    region.freeAgents = faSurvivors;
+  }
+
+  // ── 5. AI team backfill ──
+  // Any non-human team below ROSTER_MIN auto-signs the best available
+  // free agents until it hits the minimum. Human teams are left short so
+  // the user can make deliberate preseason FA moves. If the user's team
+  // is under 5 when they try to advance, the Advance button will be
+  // blocked in the UI layer until they sign manually.
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      if (team.isHuman) continue;
+      while (team.roster.length < ROSTER_MIN && region.freeAgents.length > 0) {
+        // Pick the best-overall FA. Sorted fresh each iteration since the
+        // pool shrinks as we sign.
+        const bestIdx = region.freeAgents.reduce(
+          (bi, p, i, arr) => (p.overall > arr[bi].overall ? i : bi),
+          0
+        );
+        const signed = region.freeAgents.splice(bestIdx, 1)[0];
+        team.roster.push(signed);
+        offseasonSummary.aiSigningsCount++;
+      }
+      team.validateStrategy();
+    }
+  }
+
+  // ── 6. Rookie generation ──
+  // Refill each region's FA pool back to FREE_AGENT_POOL_SIZE with fresh
+  // rookies. Rookies use the standard rating floor so their overalls
+  // follow the normal bimodal curve — most are average, a few are bad,
+  // and a small percentage are generational talent (80+ overall at age 17).
+  //
+  // Rookies don't get a lastOffseasonDelta — they have no previous state.
+  // The UI checks for the field's presence to decide whether to show a
+  // delta indicator or a "NEW" badge.
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    const needed = FREE_AGENT_POOL_SIZE - region.freeAgents.length;
+    for (let i = 0; i < needed; i++) {
+      region.freeAgents.push(generatePlayer({
+        regionKey,
+        ageOverride: randRookieAge(),
+      }));
+      offseasonSummary.rookiesGenerated++;
+    }
+  }
+
+  // ── 7. Reset records, clear transient state, reassign groups, regen schedule ──
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+
+    region.bracket = null;
+    region.frozenStandings = null;
+    region.results = [];
+    region.currentWeek = 0;
+    region.phase = 'group';
+
+    for (const team of region.teams) {
+      team.record.wins = 0;
+      team.record.losses = 0;
+      team.record.mapWins = 0;
+      team.record.mapLosses = 0;
+      team.record.roundWins = 0;
+      team.record.roundLosses = 0;
+      team.group = null;
+
+      for (const player of team.roster) {
+        if (player.stats) {
+          player.stats.kills = 0;
+          player.stats.deaths = 0;
+          player.stats.assists = 0;
+          player.stats.acs = 0;
+          player.stats.maps = 0;
+        }
+      }
+    }
+
+    // Random shuffle into A/B groups + regenerate schedule
+    const shuffled = [...region.teams].sort(() => Math.random() - 0.5);
+    shuffled.forEach((team, i) => {
+      team.group = i < GROUP_SIZE ? 'A' : 'B';
+    });
+    region.schedule = generateSchedule(region.teams);
+  }
+
+  // Clear any active tournament state (defensive — should already be null)
+  gameState.international = null;
+  gameState.worlds = null;
+
+  // Fresh season object. initSeason preserves seasonNumber and archive
+  // (already at the top level) and re-zeroes points/history.
+  gameState.season = initSeason(gameState);
+}
+
 
