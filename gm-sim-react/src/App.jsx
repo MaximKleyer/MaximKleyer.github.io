@@ -59,6 +59,11 @@ import {
   isInternationalBracketComplete,
 } from './engine/bracketInternational.js';
 import {
+  getStageMatches as getWorldsStageMatches,
+  routeBracketStage as routeWorldsBracketStage,
+  isWorldsBracketComplete,
+} from './engine/bracketWorlds.js';
+import {
   advanceWorlds,
   isWorldsComplete,
   isWorldsAwaitingHumanPick,
@@ -339,7 +344,7 @@ export default function App() {
           seriesId: `intl:swiss:r${intl.swiss.round}:${i}`,
           phase: 'international-swiss',
           intlRoundRef: { round: intl.swiss.round, idx: i },
-          intlMatchRef: entry.match,
+          intlMatchRef: entry.match, matchRef: entry.match,
           teamA: entry.match.teamA,
           teamB: entry.match.teamB,
           bestOf: entry.bestOf,
@@ -392,7 +397,7 @@ export default function App() {
             seriesId: `intl:bracket:s${intl.bracket.stage}:${i}`,
             phase: 'international-bracket',
             intlBracketStage: intl.bracket.stage,
-            intlMatchRef: entry.match,
+            intlMatchRef: entry.match, matchRef: entry.match,
             teamA: entry.match.teamA,
             teamB: entry.match.teamB,
             bestOf: entry.bestOf,
@@ -436,11 +441,166 @@ export default function App() {
   }
 
   // ── Advance Worlds ──
+  // Per-map version mirroring advanceInternationalPhase. Phases:
+  //   - groupSelection: passthrough (atomic — reveals next pick or waits)
+  //   - groups: 4 parallel Swiss tournaments, per-map across all groups' current rounds
+  //   - playoffSelection: passthrough (atomic — reveals next pick or waits)
+  //   - bracket: per-map across the current bracket stage (with first-time
+  //     records-reset handled inline)
   function advanceWorldsPhase() {
-    advanceWorlds(gameState);
-    if (isWorldsComplete(gameState)) {
-      completeCurrentWorlds(gameState);
+    const w = gameState.worlds;
+    if (!w || w.phase === 'complete') {
+      setGameState(prev => ({ ...prev }));
+      return;
     }
+
+    // Selection phases — defer to existing engine. Each call either reveals
+    // one pick or no-ops (waiting on human).
+    if (w.phase === 'groupSelection' || w.phase === 'playoffSelection') {
+      advanceWorlds(gameState);
+      if (isWorldsComplete(gameState)) {
+        completeCurrentWorlds(gameState);
+      }
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    ensureActiveSeries(gameState);
+
+    // ── Groups phase per-map ──
+    if (w.phase === 'groups') {
+      const WORLDS_GROUP_KEYS = ['A', 'B', 'C', 'D'];
+
+      if (!hasActiveSeries(gameState, 'worlds-groups')) {
+        const seeded = [];
+        for (const gk of WORLDS_GROUP_KEYS) {
+          const swiss = w.groups[gk];
+          if (!swiss || swiss.status === 'complete') continue;
+          const matches = getSwissRoundMatches(swiss);
+          for (let i = 0; i < matches.length; i++) {
+            const entry = matches[i];
+            seeded.push({
+              seriesId: `worlds:groups:${gk}:r${swiss.round}:${i}`,
+              phase: 'worlds-groups',
+              worldsGroupKey: gk,
+              intlMatchRef: entry.match,
+              matchRef: entry.match,
+              teamA: entry.match.teamA,
+              teamB: entry.match.teamB,
+              bestOf: entry.bestOf,
+            });
+          }
+        }
+        if (seeded.length > 0) seedActiveSeries(gameState, seeded);
+      }
+
+      const { completed } = advanceOneMap(gameState);
+
+      let toastResult = null;
+      for (const entry of completed) {
+        if (entry.phase !== 'worlds-groups') continue;
+        const result = seriesToResult(entry.series);
+        entry.intlMatchRef.result = result;
+        if (entry.teamA === humanTeam || entry.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+
+      // For each group whose round has fully resolved, route Swiss forward.
+      // (routeSwissRound is idempotent, but only call when there are no
+      // active series for that group so we don't mid-round-trigger.)
+      for (const gk of WORLDS_GROUP_KEYS) {
+        const swiss = w.groups[gk];
+        if (!swiss || swiss.status === 'complete') continue;
+        const stillActive = (gameState.season.activeSeries || [])
+          .some(a => a.phase === 'worlds-groups' && a.worldsGroupKey === gk);
+        if (stillActive) continue;
+        const stillToPlay = getSwissRoundMatches(swiss);
+        if (stillToPlay.length > 0) continue;
+        // This group's round is complete — route to next round
+        w.groups[gk] = routeSwissRound(swiss);
+      }
+
+      // If all groups done, defer to existing engine for the groups → playoff selection transition
+      const allGroupsDone = WORLDS_GROUP_KEYS.every(gk => w.groups[gk]?.status === 'complete');
+      if (allGroupsDone && w.phase === 'groups') {
+        advanceWorlds(gameState);
+      }
+
+      if (toastResult) showMatchToast(toastResult, humanTeam);
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    // ── Bracket phase per-map ──
+    if (w.phase === 'bracket') {
+      // First-time records reset — inlined from the engine so we don't
+      // need to defer to the batch advance just to get this side effect.
+      if (!w._bracketRecordsReset) {
+        const bracketTeams = new Set();
+        for (const gk of ['A', 'B', 'C', 'D']) {
+          for (const seed of (w.playoffSeeds[gk] || [])) bracketTeams.add(seed);
+        }
+        for (const t of bracketTeams) {
+          t.record.wins = 0;
+          t.record.losses = 0;
+          t.record.mapWins = 0;
+          t.record.mapLosses = 0;
+          t.record.roundWins = 0;
+          t.record.roundLosses = 0;
+        }
+        w._bracketRecordsReset = true;
+      }
+
+      if (!hasActiveSeries(gameState, 'worlds-bracket')) {
+        const matches = getWorldsStageMatches(w.bracket);
+        const seeded = matches
+          .filter(({ match }) => !match.result && match.teamA && match.teamB)
+          .map((entry, i) => ({
+            seriesId: `worlds:bracket:s${w.bracket.stage}:${i}`,
+            phase: 'worlds-bracket',
+            worldsBracketStage: w.bracket.stage,
+            intlMatchRef: entry.match,
+            matchRef: entry.match,
+            teamA: entry.match.teamA,
+            teamB: entry.match.teamB,
+            bestOf: entry.bestOf,
+          }));
+        if (seeded.length > 0) seedActiveSeries(gameState, seeded);
+      }
+
+      const { completed } = advanceOneMap(gameState);
+
+      let toastResult = null;
+      for (const entry of completed) {
+        if (entry.phase !== 'worlds-bracket') continue;
+        const result = seriesToResult(entry.series);
+        entry.intlMatchRef.result = result;
+        processSeriesResult(result);
+        if (entry.teamA === humanTeam || entry.teamB === humanTeam) {
+          toastResult = result;
+        }
+      }
+
+      // All current-stage matches done? Route to next stage.
+      const stageMatches = getWorldsStageMatches(w.bracket);
+      const allDone = stageMatches.length > 0 && stageMatches.every(({ match }) => match.result);
+      if (allDone) {
+        w.bracket = routeWorldsBracketStage(w.bracket);
+        if (isWorldsBracketComplete(w.bracket)) {
+          w.phase = 'complete';
+        }
+      }
+
+      if (toastResult) showMatchToast(toastResult, humanTeam);
+      if (isWorldsComplete(gameState)) {
+        completeCurrentWorlds(gameState);
+      }
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+
+    // Unknown phase
     setGameState(prev => ({ ...prev }));
   }
 
@@ -458,7 +618,19 @@ export default function App() {
 
   // ── Called from the StageTransition "Continue" button ──
   function handleTransitionContinue() {
-    beginNextSlot(gameState);
+    // Phase 6e+ hardening: defend against beginNextSlot throwing partway
+    // through. Without this, an exception inside slot init left the
+    // overlay onscreen forever (status stuck on 'transition'). beginNextSlot
+    // now itself catches inner throws and always flips status, but belt-
+    // and-suspenders.
+    try {
+      beginNextSlot(gameState);
+    } catch (e) {
+      console.error('[handleTransitionContinue] beginNextSlot threw:', e);
+      // Force-flip out of transition so the overlay closes. User lands on
+      // dashboard and we surface the error in console for debugging.
+      if (gameState.season) gameState.season.status = 'active';
+    }
     const nextSlot = getCurrentSlot(gameState);
     if (nextSlot?.type === 'international') {
       setCurrentView('international');
@@ -494,87 +666,85 @@ export default function App() {
   }
 
   // ── Fast-forward handlers (Phase 6e+ Ask 3) ──
-  // Sim Series: finishes the current ROUND (group week / bracket stage /
-  // intl Swiss round / worlds round) to completion in one click. Restores
-  // the pre-per-map "batch advance" experience for users who want to skip
-  // the click chain. Always available during a playable phase, even when
-  // no series are currently active — in that case it seeds the next round
-  // first then immediately drains it.
+  // Sim Series — finishes the current round (group week / bracket stage /
+  // intl Swiss round / intl bracket stage / worlds groups round / worlds
+  // bracket stage) to completion.
   //
-  // Stops at the boundary of the current round. To skip multiple rounds
-  // (e.g. all the way to brackets), use Sim Group Stage / Sim Playoffs.
+  // The trick: every per-map advance handler seeds a fresh batch of
+  // active series whenever the list is empty AND there's still work in
+  // the round. So we can detect "round finished" by the transition from
+  // non-empty → empty active series. As long as the next click would
+  // SEED new series (i.e., there's another round to start), we'd pump
+  // forever — but that's where activeSeries.length === 0 right after a
+  // call combined with a watchdog ensures we exit.
+  //
+  // Algorithm: loop calling advance handler. After each call, if
+  // activeSeries is empty AND was empty before the call AND no observable
+  // state changed (week/stage/swiss-round/etc.), we've hit a no-op — break.
+  // Otherwise if activeSeries became empty, we just resolved the current
+  // round → break to stop before seeding the next one.
   function handleSimSeries() {
     if (inTransition || circuitComplete || offseasonActive) return;
     if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return;
 
-    // Snapshot what defines the "current round" so we know when to stop.
-    // For group: each region's currentWeek. For brackets: each region's
-    // bracket.stage. For intl/worlds: still batch-mode internally so one
-    // call advances the whole round.
-    const slot = getCurrentSlot(gameState);
-    const isGroupPhase = slot?.type === 'stage'
-      && REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
-    const isBracketPhase = slot?.type === 'stage'
-      && REGION_KEYS.every(k => gameState.regions[k].phase !== 'group')
-      && !allBracketsDone;
-
-    const startWeeks = {};
-    const startStages = {};
-    if (isGroupPhase) {
-      for (const k of REGION_KEYS) startWeeks[k] = gameState.regions[k].currentWeek;
-    } else if (isBracketPhase) {
-      for (const k of REGION_KEYS) {
-        startStages[k] = gameState.regions[k].bracket?.stage ?? null;
-      }
+    // Snapshot used to detect "did anything change?" between iterations.
+    // If two consecutive calls produce the same snapshot AND activeSeries
+    // is empty both times, we're stuck and need to bail.
+    function snapshot() {
+      const w = gameState.worlds;
+      const intl = gameState.international;
+      return [
+        gameState.season?.status,
+        gameState.season?.activeSeries?.length || 0,
+        ...REGION_KEYS.map(k => gameState.regions[k].currentWeek),
+        ...REGION_KEYS.map(k => gameState.regions[k].phase),
+        ...REGION_KEYS.map(k => gameState.regions[k].bracket?.stage ?? -1),
+        intl?.phase || '-',
+        intl?.swiss?.round || -1,
+        intl?.swiss?.status || '-',
+        intl?.bracket?.stage ?? -1,
+        w?.phase || '-',
+        w?.bracket?.stage ?? -1,
+        ...['A', 'B', 'C', 'D'].map(gk => w?.groups?.[gk]?.round ?? -1),
+        ...['A', 'B', 'C', 'D'].map(gk => w?.groups?.[gk]?.status ?? '-'),
+      ].join('|');
     }
 
-    // Pump the advance loop until either:
-    //   - the current round boundary is crossed (week/stage incremented for at least one region), OR
-    //   - we hit a transition/complete/await state (intl/worlds atomically transition after their batch)
-    //
-    // Safety cap protects against pathological infinite loops.
-    let safety = 200;
+    let prevSnap = snapshot();
+    let safety = 500;
+
     while (safety-- > 0) {
       const s = gameState.season?.status;
       if (s === 'transition' || s === 'season-complete' || s === 'offseason-active') break;
       if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) break;
 
+      const activeBefore = (gameState.season?.activeSeries || []).length;
+
+      // Dispatch to the right per-phase handler. Same logic as advanceAll.
       const cur = getCurrentSlot(gameState);
       if (cur?.type === 'international') {
-        // intl is still batch-mode this round of work — one call advances
-        // a whole Swiss round / bracket stage atomically. Single call is
-        // enough to "sim the current round."
         advanceInternationalPhase();
-        break;
-      }
-      if (cur?.type === 'worlds') {
+      } else if (cur?.type === 'worlds') {
         advanceWorldsPhase();
-        break;
+      } else if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) {
+        advanceGroupWeek();
+      } else {
+        advanceBracketAll();
       }
 
-      // Stage slot — group or bracket
-      if (isGroupPhase) {
-        advanceGroupWeek();
-        // Stop when ANY region has crossed the week boundary OR all regions
-        // exited group phase. Avoids pumping into the next week.
-        const advanced = REGION_KEYS.some(k => {
-          const r = gameState.regions[k];
-          return r.phase !== 'group' || r.currentWeek > (startWeeks[k] ?? 0);
-        });
-        if (advanced) break;
-      } else if (isBracketPhase) {
-        advanceBracketAll();
-        const advanced = REGION_KEYS.some(k => {
-          const r = gameState.regions[k];
-          if (!r.bracket) return false;
-          return r.bracket.stage > (startStages[k] ?? 0);
-        });
-        if (advanced) break;
-        if (allBracketsDone) break;
-      } else {
-        // Unknown phase — bail safely
-        break;
-      }
+      const activeAfter = (gameState.season?.activeSeries || []).length;
+      const newSnap = snapshot();
+
+      // Boundary 1: we had active series and now we don't → round just
+      // resolved. Stop before the next round seeds.
+      if (activeBefore > 0 && activeAfter === 0) break;
+
+      // Boundary 2: state didn't change at all (nothing seeded, nothing
+      // played). Probably hit a passthrough phase that's waiting for
+      // input or finished. Bail to avoid infinite loop.
+      if (newSnap === prevSnap) break;
+
+      prevSnap = newSnap;
     }
   }
 
@@ -714,6 +884,7 @@ export default function App() {
             regionKey,
             week: region.currentWeek,
             scheduleIdx,
+            matchRef: m, // direct ref so UI can find this in-progress series
             teamA: m.teamA,
             teamB: m.teamB,
             bestOf: 3,
@@ -813,7 +984,7 @@ export default function App() {
             phase: 'bracket',
             regionKey,
             bracketStage: region.bracket.stage,
-            bracketMatchRef: match, // direct ref so we can set match.result on completion
+            bracketMatchRef: match, matchRef: match, // direct ref for completion + UI lookup
             teamA: match.teamA,
             teamB: match.teamB,
             bestOf,
@@ -1027,7 +1198,7 @@ export default function App() {
       case 'dashboard':
         return <Dashboard gameState={gameState} humanTeam={humanTeam} onStartNewSeason={circuitComplete ? handleStartNewSeason : null} />;
       case 'schedule':
-        return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
+        return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'roster':
         return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'freeagents':
@@ -1035,7 +1206,7 @@ export default function App() {
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'bracket':
-        return <Bracket regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} />;
+        return <Bracket regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'stats':
         return <Stats regions={gameState.regions} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'points':

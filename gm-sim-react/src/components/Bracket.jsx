@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { getStageName, getChampion } from '../engine/bracket.js';
 import { computeLivePlacements } from '../engine/placements.js';
+import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
 import MatchCard from './MatchCard.jsx';
 import RegionSelector from './RegionSelector.jsx';
 
@@ -137,7 +138,7 @@ function StandingsPanel({ regionData }) {
   );
 }
 
-export default function Bracket({ regionData, viewRegion, onChangeRegion }) {
+export default function Bracket({ regionData, viewRegion, onChangeRegion, gameState }) {
   const [expandedMatch, setExpandedMatch] = useState(null);
   const bracket = regionData?.bracket;
 
@@ -193,7 +194,14 @@ export default function Bracket({ regionData, viewRegion, onChangeRegion }) {
   function MC({ id, bestOf = 'bo3' }) {
     const entry = allMatches.find(m => m.id === id);
     if (!entry) return <div className="mc-card mc-empty" />;
-    return <MatchCard match={entry.match} bestOf={bestOf} clickable={true} onClick={() => setExpandedMatch(prev => prev === id ? null : id)} />;
+    const inProgress = gameState ? findActiveSeriesForMatch(gameState, entry.match) : null;
+    return <MatchCard
+      match={entry.match}
+      bestOf={bestOf}
+      clickable={true}
+      onClick={() => setExpandedMatch(prev => prev === id ? null : id)}
+      inProgressSeries={inProgress}
+    />;
   }
 
   const expandedEntry = allMatches.find(m => m.id === expandedMatch);

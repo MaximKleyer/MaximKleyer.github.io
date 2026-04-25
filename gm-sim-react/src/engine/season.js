@@ -435,6 +435,13 @@ function teamCard(team) {
 export function beginNextSlot(gameState) {
   const s = gameState.season;
 
+  // Phase 6e+ Ask 3 hardening: clear any leftover activeSeries from the
+  // slot that just ended. Series are scoped to a single slot (group week,
+  // bracket stage, swiss round, etc.) — they should never leak across
+  // a slot boundary. Defensive clear protects against half-drained state
+  // from prior advance flows.
+  s.activeSeries = [];
+
   while (true) {
     s.slotIndex++;
     if (s.slotIndex >= s.circuit.length) {
@@ -453,18 +460,28 @@ export function beginNextSlot(gameState) {
     }
 
     if (slot.type === 'international') {
-      // Phase 3: real international tournament. Initialize state and hand
-      // control to the advance loop via status='active'. App.jsx will route
-      // the advance button to advanceInternational() while this slot runs.
-      gameState.international = initInternational(gameState, slot.internationalNumber);
+      // Phase 6e+ hardening: try/catch protects against init throwing,
+      // which would otherwise leave status='transition' and gray the UI
+      // permanently. If init fails, we log + still flip status to active
+      // — the user can navigate away and the international view will show
+      // its empty state.
+      try {
+        gameState.international = initInternational(gameState, slot.internationalNumber);
+      } catch (e) {
+        console.error('[beginNextSlot] initInternational threw:', e);
+        gameState.international = null;
+      }
       s.status = 'active';
       return;
     }
 
     if (slot.type === 'worlds') {
-      // Phase 4a: initialize Worlds qualification + group selection show.
-      // Phase 4b will extend this to run the full playoff bracket.
-      gameState.worlds = initWorlds(gameState);
+      try {
+        gameState.worlds = initWorlds(gameState);
+      } catch (e) {
+        console.error('[beginNextSlot] initWorlds threw:', e);
+        gameState.worlds = null;
+      }
       s.status = 'active';
       return;
     }

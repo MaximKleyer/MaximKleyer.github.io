@@ -81,15 +81,14 @@ export function seedActiveSeries(gameState, specs) {
   const list = ensureActiveSeries(gameState);
   const seeded = [];
   for (const s of specs) {
+    // Copy ALL fields from the spec onto the entry, so caller-specific
+    // refs (matchRef, bracketMatchRef, intlMatchRef, scheduleIdx, etc.)
+    // survive intact for completion-handler routing AND UI lookup.
+    // Only `series` is computed locally — everything else comes from the
+    // caller. teamA/teamB/bestOf/origin are consumed by startSeries but
+    // also kept on the entry for any consumers that want them.
     const entry = {
-      seriesId: s.seriesId,
-      phase: s.phase,
-      regionKey: s.regionKey,
-      week: s.week,
-      scheduleIdx: s.scheduleIdx,
-      bracketRef: s.bracketRef, // opaque — brackets use this to find themselves
-      intlRef: s.intlRef,       // same for international
-      worldsRef: s.worldsRef,   // same for worlds
+      ...s,
       series: startSeries(s.teamA, s.teamB, s.bestOf || 3, s.origin),
     };
     list.push(entry);
@@ -200,4 +199,24 @@ export function drainCompleted(gameState) {
  */
 export function clearActiveSeries(gameState) {
   gameState.season.activeSeries = [];
+}
+
+/**
+ * UI helper: given a match object (from a region.schedule, bracket, swiss
+ * round, etc.), find the corresponding in-flight active series entry if
+ * one exists. Returns the active series entry (with .series inside) or
+ * null. Used by MatchCard to render running scores + per-map breakdowns
+ * for series that haven't finished yet.
+ *
+ * Match identity is by reference. All advance handlers that seed series
+ * also store a matchRef on each entry pointing at the original match
+ * object, so `entry.matchRef === match` is the canonical lookup.
+ */
+export function findActiveSeriesForMatch(gameState, match) {
+  if (!match) return null;
+  const list = gameState?.season?.activeSeries || [];
+  for (const entry of list) {
+    if (entry.matchRef === match) return entry;
+  }
+  return null;
 }

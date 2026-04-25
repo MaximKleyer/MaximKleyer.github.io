@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import MatchCard from './MatchCard.jsx';
 import { getCurrentSlot } from '../engine/season.js';
+import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
 import {
   getWorldsBracketStageName,
   getWorldsBracketChampion,
@@ -309,7 +310,7 @@ function GroupSelectionView({ worlds, gameState }) {
 
 /* ─────────────── Group stage view ─────────────── */
 
-function GroupPanel({ groupKey, swiss, onMatchClick }) {
+function GroupPanel({ groupKey, swiss, onMatchClick, gameState }) {
   const sorted = [...swiss.teams].sort((a, b) => {
     if (b.wins !== a.wins) return b.wins - a.wins;
     if (a.losses !== b.losses) return a.losses - b.losses;
@@ -395,6 +396,7 @@ function GroupPanel({ groupKey, swiss, onMatchClick }) {
                 matches.map((match, i) => {
                   const id = `${groupKey}-r${rn}-${i}`;
                   const has = !!match.result;
+                  const inProgress = gameState ? findActiveSeriesForMatch(gameState, match) : null;
                   return (
                     <div key={id} style={{ marginBottom: i === matches.length - 1 ? 0 : 6 }}>
                       <MatchCard
@@ -402,6 +404,7 @@ function GroupPanel({ groupKey, swiss, onMatchClick }) {
                         bestOf="bo3"
                         clickable={has}
                         onClick={() => onMatchClick(id)}
+                        inProgressSeries={inProgress}
                       />
                     </div>
                   );
@@ -415,7 +418,7 @@ function GroupPanel({ groupKey, swiss, onMatchClick }) {
   );
 }
 
-function GroupsView({ worlds, onMatchClick }) {
+function GroupsView({ worlds, onMatchClick, gameState }) {
   return (
     <div>
       <div style={sectionHeader}>Group Stage</div>
@@ -430,6 +433,7 @@ function GroupsView({ worlds, onMatchClick }) {
             groupKey={gk}
             swiss={worlds.groups[gk]}
             onMatchClick={onMatchClick}
+            gameState={gameState}
           />
         ))}
       </div>
@@ -685,8 +689,9 @@ const GRID_WIDTH = COL_X[4] + MATCH_WIDTH;
 const GRID_HEIGHT = LB_R1_Y[1] + MATCH_HEIGHT + 40;
 const LABEL_OFFSET = 28;
 
-function PositionedMatch({ x, y, id, match, bestOf = 'bo3', onClick }) {
+function PositionedMatch({ x, y, id, match, bestOf = 'bo3', onClick, gameState }) {
   const has = !!match?.result;
+  const inProgress = gameState ? findActiveSeriesForMatch(gameState, match) : null;
   return (
     <div style={{ position: 'absolute', left: x, top: y, width: MATCH_WIDTH }}>
       <MatchCard
@@ -694,6 +699,7 @@ function PositionedMatch({ x, y, id, match, bestOf = 'bo3', onClick }) {
         bestOf={bestOf}
         clickable={has}
         onClick={() => onClick(id)}
+        inProgressSeries={inProgress}
       />
     </div>
   );
@@ -777,7 +783,7 @@ function ConnectorOverlay() {
   );
 }
 
-function WorldsBracketGrid({ bracket, onMatchClick, allMatches }) {
+function WorldsBracketGrid({ bracket, onMatchClick, allMatches, gameState }) {
   const byId = Object.fromEntries(allMatches.map(m => [m.id, m.match]));
   const m = (id) => byId[id] || null;
 
@@ -802,27 +808,27 @@ function WorldsBracketGrid({ bracket, onMatchClick, allMatches }) {
         <RoundLabel x={COL_X[2]} y={LB_R3_Y - LABEL_OFFSET}>LB Round 3</RoundLabel>
         <RoundLabel x={COL_X[3]} y={LB_FINAL_Y - LABEL_OFFSET}>LB Final · BO5</RoundLabel>
 
-        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[0]} id="ubr0" match={m('ubr0')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[1]} id="ubr1" match={m('ubr1')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[2]} id="ubr2" match={m('ubr2')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[3]} id="ubr3" match={m('ubr3')} onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[0]} id="ubr0" match={m('ubr0')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[1]} id="ubr1" match={m('ubr1')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[2]} id="ubr2" match={m('ubr2')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[0]} y={UB_R1_Y[3]} id="ubr3" match={m('ubr3')} onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[1]} y={UB_SF_Y[0]} id="ubsf0" match={m('ubsf0')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[1]} y={UB_SF_Y[1]} id="ubsf1" match={m('ubsf1')} onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[1]} y={UB_SF_Y[0]} id="ubsf0" match={m('ubsf0')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[1]} y={UB_SF_Y[1]} id="ubsf1" match={m('ubsf1')} onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[2]} y={UB_FINAL_Y} id="ubf" match={m('ubf')} bestOf="bo5" onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[2]} y={UB_FINAL_Y} id="ubf" match={m('ubf')} bestOf="bo5" onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[0]} y={LB_R1_Y[0]} id="lbr0" match={m('lbr0')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[0]} y={LB_R1_Y[1]} id="lbr1" match={m('lbr1')} onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[0]} y={LB_R1_Y[0]} id="lbr0" match={m('lbr0')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[0]} y={LB_R1_Y[1]} id="lbr1" match={m('lbr1')} onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[1]} y={LB_R2_Y[0]} id="lbr2-0" match={m('lbr2-0')} onClick={onMatchClick} />
-        <PositionedMatch x={COL_X[1]} y={LB_R2_Y[1]} id="lbr2-1" match={m('lbr2-1')} onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[1]} y={LB_R2_Y[0]} id="lbr2-0" match={m('lbr2-0')} onClick={onMatchClick} gameState={gameState} />
+        <PositionedMatch x={COL_X[1]} y={LB_R2_Y[1]} id="lbr2-1" match={m('lbr2-1')} onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[2]} y={LB_R3_Y} id="lbr3" match={m('lbr3')} onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[2]} y={LB_R3_Y} id="lbr3" match={m('lbr3')} onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[3]} y={LB_FINAL_Y} id="lbf" match={m('lbf')} bestOf="bo5" onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[3]} y={LB_FINAL_Y} id="lbf" match={m('lbf')} bestOf="bo5" onClick={onMatchClick} gameState={gameState} />
 
-        <PositionedMatch x={COL_X[4]} y={GF_Y} id="gf" match={m('gf')} bestOf="bo5" onClick={onMatchClick} />
+        <PositionedMatch x={COL_X[4]} y={GF_Y} id="gf" match={m('gf')} bestOf="bo5" onClick={onMatchClick} gameState={gameState} />
 
         {champion && (
           <div style={{
@@ -941,7 +947,7 @@ export default function Worlds({ gameState, onPlayoffPick }) {
       {/* Group stage (visible once groups phase starts, stays visible through bracket) */}
       {showGroups && (
         <div style={{ marginBottom: 24 }}>
-          <GroupsView worlds={worlds} onMatchClick={handleClick} />
+          <GroupsView worlds={worlds} onMatchClick={handleClick} gameState={gameState} />
         </div>
       )}
 
@@ -968,6 +974,7 @@ export default function Worlds({ gameState, onPlayoffPick }) {
             bracket={worlds.bracket}
             onMatchClick={handleClick}
             allMatches={bracketMatches}
+            gameState={gameState}
           />
         </div>
       )}

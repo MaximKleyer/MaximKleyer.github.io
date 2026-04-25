@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import MatchCard from './MatchCard.jsx';
 import RegionSelector from './RegionSelector.jsx';
+import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
 
-export default function Schedule({ regionData, viewRegion, onChangeRegion }) {
+export default function Schedule({ regionData, viewRegion, onChangeRegion, gameState }) {
   const { schedule, currentWeek } = regionData;
   const [expanded, setExpanded] = useState(null);
   const weeks = [...new Set(schedule.map(m => m.week))].sort((a, b) => a - b);
@@ -12,7 +13,7 @@ export default function Schedule({ regionData, viewRegion, onChangeRegion }) {
       <h2>Schedule — {regionData.name}</h2>
       <RegionSelector current={viewRegion} onChange={onChangeRegion} />
       <p className="muted" style={{ marginTop: 12, fontSize: '0.75rem' }}>
-        Click a completed match to view player stats
+        Click a completed match to view player stats. Live matches are outlined blue.
       </p>
 
       <div className="schedule-weeks-grid">
@@ -24,11 +25,17 @@ export default function Schedule({ regionData, viewRegion, onChangeRegion }) {
                 const idx = schedule.indexOf(match);
                 const isExp = expanded === idx;
                 const has = !!match.result;
+                const inProgress = gameState ? findActiveSeriesForMatch(gameState, match) : null;
                 return (
                   <div key={idx} className="schedule-card-wrapper">
                     <div className="schedule-card-row">
                       <span className="schedule-group-badge">{match.group}</span>
-                      <MatchCard match={{ teamA: match.teamA, teamB: match.teamB, result: match.result }} clickable={has} onClick={() => setExpanded(isExp ? null : idx)} />
+                      <MatchCard
+                        match={{ teamA: match.teamA, teamB: match.teamB, result: match.result }}
+                        clickable={has}
+                        onClick={() => setExpanded(isExp ? null : idx)}
+                        inProgressSeries={inProgress}
+                      />
                     </div>
                     {isExp && has && (
                       <div className="schedule-detail-panel">

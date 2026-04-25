@@ -40,8 +40,25 @@ export function initInternational(gameState, internationalNumber) {
   const stageEntry = [...gameState.season.history].reverse().find(
     e => e.type === 'stage' && !e.placeholder
   );
+
+  // Phase 6e+ Ask 3 hardening: previously this threw if there was no
+  // prior stage history, which left season.status stuck on 'transition'
+  // and grayed the UI permanently. Now we log + return a minimally-valid
+  // empty international object. The user still loses some pointable
+  // outcomes but the app stays usable. The 'await stage history' state
+  // implies a sim/state-machine bug elsewhere worth surfacing in console.
   if (!stageEntry) {
-    throw new Error('Cannot initialize international — no stage history found');
+    console.warn('[initInternational] No prior stage history found. Returning empty tournament.');
+    return {
+      number: internationalNumber,
+      name: `International ${internationalNumber}`,
+      phase: 'complete', // skip directly — no teams to play
+      autoBids: [],
+      swissTeams: [],
+      swiss: initSwiss([]),
+      selectionShow: null,
+      bracket: null,
+    };
   }
 
   const autoBids = [];   // [{ team, region }]
@@ -49,9 +66,10 @@ export function initInternational(gameState, internationalNumber) {
 
   for (const regionKey of REGION_KEYS) {
     const placements = stageEntry.pointsAwarded?.[regionKey];
-    if (!placements) continue;
+    if (!placements || placements.length === 0) continue;
 
     const region = gameState.regions[regionKey];
+    if (!region) continue;
     const findTeam = (abbr) => region.teams.find(t => t.abbr === abbr);
 
     // Sort by placement ascending (1st place first)
@@ -75,6 +93,7 @@ export function initInternational(gameState, internationalNumber) {
   // Reset records for everyone in the international — they're starting fresh
   // for their international record display (win/loss in this tournament only).
   for (const { team } of [...autoBids, ...swissTeams]) {
+    if (!team || !team.record) continue;
     team.record.wins = 0;
     team.record.losses = 0;
     team.record.mapWins = 0;

@@ -372,7 +372,19 @@ export function getWorldsPlayoffAvailable(gameState) {
 
 /**
  * Reveal the next playoff pick (AI or non-human spectator).
- * AI picks the weakest available opponent.
+ * AI picks the weakest available opponent, BUT avoids any pick that
+ * would leave a future picker with zero valid options.
+ *
+ * Trap scenario: with 4 pickers each forbidden from picking their own
+ * group's 2nd seed, a greedy "always weakest" AI can paint into a corner
+ * where the LAST picker's only remaining 2nd seeds are all in their own
+ * group → no valid pick → flow stalls forever.
+ *
+ * Avoidance: for each candidate, simulate "what if I pick this?" and
+ * check that all remaining pickers still have ≥1 valid option. Among
+ * the candidates that DON'T trap anyone, take the weakest. Falls back
+ * to weakest-of-everything if all candidates trap (theoretically
+ * impossible by Hall's theorem with this structure, but defensive).
  */
 function revealNextPlayoffPick(worlds) {
   const sel = worlds.playoffSelection;
@@ -380,12 +392,48 @@ function revealNextPlayoffPick(worlds) {
 
   const current = sel.pickOrder[sel.currentPickIndex];
   const available = computeAvailableForPlayoffPick(worlds);
+  if (available.length === 0) return; // genuinely no options — bail (shouldn't happen)
 
+  // Sort weakest first
   available.sort((a, b) => a.overallRating - b.overallRating);
-  const picked = available[0];
-  if (!picked) return;
 
+  // Filter to candidates that DON'T trap any future picker.
+  const safe = available.filter(candidate => {
+    return wouldNotTrapFuturePickers(worlds, current, candidate);
+  });
+
+  const picked = safe.length > 0 ? safe[0] : available[0];
   commitPlayoffPick(worlds, current, picked);
+}
+
+/**
+ * Would picking `candidate` for `currentPicker` leave any future picker
+ * with zero valid options? Returns true if NO trap (safe pick), false
+ * if it traps someone.
+ *
+ * Implementation: simulate the pick state forward, then check each
+ * remaining picker's available set. If any has 0 → trap.
+ */
+function wouldNotTrapFuturePickers(worlds, currentPicker, candidate) {
+  const sel = worlds.playoffSelection;
+  // Simulated picked-set INCLUDING the hypothetical pick we're testing.
+  const pickedSet = new Set(sel.picks.map(p => p.picked));
+  pickedSet.add(candidate);
+
+  // Walk all remaining pickers (after the current one) and check options.
+  for (let i = sel.currentPickIndex + 1; i < sel.pickOrder.length; i++) {
+    const future = sel.pickOrder[i];
+    let hasOption = false;
+    for (const gk of GROUP_KEYS) {
+      if (gk === future.group) continue; // can't pick own group's 2nd seed
+      const seed2 = worlds.playoffSeeds[gk][1];
+      if (!seed2 || pickedSet.has(seed2)) continue;
+      hasOption = true;
+      break;
+    }
+    if (!hasOption) return false; // trap detected
+  }
+  return true;
 }
 
 function computeAvailableForPlayoffPick(worlds) {
