@@ -30,6 +30,7 @@ import { flagClass, nationalityName } from '../data/nationalities.js';
 export default function FreeAgents({
   freeAgents, canSign, onSign,
   godMode = false, onEditPlayer,
+  midseasonInfo = null,
 }) {
   // Local state — only this component uses sortKey
   const [sortKey, setSortKey] = useState('overall');
@@ -56,6 +57,43 @@ export default function FreeAgents({
     <>
       <h2>Free Agents</h2>
       <p className="muted">{sorted.length} available players</p>
+
+      {midseasonInfo && (
+        <div style={{
+          marginBottom: 12,
+          padding: '10px 14px',
+          background: midseasonInfo.used >= midseasonInfo.max
+            ? 'rgba(255, 70, 85, 0.10)'
+            : 'rgba(106, 169, 255, 0.12)',
+          border: midseasonInfo.used >= midseasonInfo.max
+            ? '1px solid rgba(255, 70, 85, 0.40)'
+            : '1px solid rgba(106, 169, 255, 0.40)',
+          borderRadius: 8,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          fontSize: '0.85rem',
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '0.66rem',
+            letterSpacing: '0.16em',
+            textTransform: 'uppercase',
+            color: midseasonInfo.used >= midseasonInfo.max ? '#ff8c95' : '#8ab8ff',
+            fontWeight: 700,
+          }}>
+            💼 Mid-Season FA Window
+          </span>
+          <span style={{ color: '#cdd5e5' }}>
+            <strong style={{ color: '#fff' }}>{midseasonInfo.used} / {midseasonInfo.max}</strong> signings used
+          </span>
+          {midseasonInfo.used >= midseasonInfo.max && (
+            <span style={{ color: '#ff8c95', fontStyle: 'italic' }}>
+              Cap reached — releases still allowed
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Sort buttons */}
       <div className="sort-buttons">

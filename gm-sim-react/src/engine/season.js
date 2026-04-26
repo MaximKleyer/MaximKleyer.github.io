@@ -25,6 +25,7 @@ import { generateSchedule } from './league.js';
 import { generatePlayer } from '../classes/Player.js';
 import { computeFinalStagePlacements } from './placements.js';
 import { runOffseasonAISignings } from './offseason.js';
+import { runMidseasonAISignings } from './midseason.js';
 import {
   initInternational,
   computeInternationalResults,
@@ -54,6 +55,23 @@ export const CIRCUIT = [
  * Points map is keyed `${regionKey}:${teamAbbr}` to avoid collisions
  * between regions sharing an abbreviation.
  */
+/* ─────────────── Helpers ─────────────── */
+
+/**
+ * Deep-clone a stageStats object. Used by Phase 6h-B's archive snapshot
+ * so mutations to live `player.stageStats` (cleared on new season) don't
+ * leak into stored archive entries. Each per-stage stats blob is a flat
+ * object of numbers, so a one-level spread per stage is sufficient.
+ */
+function cloneStageStats(src) {
+  if (!src) return {};
+  const out = {};
+  for (const key of Object.keys(src)) {
+    out[key] = { ...src[key] };
+  }
+  return out;
+}
+
 export function initSeason(gameState) {
   const points = {};
   const currentStageGroupWins = {};
@@ -85,6 +103,10 @@ export function initSeason(gameState) {
     //                       report and manages FA roster. Advance is blocked
     //                       until user clicks "Start Preseason" which flips
     //                       status back to 'active'.
+    // 'mid-season-fa'     — Phase 6f: between stage 1↔2 and stage 2↔3, user
+    //                       can sign/release within a 2-signing season cap.
+    //                       Advance is blocked until user clicks "Start Stage"
+    //                       which flips status back to 'active'.
     // (legacy 'complete' status no longer used; replaced by 'season-complete')
     status: 'active',
     points,
@@ -94,6 +116,11 @@ export function initSeason(gameState) {
     // runOffseasonAISignings() and runReactiveAISignings() in offseason.js.
     // Displayed on the Offseason view. Cleared on new season init.
     aiOffseasonLog: [],
+    // Phase 6f: same shape as aiOffseasonLog but for mid-season FA windows.
+    // Persists across both windows in a season (entries from window 1 stay
+    // visible during window 2). Cleared on new season init via this fresh
+    // initSeason() call.
+    aiMidseasonLog: [],
     // Phase 6e+ Ask 3: in-flight series played one map at a time.
     // Managed by engine/activeSeries.js. Populated when advance handlers
     // seed a week/round/stage, drained as series complete over successive
@@ -192,6 +219,32 @@ export function completeCurrentStage(gameState) {
     groupWinsAwarded[regionKey] = {
       ...(gameState.season.currentStageGroupWins[regionKey] || {}),
     };
+  }
+
+  // Phase 6h: snapshot per-stage player stats before the stage rolls over
+  // (or, for stage 3, before the season ends). Each player's CURRENT
+  // stats represent only this stage; we copy them into player.stageStats[stageNum]
+  // for the in-season Stats tab to surface. Future seasons will have these
+  // same fields but live on the archive entry.
+  //
+  // Stat reset still happens later in rolloverRegionsForNewStage (or at
+  // beginNewSeason for the final stage). This snapshot must happen FIRST.
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        if (!player.stageStats) player.stageStats = {};
+        player.stageStats[stageNum] = {
+          kills: player.stats?.kills || 0,
+          deaths: player.stats?.deaths || 0,
+          assists: player.stats?.assists || 0,
+          acs: player.stats?.acs || 0,
+          maps: player.stats?.maps || 0,
+        };
+      }
+    }
+    // Free agents don't accumulate stats during a stage (they're not on
+    // any team), so no snapshot needed for them.
   }
 
   gameState.season.history.push({
@@ -454,8 +507,24 @@ export function beginNextSlot(gameState) {
     const slot = s.circuit[s.slotIndex];
 
     if (slot.type === 'stage') {
+      // Phase 6f: stages 2 and 3 are preceded by a mid-season FA window.
+      // Stage 1 is the start of the season — no FA window before it (the
+      // offseason already happened). We do the standard rollover (group
+      // reset, schedule regen, records cleared) up front, then sit in
+      // 'mid-season-fa' status until the user clicks Start Stage from
+      // the sidebar.
       rolloverRegionsForNewStage(gameState);
-      s.status = 'active';
+      const isMidseasonStage = slot.stageNumber === 2 || slot.stageNumber === 3;
+      if (isMidseasonStage) {
+        // Run AI mid-season signings ONCE on entry to the FA window. AI
+        // teams roll under their archetype-specific dice (15/35/50). Cap
+        // is enforced inside runMidseasonAISignings — teams already at
+        // the season cap from a prior window skip entirely.
+        runMidseasonAISignings(gameState);
+        s.status = 'mid-season-fa';
+      } else {
+        s.status = 'active';
+      }
       return;
     }
 
@@ -842,7 +911,53 @@ export function beginNewSeason(gameState) {
     developedCount: 0,
     biggestGainers: [], // top 5 by overall delta
     biggestLosers: [],  // bottom 5 by overall delta
+    // Phase 6g: capture lightweight cards for every retiring player so
+    // the History tab can render a Hall of Fame across seasons. We
+    // store the snapshot at retirement time (final age, final overall,
+    // last team) since the live player object gets discarded after this
+    // pass. Only the fields displayed in the UI are kept — keeps the
+    // archive entry small even after many seasons.
+    retirees: [],
   };
+
+  // Phase 6h-B: snapshot per-season stats for every active player BEFORE
+  // we clear stageStats / age / retire / develop. The shape mirrors what
+  // the live Stats UI consumes:
+  //   { regionKey: [
+  //       {
+  //         tag, name, age, overall, nationality, teamAbbr, teamColor,
+  //         stageStats: { 1: {...}, 2: {...}, 3: {...} },
+  //       },
+  //       ...
+  //     ]
+  //   }
+  // FAs are not included — they don't accumulate stage stats.
+  //
+  // Stored under archive.statsSnapshot so the History "Stats" detail can
+  // render a per-archived-season leaderboard with the same per-stage
+  // selector behavior as the live tab. Saves ~432 entries per season.
+  const statsSnapshot = {};
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    statsSnapshot[regionKey] = [];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        statsSnapshot[regionKey].push({
+          tag: player.tag,
+          name: player.name,
+          age: player.age, // current age (pre-aging — they played the season at this age)
+          overall: player.overall,
+          nationality: player.nationality,
+          teamAbbr: team.abbr,
+          teamName: team.name,
+          teamColor: team.color,
+          // Deep-clone the per-stage breakdowns so future mutation of
+          // player.stageStats doesn't leak into the archive
+          stageStats: cloneStageStats(player.stageStats || {}),
+        });
+      }
+    }
+  }
 
   gameState.archive.push({
     year: completedYear,
@@ -850,6 +965,7 @@ export function beginNewSeason(gameState) {
     worldChampion: lastWorlds?.champion || null,
     runnerUp: lastWorlds?.runnerUp || null,
     offseasonSummary,
+    statsSnapshot,
   });
 
   // Increment year
@@ -912,6 +1028,23 @@ export function beginNewSeason(gameState) {
         player.age += 1;
         if (shouldRetire(player)) {
           offseasonSummary.retiredCount++;
+          // Phase 6g: snapshot retiree for Hall of Fame. Light shape —
+          // tag/name/age/overall/team/region/nationality is plenty for
+          // a roster-row-style display. We don't archive full stats or
+          // ratings to keep the save size bounded across many seasons.
+          offseasonSummary.retirees.push({
+            tag: player.tag,
+            name: player.name,
+            age: player.age, // post-aging age (the age they retired AT)
+            overall: player.overall,
+            nationality: player.nationality,
+            teamAbbr: team.abbr,
+            teamName: team.name,
+            teamColor: team.color,
+            regionKey,
+            year: completedYear,
+            wasFA: false,
+          });
         } else {
           survivors.push(player);
         }
@@ -926,6 +1059,19 @@ export function beginNewSeason(gameState) {
       player.age += 1;
       if (shouldRetire(player)) {
         offseasonSummary.retiredCount++;
+        offseasonSummary.retirees.push({
+          tag: player.tag,
+          name: player.name,
+          age: player.age,
+          overall: player.overall,
+          nationality: player.nationality,
+          teamAbbr: null,
+          teamName: null,
+          teamColor: null,
+          regionKey,
+          year: completedYear,
+          wasFA: true,
+        });
       } else {
         faSurvivors.push(player);
       }
@@ -998,6 +1144,12 @@ export function beginNewSeason(gameState) {
       team.record.roundLosses = 0;
       team.group = null;
 
+      // Phase 6f: reset the mid-season move counter at the season boundary.
+      // The cap is "2 signings TOTAL across both mid-season FA windows in
+      // the current season" — so it resets here just like _offseasonMoves
+      // is reset in offseason.js's runOffseasonAISignings.
+      team._midseasonMoves = 0;
+
       for (const player of team.roster) {
         if (player.stats) {
           player.stats.kills = 0;
@@ -1006,6 +1158,10 @@ export function beginNewSeason(gameState) {
           player.stats.acs = 0;
           player.stats.maps = 0;
         }
+        // Phase 6h: clear per-stage snapshots — they belonged to the
+        // season we just archived. Phase 6h-B will archive the
+        // aggregated season totals to the archive entry for History.
+        player.stageStats = {};
       }
     }
 

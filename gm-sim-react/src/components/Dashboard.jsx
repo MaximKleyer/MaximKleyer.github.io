@@ -1,4 +1,5 @@
 import { getGroupStandings } from '../engine/standings.js';
+import { getCurrentSlot } from '../engine/season.js';
 import { REGIONS } from '../data/regions.js';
 import { flagClass } from '../data/nationalities.js';
 import DeltaIndicator from './DeltaIndicator.jsx';
@@ -10,6 +11,15 @@ export default function Dashboard({ gameState, humanTeam, onStartNewSeason }) {
   const isBracket = !!region.frozenStandings;
   const seasonComplete = gameState.season?.status === 'season-complete';
   const seasonNumber = gameState.seasonNumber || 2025;
+
+  // Phase 6f: mid-season FA window banner. Shown when status='mid-season-fa'
+  // with the cap counter, an explanation of which stage starts after, and
+  // a hint to navigate to Free Agents to make moves.
+  const midseasonActive = gameState.season?.status === 'mid-season-fa';
+  const midseasonSlot = midseasonActive ? getCurrentSlot(gameState) : null;
+  const midseasonStageNumber = midseasonSlot?.stageNumber;
+  const midseasonUsed = humanTeam._midseasonMoves || 0;
+  const midseasonMax = 2; // mirror MAX_MIDSEASON_MOVES_PER_SEASON; kept inline to avoid extra import
 
   // Find the most recent worlds entry to celebrate the world champion.
   // Falls back gracefully if no worlds entry exists yet.
@@ -34,13 +44,52 @@ export default function Dashboard({ gameState, humanTeam, onStartNewSeason }) {
       <p className="muted">
         {seasonComplete
           ? `Season ${seasonNumber} complete — start a new season when you're ready`
-          : isPreseason
-            ? `Preseason — ${regionDef.name} · Make roster moves, then start the season`
-            : isBracket
-              ? `Playoffs — ${regionDef.name}`
-              : `Week ${region.currentWeek} · ${regionDef.name} · ${region.phase} stage`
+          : midseasonActive
+            ? `Mid-Season FA Window · Stage ${midseasonStageNumber} begins after this`
+            : isPreseason
+              ? `Preseason — ${regionDef.name} · Make roster moves, then start the season`
+              : isBracket
+                ? `Playoffs — ${regionDef.name}`
+                : `Week ${region.currentWeek} · ${regionDef.name} · ${region.phase} stage`
         }
       </p>
+
+      {midseasonActive && (
+        <div style={{
+          marginBottom: 24,
+          padding: '18px 22px',
+          background: 'linear-gradient(135deg, rgba(106, 169, 255, 0.10), rgba(64, 130, 220, 0.05))',
+          border: '1px solid rgba(106, 169, 255, 0.35)',
+          borderRadius: 12,
+        }}>
+          <div style={{
+            fontSize: '0.66rem',
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: '#8ab8ff',
+            fontFamily: "'JetBrains Mono', monospace",
+            marginBottom: 8,
+          }}>
+            💼 Free Agency Window Open
+          </div>
+          <div style={{
+            fontSize: '1rem',
+            color: '#e8ecf3',
+            marginBottom: 10,
+            lineHeight: 1.4,
+          }}>
+            Stage {midseasonStageNumber} begins after this. You can sign and release players
+            before the next stage starts. Mid-season cap: <strong>{midseasonUsed} / {midseasonMax}</strong> signings used.
+          </div>
+          <div style={{
+            fontSize: '0.78rem',
+            color: '#8a98b1',
+            fontStyle: 'italic',
+          }}>
+            Visit the Free Agents tab to make signings, or click <strong>Start Stage</strong> in the sidebar when ready.
+          </div>
+        </div>
+      )}
 
       {seasonComplete && (
         <div style={{

@@ -131,6 +131,16 @@ export class Player {
       acs: 0,
       maps: 0,
     };
+
+    // Phase 6h: per-stage stat snapshots within the current season.
+    // Keyed by stage number (1, 2, 3). Populated by snapshotPlayerStageStats()
+    // before each rollover, and at the end of the final stage by
+    // completeCurrentStage(). Reset to {} on new season in beginNewSeason.
+    //
+    // Shape: { 1: {kills, deaths, assists, acs, maps}, 2: {...}, 3: {...} }
+    // Stages without snapshots simply have no key. The Stats UI checks
+    // for presence and only shows selectors for available stages.
+    this.stageStats = {};
   }
 
   calcOverall() {

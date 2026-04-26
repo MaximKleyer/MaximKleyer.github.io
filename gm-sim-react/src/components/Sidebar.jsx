@@ -43,6 +43,8 @@ export default function Sidebar({
   onDeleteSave,
   onStartNewSeason, seasonNumber,
   isOffseason, onStartPreseason, humanRosterSize,
+  // Phase 6f
+  isMidseason, onStartStage, midseasonMovesUsed, midseasonMovesMax,
   godMode, onToggleGodMode,
   // Fast-forward (Phase 6e+ Ask 3)
   hasActiveSeries: ffHasActive,
@@ -55,6 +57,11 @@ export default function Sidebar({
   // directly (disabled when roster < 5). This replaces the intermediate
   // "Go to Offseason" button since the user is already there.
   const offseasonUnderstaffed = isOffseason && (humanRosterSize || 0) < 5;
+
+  // Phase 6f: during a mid-season FA window, show "Start Stage" with the
+  // same understaffed guard as offseason. The cap counter (X/2 signings)
+  // shows in the dashboard banner — sidebar just shows the button.
+  const midseasonUnderstaffed = isMidseason && (humanRosterSize || 0) < 5;
 
   function handleDeleteClick() {
     const ok = typeof window !== 'undefined' && window.confirm(
@@ -161,6 +168,66 @@ export default function Sidebar({
               }}
             >
               ▶ Start Preseason
+            </button>
+          </>
+        ) : isMidseason ? (
+          <>
+            <div id="week-display" style={{ textAlign: 'center', marginBottom: 6 }}>
+              💼 FA Window
+            </div>
+            <div style={{
+              textAlign: 'center',
+              fontSize: '0.62rem',
+              color: '#8ab8ff',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '0.08em',
+              marginBottom: 6,
+            }}>
+              {(midseasonMovesUsed || 0)}/{midseasonMovesMax || 2} SIGNINGS
+            </div>
+            {midseasonUnderstaffed ? (
+              <div style={{
+                textAlign: 'center',
+                fontSize: '0.64rem',
+                color: 'var(--accent, #ff4655)',
+                marginBottom: 6,
+                padding: '0 4px',
+                lineHeight: 1.3,
+              }}>
+                ⚠ Sign {5 - (humanRosterSize || 0)} more player{5 - (humanRosterSize || 0) > 1 ? 's' : ''} to continue
+              </div>
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                fontSize: '0.64rem',
+                color: '#8a98b1',
+                marginBottom: 8,
+                padding: '0 4px',
+                lineHeight: 1.3,
+              }}>
+                Roster set — ready to begin
+              </div>
+            )}
+            <button
+              onClick={onStartStage}
+              disabled={midseasonUnderstaffed}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: midseasonUnderstaffed ? '#3a4152' : '#3461d4',
+                border: midseasonUnderstaffed
+                  ? '1px solid #3a4152'
+                  : '1px solid #3461d4',
+                color: midseasonUnderstaffed ? '#6f7d93' : '#fff',
+                borderRadius: 4,
+                cursor: midseasonUnderstaffed ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+              }}
+            >
+              ▶ Start Stage
             </button>
           </>
         ) : phase === 'group' ? (

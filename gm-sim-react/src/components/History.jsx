@@ -20,6 +20,7 @@
 
 import { useState } from 'react';
 import { REGION_KEYS } from '../data/regions.js';
+import { flagClass, nationalityName } from '../data/nationalities.js';
 import RegionSelector from './RegionSelector.jsx';
 import MatchCard from './MatchCard.jsx';
 
@@ -511,9 +512,52 @@ function EventList({ history, archive, currentYear, selectedKey, onSelect, circu
                     </button>
                   );
                 })}
+                {isExpanded && arch.offseasonSummary && (
+                  <button
+                    key={`archive-${arch.year}-offseason`}
+                    onClick={() => onSelect(`archive-${arch.year}-offseason`)}
+                    style={{
+                      ...navBtn(`archive-${arch.year}-offseason` === selectedKey),
+                      paddingLeft: 24,
+                    }}
+                  >
+                    Offseason Summary
+                    <div style={navBtnSubtext}>retirements & development</div>
+                  </button>
+                )}
+                {isExpanded && arch.statsSnapshot && (
+                  <button
+                    key={`archive-${arch.year}-stats`}
+                    onClick={() => onSelect(`archive-${arch.year}-stats`)}
+                    style={{
+                      ...navBtn(`archive-${arch.year}-stats` === selectedKey),
+                      paddingLeft: 24,
+                    }}
+                  >
+                    Stats
+                    <div style={navBtnSubtext}>per-stage leaders</div>
+                  </button>
+                )}
               </div>
             );
           })}
+
+          {/* Phase 6g: Hall of Fame across all archived seasons */}
+          {archivedSeasons.some(a => a.offseasonSummary?.retirees?.length > 0) && (
+            <button
+              onClick={() => onSelect('hall-of-fame')}
+              style={{
+                ...navBtn('hall-of-fame' === selectedKey),
+                marginTop: 8,
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <span style={{ color: 'var(--gold, #ffd166)', fontWeight: 600 }}>
+                🏆 Hall of Fame
+              </span>
+              <div style={navBtnSubtext}>retired players</div>
+            </button>
+          )}
         </div>
       )}
     </nav>
@@ -1032,6 +1076,578 @@ function WorldsDetail({ entry, gameState }) {
   );
 }
 
+/* ─────────────── Offseason Summary detail (Phase 6g) ─────────────── */
+
+function OffseasonSummaryDetail({ archEntry }) {
+  const summary = archEntry.offseasonSummary;
+  const year = archEntry.year;
+
+  if (!summary) {
+    return (
+      <div className="empty-state">
+        <p>No offseason data archived for Season {year}.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          This save predates Phase 6g — only seasons completed afterward
+          will have offseason summaries.
+        </p>
+      </div>
+    );
+  }
+
+  const retirees = summary.retirees || [];
+  const gainers = summary.biggestGainers || [];
+  const losers = summary.biggestLosers || [];
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Season {year} → {year + 1} Offseason</h3>
+
+      {/* Top stat strip — at-a-glance counts */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+        gap: 10,
+        marginBottom: 20,
+      }}>
+        <StatTile label="Retirements" value={summary.retiredCount || 0} accent="#ff8c95" />
+        <StatTile label="Rookies generated" value={summary.rookiesGenerated || 0} accent="#8ab8ff" />
+        <StatTile label="AI signings" value={summary.aiSigningsCount || 0} accent="#a3d977" />
+        <StatTile label="Players developed" value={summary.developedCount || 0} accent="#cdb6f2" />
+      </div>
+
+      {/* Movers */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 16,
+        marginBottom: 20,
+      }}>
+        <MoverPanel title="Biggest Gainers" players={gainers} positive />
+        <MoverPanel title="Biggest Losers" players={losers} positive={false} />
+      </div>
+
+      {/* Retirees for this season */}
+      {retirees.length > 0 && (
+        <>
+          <div style={subHeader}>Retired this offseason ({retirees.length})</div>
+          <div style={card}>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={th}>Tag</th>
+                  <th style={th}>Name</th>
+                  <th style={th}>Nat</th>
+                  <th style={th}>Age</th>
+                  <th style={th}>OVR</th>
+                  <th style={th}>Last team</th>
+                </tr>
+              </thead>
+              <tbody>
+                {retirees.map((r, i) => (
+                  <tr key={i}>
+                    <td style={td}><strong>{r.tag}</strong></td>
+                    <td style={td}>{r.name}</td>
+                    <td style={td}>
+                      {r.nationality && (
+                        <span
+                          className={`fi ${flagClass(r.nationality)}`}
+                          title={nationalityName(r.nationality)}
+                        />
+                      )}
+                    </td>
+                    <td style={td}>{r.age}</td>
+                    <td style={td}>{r.overall}</td>
+                    <td style={td}>
+                      {r.wasFA ? (
+                        <span style={{ color: '#6f7d93', fontStyle: 'italic' }}>FA</span>
+                      ) : (
+                        <>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 10,
+                              height: 10,
+                              borderRadius: 2,
+                              background: r.teamColor || '#444',
+                              marginRight: 6,
+                              verticalAlign: 'middle',
+                            }}
+                          />
+                          {r.teamAbbr}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatTile({ label, value, accent }) {
+  return (
+    <div style={{
+      padding: '12px 14px',
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 8,
+    }}>
+      <div style={{
+        fontSize: '0.6rem',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        color: '#8a98b1',
+        fontFamily: "'JetBrains Mono', monospace",
+        marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: '1.6rem',
+        fontWeight: 700,
+        color: accent || '#fff',
+      }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function MoverPanel({ title, players, positive }) {
+  return (
+    <div style={card}>
+      <div style={{
+        ...sectionHeader,
+        marginBottom: 0,
+        padding: '10px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        {title}
+      </div>
+      {players.length === 0 ? (
+        <div style={{ padding: 14, color: '#6f7d93', fontSize: '0.85rem' }}>
+          No data
+        </div>
+      ) : (
+        <table style={table}>
+          <tbody>
+            {players.map((p, i) => {
+              const delta = p.delta || 0;
+              const deltaColor = delta > 0 ? '#a3d977' : delta < 0 ? '#ff8c95' : '#8a98b1';
+              const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+              return (
+                <tr key={i}>
+                  <td style={td}><strong>{p.tag}</strong></td>
+                  <td style={td}>{p.name}</td>
+                  <td style={{ ...td, color: '#8a98b1', width: 50 }}>{p.overall}</td>
+                  <td style={{ ...td, color: deltaColor, fontWeight: 600, width: 50, textAlign: 'right' }}>
+                    {deltaStr}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Archived per-season stats detail (Phase 6h-B) ─────────────── */
+
+/**
+ * Resolve the stat object for one archived player given a stage filter.
+ * Mirror of resolveStats() in Stats.jsx but reads from a stored
+ * snapshot (no live `player.stats` to merge in — the season is over).
+ *
+ * Filter values: 1 / 2 / 3 / 'season' (sums all populated stages).
+ */
+function resolveArchivedStats(playerEntry, filter) {
+  const stageStats = playerEntry.stageStats || {};
+
+  if (filter === 'season') {
+    const totals = { kills: 0, deaths: 0, assists: 0, acs: 0, maps: 0 };
+    for (const num of Object.keys(stageStats)) {
+      const s = stageStats[num];
+      totals.kills   += s.kills   || 0;
+      totals.deaths  += s.deaths  || 0;
+      totals.assists += s.assists || 0;
+      totals.acs     += s.acs     || 0;
+      totals.maps    += s.maps    || 0;
+    }
+    return finalizeStats(totals);
+  }
+
+  const snap = stageStats[filter];
+  if (snap) return finalizeStats(snap);
+  return finalizeStats({ kills: 0, deaths: 0, assists: 0, acs: 0, maps: 0 });
+}
+
+function finalizeStats(s) {
+  const kd = s.deaths === 0 ? s.kills : +(s.kills / s.deaths).toFixed(2);
+  const avgAcs = s.maps === 0 ? 0 : Math.round(s.acs / s.maps);
+  return { ...s, kd, avgAcs };
+}
+
+function ArchivedStatsDetail({ archEntry }) {
+  const [sortKey, setSortKey] = useState('kills');
+  const [stageFilter, setStageFilter] = useState('season');
+  const [region, setRegion] = useState('all');
+
+  const snapshot = archEntry.statsSnapshot;
+  const year = archEntry.year;
+
+  if (!snapshot) {
+    return (
+      <div className="empty-state">
+        <p>No stats archived for Season {year}.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          This save predates Phase 6h — only seasons completed afterward
+          will have per-season stats.
+        </p>
+      </div>
+    );
+  }
+
+  // Determine which stages have data. Walk every player; collect stage
+  // numbers seen in their stageStats.
+  const availableStages = new Set();
+  for (const rk of REGION_KEYS) {
+    for (const p of (snapshot[rk] || [])) {
+      for (const num of Object.keys(p.stageStats || {})) {
+        availableStages.add(Number(num));
+      }
+    }
+  }
+  const stages = [...availableStages].sort((a, b) => a - b);
+
+  const effectiveFilter = (stageFilter === 'season' || availableStages.has(stageFilter))
+    ? stageFilter
+    : 'season';
+
+  // Gather players from selected region(s)
+  const regionKeys = region === 'all' ? REGION_KEYS : [region];
+  const rows = [];
+  for (const rk of regionKeys) {
+    for (const p of (snapshot[rk] || [])) {
+      const stats = resolveArchivedStats(p, effectiveFilter);
+      rows.push({ p, stats, regionKey: rk });
+    }
+  }
+
+  rows.sort((a, b) => {
+    switch (sortKey) {
+      case 'kd': return b.stats.kd - a.stats.kd;
+      case 'avgAcs': return b.stats.avgAcs - a.stats.avgAcs;
+      case 'maps': return b.stats.maps - a.stats.maps;
+      default: return (b.stats[sortKey] || 0) - (a.stats[sortKey] || 0);
+    }
+  });
+
+  const sortOptions = [
+    { key: 'kills', label: 'Kills' },
+    { key: 'deaths', label: 'Deaths' },
+    { key: 'assists', label: 'Assists' },
+    { key: 'kd', label: 'K/D' },
+    { key: 'avgAcs', label: 'ACS' },
+    { key: 'maps', label: 'Maps' },
+  ];
+
+  const filterLabel = effectiveFilter === 'season' ? 'Season Total' : `Stage ${effectiveFilter}`;
+
+  const stageBtnStyle = (active) => ({
+    padding: '5px 12px',
+    background: active ? 'var(--accent, #ff4655)' : 'rgba(255,255,255,0.03)',
+    border: active ? '1px solid var(--accent, #ff4655)' : '1px solid rgba(255,255,255,0.08)',
+    color: active ? '#fff' : '#cdd5e5',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: '0.66rem',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    marginRight: 6,
+  });
+
+  // Region row (replaces RegionSelector since this is in History view)
+  const regionBtnStyle = (active) => ({
+    ...stageBtnStyle(active),
+  });
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Season {year} Stats</h3>
+      <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 14 }}>
+        Player stat leaders from Season {year}. Filter by stage or view season totals.
+      </p>
+
+      {/* Region selector */}
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          Region
+        </span>
+        <button onClick={() => setRegion('all')} style={regionBtnStyle(region === 'all')}>All</button>
+        {REGION_KEYS.map(rk => (
+          <button key={rk} onClick={() => setRegion(rk)} style={regionBtnStyle(region === rk)}>
+            {rk.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      {/* Stage filter */}
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          View
+        </span>
+        {stages.map(num => (
+          <button key={num} onClick={() => setStageFilter(num)} style={stageBtnStyle(effectiveFilter === num)}>
+            Stage {num}
+          </button>
+        ))}
+        <button onClick={() => setStageFilter('season')} style={stageBtnStyle(effectiveFilter === 'season')}>
+          Season Total
+        </button>
+      </div>
+
+      <p className="muted" style={{ fontSize: '0.78rem', marginBottom: 10 }}>
+        Showing: <strong style={{ color: '#cdd5e5' }}>{filterLabel}</strong>
+      </p>
+
+      {/* Sort buttons */}
+      <div className="sort-buttons" style={{ marginBottom: 10 }}>
+        {sortOptions.map(opt => (
+          <button
+            key={opt.key}
+            className={sortKey === opt.key ? 'active' : ''}
+            onClick={() => setSortKey(opt.key)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={card}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={th}>#</th>
+              <th style={th}>Player</th>
+              <th style={th}>Team</th>
+              {region === 'all' && <th style={th}>Region</th>}
+              <th style={th}>Nat</th>
+              <th style={th}>Age</th>
+              <th style={th}>Maps</th>
+              <th style={th}>K</th>
+              <th style={th}>D</th>
+              <th style={th}>A</th>
+              <th style={th}>K/D</th>
+              <th style={th}>ACS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ p, stats, regionKey }, i) => (
+              <tr key={`${regionKey}-${p.tag}-${i}`}>
+                <td style={td}>{i + 1}</td>
+                <td style={td}><strong>{p.tag}</strong></td>
+                <td style={td}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 10,
+                      height: 10,
+                      borderRadius: 2,
+                      background: p.teamColor || '#444',
+                      marginRight: 6,
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                  {p.teamAbbr}
+                </td>
+                {region === 'all' && <td style={{ ...td, color: '#8a98b1' }}>{regionKey.toUpperCase()}</td>}
+                <td style={td} title={nationalityName(p.nationality)}>
+                  {p.nationality && (
+                    <span className={`fi ${flagClass(p.nationality)}`} />
+                  )}
+                </td>
+                <td style={td}>{p.age}</td>
+                <td style={td}>{stats.maps}</td>
+                <td style={td}>{stats.kills}</td>
+                <td style={td}>{stats.deaths}</td>
+                <td style={td}>{stats.assists}</td>
+                <td style={td}>{stats.kd}</td>
+                <td style={td}>{stats.avgAcs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Hall of Fame (Phase 6g) ─────────────── */
+
+function HallOfFame({ archive }) {
+  const [sortKey, setSortKey] = useState('year');
+
+  // Aggregate retirees across all archived seasons. Retiree cards already
+  // include `year` and team metadata, so we can render directly.
+  const all = [];
+  for (const arch of archive) {
+    const retirees = arch.offseasonSummary?.retirees || [];
+    for (const r of retirees) all.push(r);
+  }
+
+  if (all.length === 0) {
+    return (
+      <div className="empty-state">
+        <p>The Hall of Fame is empty.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          Players appear here when they retire during the offseason.
+          Run more seasons to populate it.
+        </p>
+      </div>
+    );
+  }
+
+  const sorted = [...all].sort((a, b) => {
+    switch (sortKey) {
+      case 'overall': return (b.overall || 0) - (a.overall || 0);
+      case 'age': return (b.age || 0) - (a.age || 0);
+      case 'tag': return (a.tag || '').localeCompare(b.tag || '');
+      case 'year':
+      default: return (b.year || 0) - (a.year || 0);
+    }
+  });
+
+  function SortBtn({ label, value }) {
+    const active = sortKey === value;
+    return (
+      <button
+        onClick={() => setSortKey(value)}
+        style={{
+          padding: '5px 10px',
+          background: active ? 'var(--accent, #ff4655)' : 'rgba(255,255,255,0.03)',
+          border: active ? '1px solid var(--accent, #ff4655)' : '1px solid rgba(255,255,255,0.08)',
+          color: active ? '#fff' : '#cdd5e5',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '0.66rem',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          marginRight: 6,
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>
+        🏆 <span style={{ color: 'var(--gold, #ffd166)' }}>Hall of Fame</span>
+      </h3>
+      <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 14 }}>
+        {all.length} retired player{all.length === 1 ? '' : 's'} across {archive.length} season{archive.length === 1 ? '' : 's'}.
+      </p>
+
+      <div style={{ marginBottom: 12 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          Sort by
+        </span>
+        <SortBtn label="Year" value="year" />
+        <SortBtn label="OVR" value="overall" />
+        <SortBtn label="Age" value="age" />
+        <SortBtn label="Tag" value="tag" />
+      </div>
+
+      <div style={card}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={th}>Year</th>
+              <th style={th}>Tag</th>
+              <th style={th}>Name</th>
+              <th style={th}>Nat</th>
+              <th style={th}>Age</th>
+              <th style={th}>OVR</th>
+              <th style={th}>Last team</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr key={i}>
+                <td style={{ ...td, color: '#8a98b1', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem' }}>
+                  {r.year}
+                </td>
+                <td style={td}><strong>{r.tag}</strong></td>
+                <td style={td}>{r.name}</td>
+                <td style={td}>
+                  {r.nationality && (
+                    <span
+                      className={`fi ${flagClass(r.nationality)}`}
+                      title={nationalityName(r.nationality)}
+                    />
+                  )}
+                </td>
+                <td style={td}>{r.age}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{r.overall}</td>
+                <td style={td}>
+                  {r.wasFA ? (
+                    <span style={{ color: '#6f7d93', fontStyle: 'italic' }}>FA</span>
+                  ) : (
+                    <>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 10,
+                          height: 10,
+                          borderRadius: 2,
+                          background: r.teamColor || '#444',
+                          marginRight: 6,
+                          verticalAlign: 'middle',
+                        }}
+                      />
+                      {r.teamAbbr}
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /* ─────────────── Main component ─────────────── */
 
 export default function History({ gameState }) {
@@ -1056,23 +1672,46 @@ export default function History({ gameState }) {
 
   if (selectedKey === 'overview') {
     detail = <SeasonOverview gameState={gameState} />;
+  } else if (selectedKey === 'hall-of-fame') {
+    detail = <HallOfFame archive={archive} />;
   } else if (selectedKey.startsWith('archive-')) {
-    // Parse archive key. Format: archive-{year}-{type}-{slotIndex}
-    // Year is always numeric, type is always one of stage/international/worlds.
-    const m = selectedKey.match(/^archive-(\d+)-(stage|international|worlds)-(\d+)$/);
-    if (m) {
-      const year = parseInt(m[1], 10);
-      const eventType = m[2];
-      const slotIdx = parseInt(m[3], 10);
+    // Phase 6g: dedicated key for offseason summary panels.
+    // Format: archive-{year}-offseason
+    const offseasonMatch = selectedKey.match(/^archive-(\d+)-offseason$/);
+    if (offseasonMatch) {
+      const year = parseInt(offseasonMatch[1], 10);
       const archEntry = archive.find(a => a.year === year);
       if (archEntry) {
-        const found = (archEntry.history || []).find(
-          e => e.type === eventType && e.slotIndex === slotIdx
-        );
-        if (found) {
-          if (found.type === 'stage') detail = <StageDetail entry={found} gameState={gameState} />;
-          else if (found.type === 'international') detail = <InternationalDetail entry={found} gameState={gameState} />;
-          else if (found.type === 'worlds') detail = <WorldsDetail entry={found} gameState={gameState} />;
+        detail = <OffseasonSummaryDetail archEntry={archEntry} />;
+      }
+    } else {
+      // Phase 6h-B: archived per-season stats.
+      // Format: archive-{year}-stats
+      const statsMatch = selectedKey.match(/^archive-(\d+)-stats$/);
+      if (statsMatch) {
+        const year = parseInt(statsMatch[1], 10);
+        const archEntry = archive.find(a => a.year === year);
+        if (archEntry) {
+          detail = <ArchivedStatsDetail archEntry={archEntry} />;
+        }
+      } else {
+        // Parse archive event key. Format: archive-{year}-{type}-{slotIndex}
+        const m = selectedKey.match(/^archive-(\d+)-(stage|international|worlds)-(\d+)$/);
+        if (m) {
+          const year = parseInt(m[1], 10);
+          const eventType = m[2];
+          const slotIdx = parseInt(m[3], 10);
+          const archEntry = archive.find(a => a.year === year);
+          if (archEntry) {
+            const found = (archEntry.history || []).find(
+              e => e.type === eventType && e.slotIndex === slotIdx
+            );
+            if (found) {
+              if (found.type === 'stage') detail = <StageDetail entry={found} gameState={gameState} />;
+              else if (found.type === 'international') detail = <InternationalDetail entry={found} gameState={gameState} />;
+              else if (found.type === 'worlds') detail = <WorldsDetail entry={found} gameState={gameState} />;
+            }
+          }
         }
       }
     }

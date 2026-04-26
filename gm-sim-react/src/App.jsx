@@ -18,6 +18,11 @@ import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
 import { runReactiveAISignings } from './engine/offseason.js';
 import {
+  runMidseasonReactiveSignings,
+  midseasonMovesRemaining,
+  MAX_MIDSEASON_MOVES_PER_SEASON,
+} from './engine/midseason.js';
+import {
   ensureActiveSeries,
   hasActiveSeries,
   seedActiveSeries,
@@ -254,6 +259,9 @@ export default function App() {
   // Phase 6e: the offseason view is active. User is reviewing retirees,
   // managing roster, and will click "Start Preseason" when ready.
   const offseasonActive = seasonStatus === 'offseason-active';
+  // Phase 6f: a mid-season FA window is open. User can sign/release within
+  // a 2-signing season cap, then clicks "Start Stage" to flip to active.
+  const midseasonActive = seasonStatus === 'mid-season-fa';
 
   // Determine overall phase: if human region is in bracket, we're in bracket mode
   const isGroupPhase = humanRegionData.phase === 'group';
@@ -285,7 +293,7 @@ export default function App() {
     // Block advancement while the transition screen is up or circuit is done.
     // Phase 6e: also block during offseason-active — user must click
     // "Start Preseason" from the Offseason view to progress.
-    if (inTransition || circuitComplete || offseasonActive) return;
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive) return;
 
     // During international selection show, block advance while waiting for human
     if (isAwaitingHumanPick(gameState)) return;
@@ -665,6 +673,17 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
+  // Phase 6f: closes the mid-season FA window. Mirror of handleStartPreseason.
+  // Only valid in 'mid-season-fa' status. Requires roster ≥ 5 (same guard as
+  // start-preseason). Flips status back to 'active' so advance works again.
+  function handleStartStage() {
+    if (gameState.season?.status !== 'mid-season-fa') return;
+    if (humanTeam.roster.length < 5) return; // defensive
+    gameState.season.status = 'active';
+    setCurrentView('dashboard');
+    setGameState(prev => ({ ...prev }));
+  }
+
   // ── Fast-forward handlers (Phase 6e+ Ask 3) ──
   // Sim Series — finishes the current round (group week / bracket stage /
   // intl Swiss round / intl bracket stage / worlds groups round / worlds
@@ -684,7 +703,7 @@ export default function App() {
   // Otherwise if activeSeries became empty, we just resolved the current
   // round → break to stop before seeding the next one.
   function handleSimSeries() {
-    if (inTransition || circuitComplete || offseasonActive) return;
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive) return;
     if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return;
 
     // Snapshot used to detect "did anything change?" between iterations.
@@ -1065,20 +1084,37 @@ export default function App() {
   // ── Roster ──
   function signPlayer(player) {
     if (humanTeam.rosterFull) return;
+    // Phase 6f: during a mid-season FA window, enforce the season-wide
+    // 2-signing cap on the user. Offseason has unlimited signings (the
+    // cap only applies mid-season for now — future cap-space work will
+    // generalize this).
+    if (midseasonActive) {
+      const used = humanTeam._midseasonMoves || 0;
+      if (used >= MAX_MIDSEASON_MOVES_PER_SEASON) {
+        setToast({
+          type: 'info',
+          message: `Mid-season cap reached (${used}/${MAX_MIDSEASON_MOVES_PER_SEASON} signings).`,
+        });
+        return;
+      }
+    }
     humanTeam.addPlayer(player);
     humanTeam.validateStrategy();
     const region = gameState.regions[gameState.humanRegion];
     region.freeAgents = region.freeAgents.filter(p => p !== player);
+    if (midseasonActive) {
+      humanTeam._midseasonMoves = (humanTeam._midseasonMoves || 0) + 1;
+    }
     setGameState(prev => ({ ...prev }));
   }
 
   function releasePlayer(player) {
     // During regular season, enforce the 5-player minimum to prevent the
     // user from accidentally going understrength mid-year. During the
-    // offseason, allow going below 5 — the user might want to release
-    // then sign, and the Start Preseason button is the safeguard that
-    // prevents starting with <5.
-    if (!offseasonActive && humanTeam.atMinRoster) return;
+    // offseason OR a mid-season FA window, allow going below 5 — the user
+    // might want to release then sign, and the Start Preseason / Start
+    // Stage buttons are the safeguard that prevent starting with <5.
+    if (!offseasonActive && !midseasonActive && humanTeam.atMinRoster) return;
     humanTeam.removePlayer(player);
     humanTeam.validateStrategy();
     gameState.regions[gameState.humanRegion].freeAgents.push(player);
@@ -1092,6 +1128,20 @@ export default function App() {
       const newMoves = runReactiveAISignings(gameState, player);
       if (newMoves.length > 0) {
         // Small toast so the user knows AI teams moved in response
+        const first = newMoves[0];
+        const extra = newMoves.length > 1 ? ` (+${newMoves.length - 1} more move${newMoves.length > 2 ? 's' : ''})` : '';
+        setToast({
+          type: 'info',
+          message: `${first.teamAbbr} signed ${first.signed.tag}${extra}`,
+        });
+      }
+    }
+
+    // Phase 6f: same reactive flow during mid-season FA windows. Different
+    // engine entry point (uses _midseasonMoves cap, writes to aiMidseasonLog).
+    if (midseasonActive) {
+      const newMoves = runMidseasonReactiveSignings(gameState, player);
+      if (newMoves.length > 0) {
         const first = newMoves[0];
         const extra = newMoves.length > 1 ? ` (+${newMoves.length - 1} more move${newMoves.length > 2 ? 's' : ''})` : '';
         setToast({
@@ -1200,15 +1250,25 @@ export default function App() {
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive || midseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'freeagents':
-        return <FreeAgents freeAgents={humanRegionData.freeAgents} canSign={!humanTeam.rosterFull} onSign={signPlayer} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
+        return <FreeAgents
+          freeAgents={humanRegionData.freeAgents}
+          canSign={!humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
+          onSign={signPlayer}
+          godMode={!!gameState.godMode}
+          onEditPlayer={handleEditPlayer}
+          midseasonInfo={midseasonActive ? {
+            used: humanTeam._midseasonMoves || 0,
+            max: MAX_MIDSEASON_MOVES_PER_SEASON,
+          } : null}
+        />;
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'bracket':
         return <Bracket regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'stats':
-        return <Stats regions={gameState.regions} viewRegion={vr} onChangeRegion={setViewRegion} />;
+        return <Stats regions={gameState.regions} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'points':
         return <Points gameState={gameState} viewRegion={vr} onChangeRegion={setViewRegion} />;
       case 'history':
@@ -1259,13 +1319,17 @@ export default function App() {
         isOffseason={offseasonActive}
         onStartPreseason={handleStartPreseason}
         humanRosterSize={humanTeam.roster.length}
+        isMidseason={midseasonActive}
+        onStartStage={handleStartStage}
+        midseasonMovesUsed={humanTeam._midseasonMoves || 0}
+        midseasonMovesMax={MAX_MIDSEASON_MOVES_PER_SEASON}
         godMode={!!gameState.godMode}
         onToggleGodMode={handleToggleGodMode}
         hasActiveSeries={(() => {
           // Sim Series available any time games are playable — not just
           // when series are mid-flight. Same conditions as the regular
           // Advance button being enabled.
-          if (inTransition || circuitComplete || offseasonActive) return false;
+          if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
           if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return false;
           const slot = getCurrentSlot(gameState);
           if (slot?.type === 'international' || slot?.type === 'worlds') return true;
@@ -1275,7 +1339,7 @@ export default function App() {
         })()}
         canSimGroup={REGION_KEYS.some(k => gameState.regions[k].phase === 'group') && !inTransition && !circuitComplete && !offseasonActive}
         canSimPlayoffs={(() => {
-          if (inTransition || circuitComplete || offseasonActive) return false;
+          if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
           const slot = getCurrentSlot(gameState);
           if (slot?.type === 'international' || slot?.type === 'worlds') return true;
           // Stage slot — only show "Sim Playoffs" when in bracket phase

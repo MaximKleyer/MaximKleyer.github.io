@@ -143,6 +143,25 @@ export function runReactiveAISignings(gameState, releasedPlayer) {
 }
 
 /**
+ * The shared probability tables + internal helpers, exposed so the
+ * midseason engine can reuse the exact same dice rolls and execution
+ * logic. Keeping these in one place means archetype balance changes
+ * only need to happen here.
+ *
+ * Underscore-prefixed to flag "engine-internal, not for general
+ * consumption." They were originally private to this file; midseason
+ * needed the same logic so they're now shared.
+ */
+export { OUTER_ROLL as _OUTER_ROLL, INNER_SIGN_CHANCE as _INNER_SIGN_CHANCE };
+export {
+  rollMoveCount as _rollMoveCount,
+  attemptSigning as _attemptSigning,
+  matchesCriteria as _matchesCriteria,
+  chooseReleaseTarget as _chooseReleaseTarget,
+  executeSwap as _executeSwap,
+};
+
+/**
  * Roll against OUTER_ROLL to determine how many signings this team will
  * attempt this offseason. Returns 0, 1, or 2.
  */
@@ -168,7 +187,7 @@ function rollMoveCount() {
  * Atomic execution means: identify FA + target-to-release FIRST, then swap
  * them in one go. Never leaves roster below ROSTER_MIN.
  */
-function attemptSigning(team, region, gameState) {
+function attemptSigning(team, region, gameState, logKey = 'aiOffseasonLog') {
   const archetype = archetypeFor(team);
   if (team.roster.length === 0) return false;
 
@@ -197,7 +216,7 @@ function attemptSigning(team, region, gameState) {
     // Atomic swap — release first (so addPlayer doesn't blow past roster max),
     // then sign. If anything failed mid-swap we'd want to roll back, but
     // both operations are in-memory array ops that can't fail.
-    executeSwap(team, region, toRelease, fa, gameState);
+    executeSwap(team, region, toRelease, fa, gameState, logKey);
     return true;
   }
 
@@ -279,9 +298,12 @@ function chooseReleaseTarget(team, archetype) {
 
 /**
  * Execute the atomic release + sign. Mutates team.roster, region.freeAgents,
- * and appends a log entry to season.aiOffseasonLog.
+ * and appends a log entry. The log target is parameterized via `logKey`
+ * so the same executor can be used for offseason (logKey='aiOffseasonLog')
+ * and mid-season (logKey='aiMidseasonLog') without duplicating the swap
+ * logic. Defaults to the offseason log for backward compat.
  */
-function executeSwap(team, region, releasePlayer, signPlayer, gameState) {
+function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey = 'aiOffseasonLog') {
   // Remove release player from roster, add to FA pool
   const rIdx = team.roster.indexOf(releasePlayer);
   if (rIdx === -1) return; // defensive
@@ -302,8 +324,12 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState) {
   // Clean up any stale strategy assignment for the released player
   team.validateStrategy();
 
-  // Log the move for the Offseason view to display
-  gameState.season.aiOffseasonLog.push({
+  // Ensure log array exists, then append entry. Same shape regardless of
+  // which log we're appending to — UI displays both identically.
+  if (!Array.isArray(gameState.season[logKey])) {
+    gameState.season[logKey] = [];
+  }
+  gameState.season[logKey].push({
     teamAbbr: team.abbr,
     teamName: team.name,
     teamColor: team.color,
