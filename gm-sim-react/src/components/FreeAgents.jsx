@@ -1,24 +1,17 @@
 /**
- * FreeAgents.jsx — Lists unsigned players, sorted by overall, with sign buttons.
+ * FreeAgents.jsx — Lists unsigned players with a contract negotiation flow.
  *
- * ═══════════════════════════════════════════════════════════════
- * REACT CONCEPT: Local State vs Lifted State
- * ═══════════════════════════════════════════════════════════════
+ * Phase 7b adds:
+ *   - Morale tier column for each FA
+ *   - Sign flow: clicking "Sign" opens a modal with salary + years inputs.
+ *     User submits offer; if it meets the player's hidden ask, the
+ *     signing succeeds; otherwise the modal stays open with a tier hint
+ *     ("market" / "premium" / "demanding") so the user can adjust.
+ *   - Cap awareness: signings that would exceed the team's cap are
+ *     blocked at the offer stage, before the ask check.
  *
- * Not all state needs to live in the parent (App.jsx).
- * The "sort by" selection only matters to THIS component — no other
- * component cares which column the free agent list is sorted by.
- * So we keep it as LOCAL state here with its own useState.
- *
- * Rule of thumb:
- *   - Does multiple components need this data? → lift to parent
- *   - Does only this component care? → keep it local
- *
- * The freeAgents array and signPlayer action affect the whole app,
- * so those live in App.jsx and arrive here as props.
- * The sortKey is purely a UI concern, so it stays here.
- *
- * ═══════════════════════════════════════════════════════════════
+ * The modal collects an offer object and passes it to App.jsx via the
+ * onSign callback. Phase 7a's resolveOffer handles the actual logic.
  */
 
 import { useState } from 'react';
@@ -26,22 +19,52 @@ import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import {
+  calculateBaseSalary, moraleTier,
+} from '../data/salary.js';
+
+function formatSalary(n) {
+  if (n == null) return '—';
+  return '$' + Math.round(n / 1000) + 'K';
+}
+
+function moraleColor(morale) {
+  const m = morale ?? 65;
+  if (m >= 80) return '#a3d977';
+  if (m >= 60) return '#cdd5e5';
+  if (m >= 40) return '#cdb6f2';
+  if (m >= 20) return '#ffb070';
+  return '#ff8c95';
+}
+
+// Tier hint colors and labels for the rejection feedback in the modal.
+// The KEY here is the gap tier (offer-vs-ask), NOT the ask classification.
+// Tells the user how close their offer was so they can adjust intelligently.
+const GAP_HINT = {
+  way_under:  { label: 'WAY UNDER MARKET — they want a lot more',     color: '#ff8c95' },
+  far_under:  { label: 'FAR BELOW their asking price',                 color: '#ffb070' },
+  close:      { label: 'CLOSE — just bump the offer slightly',         color: '#6aa9ff' },
+};
 
 export default function FreeAgents({
   freeAgents, canSign, onSign,
   godMode = false, onEditPlayer,
   midseasonInfo = null,
+  capRemaining = null, // Phase 7b: how much cap the human team has left
 }) {
-  // Local state — only this component uses sortKey
   const [sortKey, setSortKey] = useState('overall');
+  const [signTarget, setSignTarget] = useState(null);   // player being negotiated with
+  const [offerSalary, setOfferSalary] = useState(0);    // salary input ($K)
+  const [offerYears, setOfferYears] = useState(1);
+  const [lastReject, setLastReject] = useState(null);   // {askTier, capExceeded, reason} from previous attempt
+  const [, forceUpdate] = useState(0);
 
-  // Sort the list (creates a new array, doesn't mutate the original)
   const sorted = [...freeAgents].sort((a, b) => {
     if (sortKey === 'overall') return b.overall - a.overall;
+    if (sortKey === 'morale') return (b.morale ?? 65) - (a.morale ?? 65);
     return (b.ratings[sortKey] || 0) - (a.ratings[sortKey] || 0);
   });
 
-  // Sort button helper — avoids repeating the same JSX 5 times
   const SortBtn = ({ label, value }) => (
     <button
       className={sortKey === value ? 'active' : ''}
@@ -52,6 +75,51 @@ export default function FreeAgents({
   );
 
   const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
+
+  // Open the sign modal with sensible defaults: salary = base for that
+  // OVR, years = 1. User can tweak both.
+  function startNegotiation(player) {
+    if (!canSign) return;
+    const baseK = Math.round(calculateBaseSalary(player.overall) / 1000);
+    setSignTarget(player);
+    setOfferSalary(baseK);
+    setOfferYears(1);
+    setLastReject(null);
+  }
+
+  // Submit the current offer. Calls onSign with the offer; App.jsx's
+  // signPlayer resolves it and reports back via window state. If the
+  // call returns a result object (accepted/rejected), we react here.
+  function submitOffer() {
+    if (!signTarget) return;
+    const offer = {
+      salary: offerSalary * 1000,
+      years: offerYears,
+    };
+    const result = onSign(signTarget, offer);
+    if (result?.accepted) {
+      // Modal closes; signTarget will be removed from the FA list on
+      // next render via the parent's state update
+      setSignTarget(null);
+      setLastReject(null);
+    } else if (result?.capExceeded) {
+      setLastReject({ capExceeded: true });
+      forceUpdate(n => n + 1);
+    } else if (result) {
+      // Rejected — show the gap tier so user can adjust intelligently.
+      // The hint describes how close the offer was to the ask, NOT the
+      // market position of the ask itself.
+      setLastReject({
+        gapTier: result.gapTier,
+        reason: result.reason,
+      });
+      forceUpdate(n => n + 1);
+    }
+  }
+
+  // Total commitment if the current offer is accepted
+  const totalCommit = (offerSalary * 1000) * offerYears;
+  const exceedsCap = capRemaining != null && (offerSalary * 1000) > capRemaining;
 
   return (
     <>
@@ -95,9 +163,9 @@ export default function FreeAgents({
         </div>
       )}
 
-      {/* Sort buttons */}
       <div className="sort-buttons">
         <SortBtn label="Overall" value="overall" />
+        <SortBtn label="Morale" value="morale" />
         <SortBtn label="Aim" value="aim" />
         <SortBtn label="Positioning" value="positioning" />
         <SortBtn label="Utility" value="utility" />
@@ -110,6 +178,7 @@ export default function FreeAgents({
           <tr>
             <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
+            <th>Morale</th>
             <th></th>
           </tr>
         </thead>
@@ -163,10 +232,18 @@ export default function FreeAgents({
                 <DeltaIndicator delta={d?.clutch} size="small" />
               </td>
               <td>
+                <span
+                  title={`Morale ${player.morale ?? 65}`}
+                  style={{ color: moraleColor(player.morale), fontWeight: 500 }}
+                >
+                  {moraleTier(player.morale)}
+                </span>
+              </td>
+              <td>
                 <button
                   className="btn-small"
                   disabled={!canSign}
-                  onClick={() => onSign(player)}
+                  onClick={() => startNegotiation(player)}
                 >
                   {canSign ? 'Sign' : 'Full'}
                 </button>
@@ -176,6 +253,226 @@ export default function FreeAgents({
           })}
         </tbody>
       </table>
+
+      {/* Sign / negotiate modal */}
+      {signTarget && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(5, 8, 15, 0.85)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#1a1f2e',
+            border: '1px solid rgba(106, 169, 255, 0.4)',
+            borderRadius: 12,
+            padding: 24,
+            maxWidth: 520,
+            width: '90%',
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              marginBottom: 6,
+            }}>
+              <h3 style={{ margin: 0, color: '#fff' }}>
+                Sign {signTarget.tag}
+              </h3>
+              <span style={{
+                fontSize: '0.78rem',
+                color: '#8a98b1',
+              }}>
+                OVR {signTarget.overall} · Age {signTarget.age}
+              </span>
+            </div>
+            <p style={{
+              color: moraleColor(signTarget.morale),
+              fontSize: '0.85rem',
+              marginTop: 0,
+              marginBottom: 18,
+            }}>
+              Morale: {moraleTier(signTarget.morale)} ({signTarget.morale ?? 65})
+            </p>
+
+            {/* Salary input */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{
+                display: 'block',
+                fontSize: '0.66rem',
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                color: '#8a98b1',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: 6,
+              }}>
+                Salary (per year)
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#cdd5e5', fontFamily: "'JetBrains Mono', monospace" }}>$</span>
+                <input
+                  type="number"
+                  value={offerSalary}
+                  min={0}
+                  max={2000}
+                  step={5}
+                  onChange={e => setOfferSalary(Number(e.target.value) || 0)}
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    color: '#fff',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '1rem',
+                    width: 100,
+                  }}
+                />
+                <span style={{ color: '#cdd5e5', fontFamily: "'JetBrains Mono', monospace" }}>K</span>
+                <span style={{ color: '#8a98b1', fontSize: '0.78rem', marginLeft: 12 }}>
+                  Total: {formatSalary(totalCommit)} over {offerYears}yr
+                </span>
+              </div>
+            </div>
+
+            {/* Years dropdown */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{
+                display: 'block',
+                fontSize: '0.66rem',
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                color: '#8a98b1',
+                fontFamily: "'JetBrains Mono', monospace",
+                marginBottom: 6,
+              }}>
+                Contract Length
+              </label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[1, 2, 3].map(y => (
+                  <button
+                    key={y}
+                    onClick={() => setOfferYears(y)}
+                    style={{
+                      padding: '6px 14px',
+                      background: offerYears === y ? '#3461d4' : 'rgba(255,255,255,0.04)',
+                      border: offerYears === y ? '1px solid #3461d4' : '1px solid rgba(255,255,255,0.15)',
+                      color: offerYears === y ? '#fff' : '#cdd5e5',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    {y} year{y > 1 ? 's' : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Cap warning if applicable */}
+            {exceedsCap && (
+              <div style={{
+                padding: '10px 12px',
+                background: 'rgba(255, 84, 96, 0.10)',
+                border: '1px solid rgba(255, 84, 96, 0.4)',
+                borderRadius: 6,
+                marginBottom: 14,
+                fontSize: '0.85rem',
+                color: '#ff8c95',
+              }}>
+                ⚠ Salary exceeds remaining cap ({formatSalary(capRemaining)} available)
+              </div>
+            )}
+
+            {/* Last reject hint */}
+            {lastReject && !lastReject.capExceeded && (
+              <div style={{
+                padding: '10px 12px',
+                background: `${GAP_HINT[lastReject.gapTier]?.color || '#ff8c95'}15`,
+                border: `1px solid ${GAP_HINT[lastReject.gapTier]?.color || '#ff8c95'}66`,
+                borderRadius: 6,
+                marginBottom: 14,
+                fontSize: '0.85rem',
+              }}>
+                <div style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '0.66rem',
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  color: GAP_HINT[lastReject.gapTier]?.color,
+                  marginBottom: 2,
+                }}>
+                  Offer Rejected
+                </div>
+                <div style={{ color: '#cdd5e5' }}>
+                  {lastReject.reason === 'wants_to_leave'
+                    ? 'This player has decided to leave regardless of offer.'
+                    : (GAP_HINT[lastReject.gapTier]?.label || 'They want more.')}
+                </div>
+              </div>
+            )}
+
+            {lastReject?.capExceeded && (
+              <div style={{
+                padding: '10px 12px',
+                background: 'rgba(255, 84, 96, 0.10)',
+                border: '1px solid rgba(255, 84, 96, 0.4)',
+                borderRadius: 6,
+                marginBottom: 14,
+                fontSize: '0.85rem',
+                color: '#ff8c95',
+              }}>
+                Offer would put your team over the salary cap.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                className="btn-small"
+                onClick={() => { setSignTarget(null); setLastReject(null); }}
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: '#cdd5e5',
+                  padding: '8px 16px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-small"
+                disabled={
+                  exceedsCap ||
+                  (lastReject?.reason === 'wants_to_leave')
+                }
+                onClick={submitOffer}
+                style={{
+                  background: exceedsCap || lastReject?.reason === 'wants_to_leave'
+                    ? '#3a4152'
+                    : '#3461d4',
+                  border: '1px solid #3461d4',
+                  color: '#fff',
+                  padding: '8px 16px',
+                  borderRadius: 4,
+                  cursor: exceedsCap || lastReject?.reason === 'wants_to_leave'
+                    ? 'not-allowed'
+                    : 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Submit Offer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

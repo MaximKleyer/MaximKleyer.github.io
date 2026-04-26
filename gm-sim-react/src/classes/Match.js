@@ -10,6 +10,7 @@
 
 import { SIM } from '../data/constants.js';
 import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
+import { moralePerformanceModifier } from '../data/salary.js';
 
 const ROLE_AGGRESSION = {
   duelist: 1.4, initiator: 1.1, flex: 1.0, controller: 0.8, sentinel: 0.7,
@@ -36,6 +37,11 @@ function getDuelRating(player, assignment) {
   } else {
     base = (r.aim * 0.50) + (r.positioning * 0.20) + (r.gamesense * 0.20) + (r.clutch * 0.10);
   }
+  // Phase 7e: morale modifies effective performance, asymmetric and
+  // bounded ±5%. -5% at morale=0, +3% at morale=100. Applied BEFORE
+  // randomness so the noise window is the same regardless of morale —
+  // the modifier shifts the mean, not the spread.
+  base *= moralePerformanceModifier(player.morale);
   return base + (Math.random() * 16) - 8;
 }
 

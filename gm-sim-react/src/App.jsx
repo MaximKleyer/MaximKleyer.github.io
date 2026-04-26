@@ -11,12 +11,17 @@ import { useState, useEffect, useCallback } from 'react';
 // without each one needing its own stylesheet import.
 import 'flag-icons/css/flag-icons.min.css';
 
-import { initGame, getHumanTeam } from './engine/league.js';
+import { initGame, getHumanTeam, ensureContracts } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
 import { runReactiveAISignings } from './engine/offseason.js';
+import {
+  resolveOffer, calculateBuyout, computeCapRemaining, computeTeamSalary, fitsCap,
+  calculateBaseSalary, adjustMorale,
+  SALARY_CAP,
+} from './data/salary.js';
 import {
   runMidseasonReactiveSignings,
   midseasonMovesRemaining,
@@ -49,6 +54,7 @@ import {
   completeCurrentWorlds,
   beginNextSlot,
   beginNewSeason,
+  closeResignWindowAndBeginOffseason,
   awardGroupStageWin,
 } from './engine/season.js';
 import {
@@ -90,6 +96,7 @@ import International from './components/International.jsx';
 import Worlds from './components/Worlds.jsx';
 import History from './components/History.jsx';
 import Offseason from './components/Offseason.jsx';
+import ResignWindow from './components/ResignWindow.jsx';
 import Toast from './components/Toast.jsx';
 import StageTransition from './components/StageTransition.jsx';
 
@@ -168,6 +175,10 @@ export default function App() {
   function handleTeamSelect(regionKey, teamIndex) {
     const gs = initGame(regionKey, teamIndex);
     gs.season = initSeason(gs);
+    // Phase 7: every freshly generated player needs a contract before
+    // the game starts; cap math depends on it. Run AFTER initSeason
+    // since ensureContracts reads seasonNumber for backdating.
+    ensureContracts(gs);
     setGameState(gs);
     setViewRegion(regionKey);
     setStarted(true);
@@ -235,6 +246,30 @@ export default function App() {
       const n = Math.max(1, Math.min(99, parseInt(value, 10) || 0));
       player.ratings[field] = n;
       player.overall = player.calcOverall();
+    } else if (field === 'salary') {
+      // Phase 7b: God Mode contract salary editing. Stored in dollars
+      // (the editable cell already converts $K → $).
+      const n = Math.max(0, Math.round(parseInt(value, 10) || 0));
+      if (player.contract) {
+        player.contract.salary = n;
+      } else if (n > 0) {
+        // Edge case: if a player has no contract and god-mode adds a
+        // salary, infer a 1-year contract.
+        player.contract = {
+          salary: n,
+          yearsRemaining: 1,
+          signedYear: gameState.seasonNumber || 2025,
+        };
+      }
+    } else if (field === 'yearsRemaining') {
+      // Phase 7b: God Mode contract length editing. 0-3 inclusive; 0
+      // means contract expires this offseason (will go to UFA).
+      const n = Math.max(0, Math.min(3, parseInt(value, 10) || 0));
+      if (player.contract) {
+        player.contract.yearsRemaining = n;
+      }
+      // No defaulting — if the player has no contract, we ignore the
+      // edit. They have to be on a roster to have a contract.
     } else {
       return; // unknown field, ignore
     }
@@ -262,6 +297,11 @@ export default function App() {
   // Phase 6f: a mid-season FA window is open. User can sign/release within
   // a 2-signing season cap, then clicks "Start Stage" to flip to active.
   const midseasonActive = seasonStatus === 'mid-season-fa';
+  // Phase 7d: re-sign window is open between Worlds and Offseason.
+  // User has expiring-contract players to negotiate extensions with.
+  // Clicking "Continue to Offseason" closes the window and runs steps 3-7
+  // (retirements, backfill, rookies, AI signings).
+  const resignWindowActive = seasonStatus === 'resign-window';
 
   // Determine overall phase: if human region is in bracket, we're in bracket mode
   const isGroupPhase = humanRegionData.phase === 'group';
@@ -656,6 +696,61 @@ export default function App() {
   // (aging, retirements, rookies, archive push) before the reset.
   function handleStartNewSeason() {
     beginNewSeason(gameState);
+    setCurrentView('dashboard');
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // Phase 7d: handle a re-sign offer to one of the user's expiring
+  // players. Mirrors signPlayer's structure but operates on a roster
+  // member instead of an FA — no roster move needed, just contract
+  // mutation. resolveOffer with isResign:true enables the "wants to
+  // leave" morale<30 override.
+  //
+  // Returns the resolveOffer result so the ResignWindow modal can show
+  // gap-tier hints on rejection.
+  function resignPlayer(player, offer) {
+    if (!resignWindowActive) return { accepted: false, reason: 'wrong_phase' };
+
+    // Cap check: the player's CURRENT salary is still on the books (he's
+    // still rostered with yearsRemaining=0). The new offer replaces it.
+    // So projected = current_team_salary - old_salary + new_salary.
+    const oldSalary = player.contract?.salary || 0;
+    const projectedSalary = computeTeamSalary(humanTeam) - oldSalary + offer.salary;
+    if (projectedSalary > SALARY_CAP) {
+      return { capExceeded: true };
+    }
+
+    const seasonNumber = gameState.seasonNumber || 2025;
+    const result = resolveOffer(player, { ...offer, isResign: true }, seasonNumber);
+
+    if (result.accepted) {
+      // Update contract in place — no roster move, player stays put
+      player.contract = result.contract;
+      // Phase 7e: re-signing with the team is a positive morale event
+      adjustMorale(player, +5, 'resigned_by_team');
+      setGameState(prev => ({ ...prev }));
+    }
+    return result;
+  }
+
+  // Phase 7d: "let walk" — for the bulk action. Player stays on roster
+  // with yearsRemaining=0; the closeResignWindow flow will move them
+  // to FA pool. This is just a force-render trigger so the bulk-action
+  // UI updates immediately.
+  function walkPlayer(player) {
+    // Nothing to do — player already at yearsRemaining=0. Just trigger
+    // a re-render so the UI list refreshes if the user wants visual
+    // confirmation (currently no per-player walk button, but the bulk
+    // action calls this).
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // Phase 7d: close the re-sign window and run the rest of the offseason.
+  // Players still expiring (yearsRemaining=0) walk to FA pool. Engine
+  // function handles the rest of the transition: aging, retirement,
+  // rookies, AI signings, etc.
+  function handleCloseResignWindow() {
+    closeResignWindowAndBeginOffseason(gameState);
     setCurrentView('dashboard');
     setGameState(prev => ({ ...prev }));
   }
@@ -1082,12 +1177,24 @@ export default function App() {
   }
 
   // ── Roster ──
-  function signPlayer(player) {
-    if (humanTeam.rosterFull) return;
-    // Phase 6f: during a mid-season FA window, enforce the season-wide
-    // 2-signing cap on the user. Offseason has unlimited signings (the
-    // cap only applies mid-season for now — future cap-space work will
-    // generalize this).
+  // Phase 7b: signing now goes through a contract negotiation flow.
+  // FreeAgents.jsx opens a sign modal where the user enters salary +
+  // years; that modal calls this function with an offer object.
+  // Returns a result the modal uses to update its UI:
+  //   { accepted: true, contract }           — signed successfully
+  //   { accepted: false, askTier, reason }   — rejected with hint
+  //   { capExceeded: true }                  — would breach cap
+  //   { rosterFull: true }                   — defensive
+  //
+  // For backward compat with any caller that still passes just (player),
+  // we treat that as a "use base salary, 1 year" auto-offer and resolve
+  // normally. (The midseason reactive flow used to call signPlayer this
+  // way; it doesn't anymore but defensive doesn't hurt.)
+  function signPlayer(player, offer = null) {
+    if (humanTeam.rosterFull) return { rosterFull: true };
+
+    // Phase 6f mid-season cap check: still applies on top of the new
+    // salary cap.
     if (midseasonActive) {
       const used = humanTeam._midseasonMoves || 0;
       if (used >= MAX_MIDSEASON_MOVES_PER_SEASON) {
@@ -1095,9 +1202,31 @@ export default function App() {
           type: 'info',
           message: `Mid-season cap reached (${used}/${MAX_MIDSEASON_MOVES_PER_SEASON} signings).`,
         });
-        return;
+        return { accepted: false, reason: 'midseason_cap' };
       }
     }
+
+    // Default offer: base salary, 1 year. Used when caller doesn't
+    // provide one (legacy auto-sign callers).
+    if (!offer) {
+      offer = { salary: calculateBaseSalary(player.overall), years: 1 };
+    }
+
+    // Salary cap check BEFORE the ask resolution. Hard cap = if the
+    // offer would breach, we don't even submit the offer.
+    if (!fitsCap(humanTeam, offer.salary)) {
+      return { capExceeded: true };
+    }
+
+    const seasonNumber = gameState.seasonNumber || 2025;
+    const result = resolveOffer(player, offer, seasonNumber);
+
+    if (!result.accepted) {
+      return result; // {accepted: false, askTier, ...}
+    }
+
+    // Accepted — apply the contract and roster move
+    player.contract = result.contract;
     humanTeam.addPlayer(player);
     humanTeam.validateStrategy();
     const region = gameState.regions[gameState.humanRegion];
@@ -1106,6 +1235,7 @@ export default function App() {
       humanTeam._midseasonMoves = (humanTeam._midseasonMoves || 0) + 1;
     }
     setGameState(prev => ({ ...prev }));
+    return result;
   }
 
   function releasePlayer(player) {
@@ -1115,6 +1245,33 @@ export default function App() {
     // might want to release then sign, and the Start Preseason / Start
     // Stage buttons are the safeguard that prevent starting with <5.
     if (!offseasonActive && !midseasonActive && humanTeam.atMinRoster) return;
+
+    // Phase 7b: apply buyout cap hit if the player has remaining
+    // contract years. The hit goes onto the team's deadCapHits ledger,
+    // gets summed into computeTeamSalary, and rolls off at season end
+    // (Phase 7c will implement the rolloff).
+    const buyout = calculateBuyout(player.contract);
+    if (buyout > 0) {
+      if (!Array.isArray(humanTeam.deadCapHits)) humanTeam.deadCapHits = [];
+      humanTeam.deadCapHits.push({
+        year: gameState.seasonNumber || 2025,
+        amount: buyout,
+        fromPlayerTag: player.tag,
+      });
+    }
+
+    // Released players become free agents. Their contract is cleared
+    // (FAs don't have contracts). Morale persists — they remember being
+    // cut.
+    player.contract = null;
+
+    // Phase 7e: getting cut hurts morale. Buyout-induced releases hit
+    // harder than expired-contract drops. The player carries this lower
+    // morale into the FA market, so their next ask will be inflated
+    // (morale<60 stops getting the -5% content discount, morale<30
+    // becomes "demanding").
+    adjustMorale(player, buyout > 0 ? -10 : -5, 'released_by_team');
+
     humanTeam.removePlayer(player);
     humanTeam.validateStrategy();
     gameState.regions[gameState.humanRegion].freeAgents.push(player);
@@ -1127,7 +1284,6 @@ export default function App() {
     if (offseasonActive) {
       const newMoves = runReactiveAISignings(gameState, player);
       if (newMoves.length > 0) {
-        // Small toast so the user knows AI teams moved in response
         const first = newMoves[0];
         const extra = newMoves.length > 1 ? ` (+${newMoves.length - 1} more move${newMoves.length > 2 ? 's' : ''})` : '';
         setToast({
@@ -1137,8 +1293,7 @@ export default function App() {
       }
     }
 
-    // Phase 6f: same reactive flow during mid-season FA windows. Different
-    // engine entry point (uses _midseasonMoves cap, writes to aiMidseasonLog).
+    // Phase 6f: same reactive flow during mid-season FA windows.
     if (midseasonActive) {
       const newMoves = runMidseasonReactiveSignings(gameState, player);
       if (newMoves.length > 0) {
@@ -1228,6 +1383,21 @@ export default function App() {
   function renderView() {
     const regionData = gameState.regions[vr];
 
+    // Phase 7d: during the re-sign window, take over the Dashboard slot
+    // with the ResignWindow view. Other tabs remain navigable so user
+    // can check History/Stats/Standings while deciding on extensions.
+    if (resignWindowActive && (currentView === 'dashboard' || !currentView)) {
+      return (
+        <ResignWindow
+          team={humanTeam}
+          gameState={gameState}
+          onResign={resignPlayer}
+          onWalk={walkPlayer}
+          onForceUpdate={() => setGameState(prev => ({ ...prev }))}
+        />
+      );
+    }
+
     // Phase 6e: during the offseason, take over the Dashboard slot with
     // the Offseason view. All other tabs remain navigable — the user can
     // check Stats/History/Standings etc. while deciding on roster moves.
@@ -1262,6 +1432,7 @@ export default function App() {
             used: humanTeam._midseasonMoves || 0,
             max: MAX_MIDSEASON_MOVES_PER_SEASON,
           } : null}
+          capRemaining={computeCapRemaining(humanTeam)}
         />;
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
@@ -1323,6 +1494,10 @@ export default function App() {
         onStartStage={handleStartStage}
         midseasonMovesUsed={humanTeam._midseasonMoves || 0}
         midseasonMovesMax={MAX_MIDSEASON_MOVES_PER_SEASON}
+        capUsed={computeTeamSalary(humanTeam)}
+        capMax={SALARY_CAP}
+        isResignWindow={resignWindowActive}
+        onCloseResignWindow={handleCloseResignWindow}
         godMode={!!gameState.godMode}
         onToggleGodMode={handleToggleGodMode}
         hasActiveSeries={(() => {

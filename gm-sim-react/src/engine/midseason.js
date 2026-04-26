@@ -134,7 +134,10 @@ export function runMidseasonReactiveSignings(gameState, releasedPlayer) {
       if (!toRelease) continue;
 
       const beforeLogLen = gameState.season.aiMidseasonLog.length;
-      _executeSwap(team, region, toRelease, releasedPlayer, gameState, LOG_KEY);
+      // Phase 7c: _executeSwap (re-exported from offseason.js) is now
+      // cap-aware. If the swap doesn't fit, skip without burning move budget.
+      const swapped = _executeSwap(team, region, toRelease, releasedPlayer, gameState, LOG_KEY);
+      if (!swapped) continue;
       team._midseasonMoves = (team._midseasonMoves || 0) + 1;
       newEntries.push(...gameState.season.aiMidseasonLog.slice(beforeLogLen));
 

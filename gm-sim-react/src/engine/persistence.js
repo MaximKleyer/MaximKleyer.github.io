@@ -41,6 +41,7 @@
 import { Team } from '../classes/Team.js';
 import { Player } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
+import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
 
@@ -226,6 +227,12 @@ function deserialize(json) {
   if (data.season?.status === 'complete') {
     data.season.status = 'season-complete';
   }
+
+  // Pass 4: Phase 7 contract/morale migration. Idempotent — adds
+  // contracts and morale fields to any rostered player that lacks
+  // them, leaves anyone already-migrated alone. Backfills team-level
+  // deadCapHits arrays. Free agents get morale but no contract.
+  ensureContracts(data);
 
   return data;
 }

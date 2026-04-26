@@ -141,6 +141,23 @@ export class Player {
     // Stages without snapshots simply have no key. The Stats UI checks
     // for presence and only shows selectors for available stages.
     this.stageStats = {};
+
+    // ── Phase 7: Morale + Contract ──
+
+    // Morale 0-100. Default 65 = "Content" tier. Mutated by season
+    // events: wins/losses, salary fairness vs market, championships.
+    // Affects contract negotiations (asks scale by morale modifier)
+    // and in-game performance (effective ratings ±5%, asymmetric).
+    this.morale = 65;
+
+    // Phase 7e: morale change history. Most recent 5 events (delta + reason).
+    // Bounded to keep save size sane. Used in tooltips / detail views.
+    this.moraleHistory = [];
+
+    // Contract: { salary, yearsRemaining, signedYear } or null when the
+    // player has no active contract (i.e. is in the FA pool). Set by
+    // sign flows; decremented at season end; consumed by salary cap math.
+    this.contract = null;
   }
 
   calcOverall() {

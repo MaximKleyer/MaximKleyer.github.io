@@ -35,6 +35,10 @@ import {
   isWorldsComplete,
   computeWorldsResults,
 } from './worlds.js';
+import {
+  calculateBaseSalary, calculateBuyout, computeTeamSalary, resolveOffer,
+  adjustMorale, SALARY_CAP,
+} from '../data/salary.js';
 
 /* ─────────────── Circuit definition ─────────────── */
 
@@ -221,6 +225,10 @@ export function completeCurrentStage(gameState) {
     };
   }
 
+  // Phase 7e: morale from stage placement. Top 3 teams get +3, mid +1,
+  // bottom -2. Affects all rostered players for that team.
+  applyStageMorale(gameState, pointsAwarded);
+
   // Phase 6h: snapshot per-stage player stats before the stage rolls over
   // (or, for stage 3, before the season ends). Each player's CURRENT
   // stats represent only this stage; we copy them into player.stageStats[stageNum]
@@ -331,7 +339,7 @@ export function completeCurrentInternational(gameState) {
   }
 
   // Snapshot to history
-  gameState.season.history.push({
+  const intlEntry = {
     slotIndex: gameState.season.slotIndex,
     type: 'international',
     name: slot.name,
@@ -349,7 +357,12 @@ export function completeCurrentInternational(gameState) {
     swiss: intl.swiss,
     selectionShow: intl.selectionShow,
     bracket: intl.bracket,
-  });
+  };
+  gameState.season.history.push(intlEntry);
+
+  // Phase 7e: morale from international placement. Champion +5, bracket
+  // teams +2. Done after history snapshot so the bracket data is settled.
+  applyInternationalMorale(gameState, intlEntry);
 
   // Clear active international state
   gameState.international = null;
@@ -404,7 +417,7 @@ export function completeCurrentWorlds(gameState) {
   const championEntry = results.bracketPlacements.find(p => p.placement === 1);
   const runnerUpEntry = results.bracketPlacements.find(p => p.placement === 2);
 
-  gameState.season.history.push({
+  const worldsEntry = {
     slotIndex: gameState.season.slotIndex,
     type: 'worlds',
     name: slot.name,
@@ -420,7 +433,12 @@ export function completeCurrentWorlds(gameState) {
     // these refs stay valid indefinitely.
     bracket: worlds.bracket,
     playoffSelection: worlds.playoffSelection,
-  });
+  };
+  gameState.season.history.push(worldsEntry);
+
+  // Phase 7e: morale from worlds placement. Big numbers — championship
+  // is the season-defining moment.
+  applyWorldsMorale(gameState, worldsEntry);
 
   gameState.worlds = null;
   gameState.season.status = 'transition';
@@ -862,24 +880,358 @@ function developPlayer(player) {
   };
 }
 
+// ── Phase 7e: morale dynamics helpers ──
+
+/**
+ * Apply morale changes after a stage completes. Stage placement drives
+ * direction:
+ *   1st-3rd     →  +3 morale (winning vibe)
+ *   4th-6th     →  +1 morale (positive but mild)
+ *   7th-9th     →  0 (middling, no effect)
+ *   10th-last   →  -2 morale (bottom of the standings is demoralizing)
+ *
+ * Per region, evaluated against that region's stage placements list.
+ * Players on each team get the same delta. Only rostered players are
+ * affected — FAs don't gain/lose morale from outcomes they didn't
+ * participate in.
+ */
+function applyStageMorale(gameState, pointsAwarded) {
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    const placements = pointsAwarded[regionKey] || [];
+
+    for (const placement of placements) {
+      const team = region.teams.find(t => t.abbr === placement.abbr);
+      if (!team) continue;
+
+      let delta = 0;
+      let reason = null;
+      if (placement.placement <= 3) {
+        delta = +3; reason = 'top_3_stage';
+      } else if (placement.placement <= 6) {
+        delta = +1; reason = 'mid_stage';
+      } else if (placement.placement >= 10) {
+        delta = -2; reason = 'bottom_stage';
+      }
+      // 7-9 → no change (no reason logged)
+
+      if (delta !== 0) {
+        for (const player of team.roster) {
+          adjustMorale(player, delta, reason);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Apply morale changes after an international event. Placement-based
+ * but more impactful than a stage:
+ *   Champion (top 1)              → +5 morale
+ *   Made playoff bracket (top 8)  → +2 morale
+ *   Eliminated in swiss (DNQ)     →  0 (didn't really play, no morale shift)
+ *   Didn't qualify for international → 0 (handled implicitly — they're just not here)
+ *
+ * `entry` is the history entry for the international, pulled from
+ * gameState.season.history[]. It has a bracket field with grandFinal +
+ * eliminated players. We extract the champion + bracket teams from there.
+ */
+function applyInternationalMorale(gameState, intlEntry) {
+  if (!intlEntry?.bracket) return;
+  const champion = intlEntry.bracket.grandFinal?.result?.winner;
+  // Bracket teams = the 8 that made the playoffs. We can derive them
+  // from intlEntry.bracket — every grandFinal/semifinal/quarterfinal/elim
+  // entry has a winner+loser; collect uniques.
+  const bracketTeams = new Set();
+  function addFromMatch(m) {
+    if (!m?.result) return;
+    if (m.result.winner) bracketTeams.add(m.result.winner.abbr);
+    if (m.result.loser) bracketTeams.add(m.result.loser.abbr);
+  }
+  addFromMatch(intlEntry.bracket.grandFinal);
+  for (const m of (intlEntry.bracket.upper || [])) addFromMatch(m);
+  for (const m of (intlEntry.bracket.lower || [])) addFromMatch(m);
+  for (const m of (intlEntry.bracket.swissBracketRound || [])) addFromMatch(m);
+
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      let delta = 0;
+      let reason = null;
+      if (champion && team.abbr === champion.abbr) {
+        delta = +5; reason = 'won_international';
+      } else if (bracketTeams.has(team.abbr)) {
+        delta = +2; reason = 'intl_playoffs';
+      }
+      if (delta !== 0) {
+        for (const player of team.roster) {
+          adjustMorale(player, delta, reason);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Apply morale changes after Worlds completes. Similar to international
+ * but with bigger numbers — the season-defining moment.
+ *   World Champion        → +15 morale (career highlight)
+ *   Worlds Runner-up      → +8 morale
+ *   Worlds top-4 semis    → +5 morale
+ *   Worlds bracket (top 8) → +2 morale
+ *
+ * Worlds entry has the same bracket structure as international.
+ */
+function applyWorldsMorale(gameState, worldsEntry) {
+  if (!worldsEntry?.bracket) return;
+  const champion = worldsEntry.champion;
+  const runnerUp = worldsEntry.runnerUp;
+
+  // Top-4 = grand final teams + their losers' last opponents (semifinal losers)
+  const top4 = new Set();
+  if (champion) top4.add(champion.abbr);
+  if (runnerUp) top4.add(runnerUp.abbr);
+  // Find semifinal losers: teams that lost their final pre-grand-final match
+  // Approximate: anyone who appears in upper bracket round 2 (semifinals)
+  // is in top 4. Simpler: union of all upper-bracket loser teams that didn't
+  // win the grand final.
+  const bracketTeams = new Set();
+  function addFromMatch(m) {
+    if (!m?.result) return;
+    if (m.result.winner) bracketTeams.add(m.result.winner.abbr);
+    if (m.result.loser) bracketTeams.add(m.result.loser.abbr);
+  }
+  addFromMatch(worldsEntry.bracket.grandFinal);
+  for (const m of (worldsEntry.bracket.upper || [])) addFromMatch(m);
+  for (const m of (worldsEntry.bracket.lower || [])) addFromMatch(m);
+  for (const m of (worldsEntry.bracket.swissBracketRound || [])) addFromMatch(m);
+
+  // Try to identify top-4: semifinal losers. Walk upper bracket: matches
+  // whose winner went on to play in the grand final = semifinals. Their
+  // loser is in top 4. Approximation since we don't have explicit round
+  // labels on every match.
+  for (const m of (worldsEntry.bracket.upper || [])) {
+    if (!m?.result) continue;
+    const w = m.result.winner;
+    if (w && (w.abbr === champion?.abbr || w.abbr === runnerUp?.abbr)) {
+      const l = m.result.loser;
+      if (l) top4.add(l.abbr);
+    }
+  }
+
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      let delta = 0;
+      let reason = null;
+      if (champion && team.abbr === champion.abbr) {
+        delta = +15; reason = 'won_worlds';
+      } else if (runnerUp && team.abbr === runnerUp.abbr) {
+        delta = +8; reason = 'worlds_runner_up';
+      } else if (top4.has(team.abbr)) {
+        delta = +5; reason = 'worlds_top_4';
+      } else if (bracketTeams.has(team.abbr)) {
+        delta = +2; reason = 'worlds_playoffs';
+      }
+      if (delta !== 0) {
+        for (const player of team.roster) {
+          adjustMorale(player, delta, reason);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Salary fairness pass — runs during offseason after AI re-signings.
+ * For every rostered player, compare their current salary to their
+ * fair market base salary:
+ *   Significantly underpaid (<70% of base) → -5 morale ('underpaid')
+ *   Significantly overpaid  (>130% of base) → +3 morale ('overpaid')
+ *   Otherwise → 0
+ *
+ * This creates a long-term morale tension: signing a star to a bargain
+ * deal might work short-term, but their morale will erode each offseason
+ * until you renegotiate or they walk via "wants to leave" (morale<30).
+ *
+ * Symmetric in detection but asymmetric in magnitude — losing 5 morale
+ * for being underpaid hurts more than gaining 3 morale for being
+ * overpaid. Models real-world player psychology: fair pay is expected,
+ * underpay is resented, overpay is appreciated but doesn't drive loyalty.
+ */
+function applyOffseasonSalaryFairness(gameState) {
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        if (!player.contract) continue;
+        const fairMarket = calculateBaseSalary(player.overall);
+        const ratio = (player.contract.salary || 0) / fairMarket;
+        if (ratio < 0.70) {
+          adjustMorale(player, -5, 'underpaid');
+        } else if (ratio > 1.30) {
+          adjustMorale(player, +3, 'overpaid');
+        }
+      }
+    }
+  }
+}
+
+// ── Phase 7d: re-sign window helpers ──
+/**
+ * Compute an offer from an AI team to one of its expiring players.
+ * Archetype-driven:
+ *   BIG_SPENDER:    aggressive on stars (>=75 OVR), generous +5% on
+ *                    base salary; lets <70 OVR walk
+ *   TALENT_SEEKER:  re-signs young (<=25), lets aging vets (26+) walk
+ *                    even if good
+ *   BALANCED:       pragmatic — re-signs anyone whose base salary fits
+ *                    the cap; small +0% bonus
+ *
+ * Returns null if the team chooses to let the player walk (skip
+ * re-sign offer). Otherwise returns an offer object suitable for
+ * resolveOffer: { salary, years, isResign: true }.
+ *
+ * Length is randomized 1-3 with a slight bias toward 2, matching the
+ * normal AI signing behavior. Salary is the player's calculateBaseSalary
+ * with archetype bonus applied. Cap fit is checked here so AIs don't
+ * even attempt offers that would put them over the cap.
+ */
+function buildAIResignOffer(team, player, currentTeamSalary) {
+  const archetype = team.archetype;
+
+  // Archetype-specific "should we even try?" gate
+  if (archetype === 'BIG_SPENDER' && player.overall < 70) return null;
+  if (archetype === 'TALENT_SEEKER' && player.age >= 26) return null;
+  // BALANCED has no gate — always tries
+
+  // Base salary, with a small archetype premium
+  let baseSalary = calculateBaseSalary(player.overall);
+  if (archetype === 'BIG_SPENDER' && player.overall >= 75) {
+    baseSalary = Math.round(baseSalary * 1.05); // +5% for stars
+  }
+
+  // Cap fit check — would this offer push the team over the cap?
+  // currentTeamSalary already includes the player's prior salary (he's
+  // still on the roster but at yearsRemaining=0 with $0 not actually
+  // contributing... wait, his contract.salary is still the old number.
+  // Recompute properly: subtract the player's expiring salary, add the
+  // proposed new salary.
+  const oldSalary = player.contract?.salary || 0;
+  const projectedSalary = currentTeamSalary - oldSalary + baseSalary;
+  if (projectedSalary > SALARY_CAP) return null; // can't afford
+
+  // Length roll — slight bias toward 2yr
+  const r = Math.random();
+  const length = r < 0.3 ? 1 : r < 0.7 ? 2 : 3;
+
+  return { salary: baseSalary, years: length, isResign: true };
+}
+
+/**
+ * Run AI re-signing decisions for all non-human teams. Iterates each
+ * team's roster looking for players with expired contracts (yearsRemaining=0)
+ * and decides whether to extend per archetype. Resolved via resolveOffer
+ * so morale<30 "wants to leave" overrides naturally apply.
+ *
+ * Successful re-signs update the player's contract in place (yearsRemaining
+ * resets to the offered length, salary updates). Failed/skipped re-signs
+ * leave the player at yearsRemaining=0 — they'll walk to FA when the
+ * resign window closes.
+ *
+ * Logs to gameState.season.aiResignLog so the History/UI can surface
+ * what each AI team did during the window.
+ */
+export function runAIResignings(gameState) {
+  if (!gameState.season.aiResignLog) gameState.season.aiResignLog = [];
+  const seasonNumber = gameState.seasonNumber || 2025;
+
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      if (team.isHuman) continue;
+      const expiring = team.roster.filter(p => p.contract && (p.contract.yearsRemaining ?? 1) <= 0);
+      if (expiring.length === 0) continue;
+
+      // Sort by overall desc — try to retain the best players first.
+      // This matters when the team is cap-tight: highest-OVR retentions
+      // get priority over depth pieces.
+      expiring.sort((a, b) => b.overall - a.overall);
+
+      for (const player of expiring) {
+        const currentSalary = computeTeamSalary(team);
+        const offer = buildAIResignOffer(team, player, currentSalary);
+
+        if (!offer) {
+          // AI declined to offer — log as walk
+          gameState.season.aiResignLog.push({
+            teamAbbr: team.abbr,
+            teamName: team.name,
+            teamColor: team.color,
+            playerTag: player.tag,
+            playerOverall: player.overall,
+            outcome: 'walked',
+            reason: 'team_declined',
+          });
+          continue;
+        }
+
+        const result = resolveOffer(player, offer, seasonNumber);
+        if (result.accepted) {
+          player.contract = result.contract;
+          // Phase 7e: re-signing with current team is a positive morale event
+          adjustMorale(player, +5, 'resigned_by_team');
+          gameState.season.aiResignLog.push({
+            teamAbbr: team.abbr,
+            teamName: team.name,
+            teamColor: team.color,
+            playerTag: player.tag,
+            playerOverall: player.overall,
+            outcome: 'resigned',
+            salary: result.contract.salary,
+            years: result.contract.yearsRemaining,
+          });
+        } else {
+          // Player rejected offer — could be wants_to_leave (morale<30)
+          // or simply that the AI didn't offer enough. Either way, the
+          // player stays at yearsRemaining=0 and walks at window close.
+          gameState.season.aiResignLog.push({
+            teamAbbr: team.abbr,
+            teamName: team.name,
+            teamColor: team.color,
+            playerTag: player.tag,
+            playerOverall: player.overall,
+            outcome: 'walked',
+            reason: result.reason || 'rejected_offer',
+          });
+        }
+      }
+    }
+  }
+}
+
 /**
  * Begin a new season. Called from the dashboard/sidebar "Start New Season"
  * button when status === 'season-complete'.
  *
- * Phase 6d offseason sequence:
- *   1. Archive the completed season (history + champion)
- *   2. Rating development — per-player age curve + performance modifier
- *      (reads player.stats BEFORE they get reset in step 6)
- *   3. Age all players +1 (rosters + free agents)
- *   4. Retirement pass — exponential curve age 25–29, hard cutoff at 30
- *   5. AI team backfill — auto-sign best FAs to reach ROSTER_MIN (skips human team)
- *   6. Rookie generation — refill each region's FA pool to FREE_AGENT_POOL_SIZE
- *   7. Reset records, clear state, reassign groups, regen schedules
+ * Phase 7d: this function now ENDS at the re-sign window (after step 2.5
+ * contract decrement and step 2.6 AI re-signings). It sets status to
+ * 'resign-window'. The user makes their re-sign decisions, then clicks
+ * Continue which calls closeResignWindowAndBeginOffseason() — that runs
+ * steps 3-7 and finishes the offseason transition.
  *
- * Human teams are NOT auto-filled — if the user's team is below 5 after
- * retirements, they'll see the gap on the dashboard and the Advance button
- * will be blocked until they manually sign players. This preserves user
- * agency over roster decisions.
+ * Original sequence (now split across two functions):
+ *   ── beginNewSeason (this function) ──
+ *   1. Archive the completed season
+ *   2. Rating development
+ *   2.5. Contract decrement + dead cap rolloff
+ *   2.6. AI auto-resigning per archetype
+ *   ── closeResignWindowAndBeginOffseason ──
+ *   3. Force walk-aways (yearsRemaining=0 players → FA pool)
+ *   4. Aging + retirement
+ *   5. AI backfill
+ *   6. Rookie generation
+ *   7. Reset records, regen schedules, run offseason AI signings
  */
 export function beginNewSeason(gameState) {
   if (gameState.season?.status !== 'season-complete') return;
@@ -1011,7 +1363,143 @@ export function beginNewSeason(gameState) {
   offseasonSummary.biggestGainers = sorted.slice(0, 5).map(moverCard);
   offseasonSummary.biggestLosers = sorted.slice(-5).reverse().map(moverCard);
 
-  // ── 3 + 4. Age everyone, then retire by age curve ──
+  // ── 2.5. Contract decrement + dead cap rolloff (Phase 7c/7d) ──
+  // Each contract's yearsRemaining ticks down by 1 here. Phase 7d:
+  // contracts that hit 0 are NOT immediately cleared. Instead, the
+  // player stays on the roster with yearsRemaining=0 as a flag meaning
+  // "expiring this offseason — eligible for re-sign." The re-sign
+  // window UI surfaces these. After the window closes, players still
+  // at yearsRemaining=0 (not re-signed) move to the FA pool (handled
+  // in closeResignWindowAndBeginOffseason below).
+  //
+  // Dead cap hits also roll off here. A buyout incurred during year N
+  // applies for year N only and is cleared at the next season boundary.
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      // Roll off all dead cap hits — they were for the year that just ended.
+      team.deadCapHits = [];
+
+      for (const player of team.roster) {
+        if (player.contract) {
+          player.contract.yearsRemaining = Math.max(0, (player.contract.yearsRemaining || 0) - 1);
+          // yearsRemaining=0 means expiring; Phase 7d's resign window
+          // will offer the human a chance to extend before they walk.
+          // AI teams resolve their own re-signs in runAIResignings.
+        }
+      }
+    }
+  }
+
+  // ── 2.6. AI auto-resigning (Phase 7d) ──
+  // Non-human teams immediately resolve their re-signing decisions:
+  // for each player with yearsRemaining=0, the team's archetype dictates
+  // whether to extend (and at what value). Logic is in runAIResignings.
+  // Players the AI doesn't re-sign stay at yearsRemaining=0 and will
+  // become UFA when the resign window closes.
+  runAIResignings(gameState);
+
+  // ── 2.65. Offseason salary fairness morale check (Phase 7e) ──
+  // After AI re-signings (which let AIs correct underpaid stars on
+  // their roster), check every rostered player's salary vs market.
+  // Significantly underpaid → -5 morale, overpaid → +3 morale. Creates
+  // long-term pressure: stars on bargain deals will eventually want out.
+  applyOffseasonSalaryFairness(gameState);
+
+  // ── 2.7. Stash partial offseason state on archive entry ──
+  // The archive entry was already pushed (line above). Its offseasonSummary
+  // is a live reference, so the second-half function can keep mutating it.
+  // We just need to remember which archive entry "belongs to" the current
+  // resign window so closeResignWindowAndBeginOffseason knows where to
+  // route accumulating data (retiree count, AI signings count, etc.).
+  // Stash on gameState.season as a back-pointer.
+  gameState.season._offseasonSummaryRef = offseasonSummary;
+
+  // Status flips to 'resign-window'. UI shows the ResignWindow component.
+  // User makes their re-sign decisions for expiring human-team players,
+  // then clicks "Continue to Offseason" which calls closeResignWindowAndBeginOffseason.
+  gameState.season.status = 'resign-window';
+  return;
+}
+
+/**
+ * Phase 7d: close the re-sign window and run the rest of the offseason
+ * (retirements, backfill, rookie generation, offseason AI signings).
+ *
+ * Called when the user clicks "Continue to Offseason" from the
+ * ResignWindow UI. Validates the status before running so accidental
+ * double-calls don't damage state.
+ *
+ * The first thing this does is FORCE non-resigned players (yearsRemaining=0)
+ * off rosters and into FA pools. They become UFA at this moment. AI
+ * re-signings already ran in step 2.6, so any AI player still at 0 is
+ * one the AI explicitly chose not to extend — that's fine.
+ *
+ * For human teams: any expiring player the user didn't extend during
+ * the window also walks here.
+ */
+export function closeResignWindowAndBeginOffseason(gameState) {
+  if (gameState.season?.status !== 'resign-window') return;
+
+  // Pull the offseasonSummary reference stashed during openResignWindow
+  // (which is the upper half of beginNewSeason). All subsequent stat
+  // accumulation (retiree count, AI signings count) lands in the same
+  // archive entry's summary.
+  const offseasonSummary = gameState.season._offseasonSummaryRef;
+  if (!offseasonSummary) {
+    // Defensive: if somehow the ref is missing, create a stub. The
+    // archive entry won't get the per-pass counts but at least we
+    // don't crash. Shouldn't happen in normal flow.
+    console.warn('[closeResignWindow] missing _offseasonSummaryRef; counts will be lost');
+  }
+  const summary = offseasonSummary || { retiredCount: 0, rookiesGenerated: 0, aiSigningsCount: 0, retirees: [], biggestGainers: [], biggestLosers: [], developedCount: 0 };
+
+  // Force walk-aways: any player still on a roster with yearsRemaining=0
+  // didn't get re-signed (either user passed or AI archetype declined).
+  // They become UFA now: contract cleared, moved to FA pool.
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      const continuing = [];
+      const walking = [];
+      for (const player of team.roster) {
+        if (player.contract && (player.contract.yearsRemaining ?? 1) <= 0) {
+          player.contract = null;
+          walking.push(player);
+        } else {
+          continuing.push(player);
+        }
+      }
+      team.roster = continuing;
+      for (const p of walking) region.freeAgents.push(p);
+      if (walking.length > 0) team.validateStrategy();
+    }
+  }
+
+  // From here on out, the rest of the original beginNewSeason runs.
+  // Inline-call into a private helper that does steps 3-7. Keeping it
+  // separate makes the split readable.
+  runOffseasonPhases3through7(gameState, summary);
+
+  // Clean up the back-reference now that we're done with it
+  delete gameState.season._offseasonSummaryRef;
+}
+
+/**
+ * Steps 3-7 of the offseason: aging+retirement, AI backfill, rookie gen,
+ * stat reset, AI offseason signings. Extracted from beginNewSeason so
+ * Phase 7d can run them after the resign window closes.
+ *
+ * Mutates gameState in place. The summary parameter is the live
+ * offseasonSummary on the archive entry — counts get incremented here.
+ */
+function runOffseasonPhases3through7(gameState, offseasonSummary) {
+  // After beginNewSeason ran, gameState.seasonNumber was already
+  // incremented to the new year (e.g. 2026). The "completedYear"
+  // (e.g. 2025) is what gets stamped on retiree records and matches
+  // the archive entry's year. Recover it here.
+  const completedYear = (gameState.seasonNumber || 2026) - 1;
+
   // ── 3 + 4. Age everyone, then retire by age curve ──
   // Process per region. Rosters and free agent pools are handled together:
   //   - Increment age on every player
@@ -1080,23 +1568,57 @@ export function beginNewSeason(gameState) {
   }
 
   // ── 5. AI team backfill ──
-  // Any non-human team below ROSTER_MIN auto-signs the best available
-  // free agents until it hits the minimum. Human teams are left short so
-  // the user can make deliberate preseason FA moves. If the user's team
-  // is under 5 when they try to advance, the Advance button will be
-  // blocked in the UI layer until they sign manually.
+  // Any non-human team below ROSTER_MIN auto-signs free agents until it
+  // hits the minimum. Phase 7c: cap-aware. Tries to sign the best-OVR FA
+  // that fits under the cap; if no FA fits (team is heavily over cap from
+  // buyouts), falls back to the cheapest FA — better to be technically
+  // over cap than to start a season with <5 players, which would brick
+  // the schedule. The next offseason will give the team a chance to
+  // re-balance.
   for (const regionKey of REGION_KEYS) {
     const region = gameState.regions[regionKey];
     for (const team of region.teams) {
       if (team.isHuman) continue;
       while (team.roster.length < ROSTER_MIN && region.freeAgents.length > 0) {
-        // Pick the best-overall FA. Sorted fresh each iteration since the
-        // pool shrinks as we sign.
-        const bestIdx = region.freeAgents.reduce(
-          (bi, p, i, arr) => (p.overall > arr[bi].overall ? i : bi),
-          0
-        );
+        const currentSalary = computeTeamSalary(team);
+        const headroom = SALARY_CAP - currentSalary;
+
+        // Look for the best-OVR FA whose base salary fits headroom.
+        let bestIdx = -1;
+        let bestOvr = -1;
+        for (let i = 0; i < region.freeAgents.length; i++) {
+          const fa = region.freeAgents[i];
+          const cost = calculateBaseSalary(fa.overall);
+          if (cost <= headroom && fa.overall > bestOvr) {
+            bestIdx = i;
+            bestOvr = fa.overall;
+          }
+        }
+
+        // Fallback: nothing fits → take the cheapest available so the
+        // roster gets up to ROSTER_MIN. Team will start over cap; future
+        // offseasons can fix it as contracts decay.
+        if (bestIdx === -1) {
+          let cheapestIdx = 0;
+          let cheapestCost = Infinity;
+          for (let i = 0; i < region.freeAgents.length; i++) {
+            const cost = calculateBaseSalary(region.freeAgents[i].overall);
+            if (cost < cheapestCost) {
+              cheapestCost = cost;
+              cheapestIdx = i;
+            }
+          }
+          bestIdx = cheapestIdx;
+        }
+
         const signed = region.freeAgents.splice(bestIdx, 1)[0];
+        // Assign a contract at base salary, random 1-3yr length.
+        const newLength = Math.random() < 0.3 ? 1 : Math.random() < 0.7 ? 2 : 3;
+        signed.contract = {
+          salary: calculateBaseSalary(signed.overall),
+          yearsRemaining: newLength,
+          signedYear: gameState.seasonNumber || 2025,
+        };
         team.roster.push(signed);
         offseasonSummary.aiSigningsCount++;
       }

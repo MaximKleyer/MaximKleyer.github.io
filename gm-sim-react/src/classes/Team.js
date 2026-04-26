@@ -38,6 +38,19 @@ export class Team {
       assignments: [],
       iglId: null,
     };
+
+    // ── Phase 7: Salary cap state ──
+
+    // Tracks dead cap hits from buyouts (mid-contract releases). Each
+    // entry: { year, amount, fromPlayerTag }. The hit applies in the
+    // year it was incurred and ages off at season end (Phase 7c will
+    // implement the rollover). For now, just an empty list — populated
+    // by the release flow once Phase 7b wires it up.
+    //
+    // Saves space vs. tracking on Team — only present if the team has
+    // ever bought someone out. Most teams will have empty arrays most
+    // of the time.
+    this.deadCapHits = [];
   }
 
   get overallRating() {

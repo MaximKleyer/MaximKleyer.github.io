@@ -30,6 +30,9 @@
 
 import { ARCHETYPES, archetypeFor } from '../data/archetypes.js';
 import { REGION_KEYS } from '../data/regions.js';
+import {
+  calculateBaseSalary, calculateBuyout, computeTeamSalary, adjustMorale, SALARY_CAP,
+} from '../data/salary.js';
 
 // Probability tables for the per-team offseason dice roll.
 // The outer roll determines HOW MANY signings this team will attempt.
@@ -130,7 +133,12 @@ export function runReactiveAISignings(gameState, releasedPlayer) {
       if (!toRelease) continue;
 
       const beforeLogLen = gameState.season.aiOffseasonLog.length;
-      executeSwap(team, region, toRelease, releasedPlayer, gameState);
+      // Phase 7c: executeSwap is now cap-aware. If the swap doesn't fit
+      // the cap (rare in offseason since teams just shed a player, but
+      // possible if their dead-cap accumulated), skip without burning
+      // their move budget.
+      const swapped = executeSwap(team, region, toRelease, releasedPlayer, gameState);
+      if (!swapped) continue;
       team._offseasonMoves = (team._offseasonMoves || 0) + 1;
       newEntries.push(...gameState.season.aiOffseasonLog.slice(beforeLogLen));
 
@@ -213,11 +221,13 @@ function attemptSigning(team, region, gameState, logKey = 'aiOffseasonLog') {
     const toRelease = chooseReleaseTarget(team, archetype);
     if (!toRelease) continue; // all roster members protected → can't release
 
-    // Atomic swap — release first (so addPlayer doesn't blow past roster max),
-    // then sign. If anything failed mid-swap we'd want to roll back, but
-    // both operations are in-memory array ops that can't fail.
-    executeSwap(team, region, toRelease, fa, gameState, logKey);
-    return true;
+    // Phase 7c: executeSwap is now cap-aware. If the swap doesn't fit
+    // under the cap, it returns false and we move on to the next FA
+    // candidate. Doesn't count toward the team's move budget since
+    // nothing happened.
+    const swapped = executeSwap(team, region, toRelease, fa, gameState, logKey);
+    if (swapped) return true;
+    // else: cap blocked, try next candidate
   }
 
   return false;
@@ -302,30 +312,77 @@ function chooseReleaseTarget(team, archetype) {
  * so the same executor can be used for offseason (logKey='aiOffseasonLog')
  * and mid-season (logKey='aiMidseasonLog') without duplicating the swap
  * logic. Defaults to the offseason log for backward compat.
+ *
+ * Phase 7c: now CAP-AWARE. Computes the net salary impact of the swap
+ * (new contract + buyout - released salary) and rejects if the team
+ * would breach the cap. Returns true on success, false on cap rejection
+ * or any other failure.
+ *
+ * Also creates a contract for the signed player at base salary (1-3yr
+ * random length matching the offseason rollover pattern). Released
+ * player's contract is cleared (FAs don't have contracts) but their
+ * team takes the buyout dead-cap hit.
  */
 function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey = 'aiOffseasonLog') {
-  // Remove release player from roster, add to FA pool
   const rIdx = team.roster.indexOf(releasePlayer);
-  if (rIdx === -1) return; // defensive
+  if (rIdx === -1) return false; // defensive
+
+  // Phase 7c: cap math BEFORE mutating anything. Compute what the team's
+  // salary would be after this swap and compare to SALARY_CAP.
+  const releasedSalary = releasePlayer.contract?.salary || 0;
+  const buyout = calculateBuyout(releasePlayer.contract);
+  // AI offers exactly base salary on a random 1-3yr term.
+  const newLength = Math.random() < 0.3 ? 1 : Math.random() < 0.7 ? 2 : 3;
+  const newSalary = calculateBaseSalary(signPlayer.overall);
+
+  const currentTeamSalary = computeTeamSalary(team);
+  const projectedSalary = currentTeamSalary - releasedSalary + newSalary + buyout;
+  if (projectedSalary > SALARY_CAP) {
+    return false; // hard cap blocks this swap
+  }
+
+  // Apply buyout cap hit BEFORE clearing the released player's contract,
+  // since calculateBuyout reads from the contract.
+  if (buyout > 0) {
+    if (!Array.isArray(team.deadCapHits)) team.deadCapHits = [];
+    team.deadCapHits.push({
+      year: gameState.seasonNumber || 2025,
+      amount: buyout,
+      fromPlayerTag: releasePlayer.tag,
+    });
+  }
+
+  // Released player → free agent. Contract cleared (FAs have no contract).
   team.roster.splice(rIdx, 1);
+  releasePlayer.contract = null;
+  // Phase 7e: getting cut by AI hurts morale. Buyout-induced releases
+  // hit harder than expired-contract drops.
+  adjustMorale(releasePlayer, buyout > 0 ? -10 : -5, 'released_by_team');
   region.freeAgents.push(releasePlayer);
 
-  // Remove sign player from FA pool, add to roster
+  // Signed player → roster with a fresh contract at base salary.
   const sIdx = region.freeAgents.indexOf(signPlayer);
   if (sIdx === -1) {
     // Rollback the release — shouldn't happen but defensive
     team.roster.push(releasePlayer);
     region.freeAgents.pop();
-    return;
+    if (buyout > 0 && team.deadCapHits.length > 0) {
+      team.deadCapHits.pop(); // unwind the dead cap entry too
+    }
+    return false;
   }
   region.freeAgents.splice(sIdx, 1);
+  signPlayer.contract = {
+    salary: newSalary,
+    yearsRemaining: newLength,
+    signedYear: gameState.seasonNumber || 2025,
+  };
   team.roster.push(signPlayer);
 
   // Clean up any stale strategy assignment for the released player
   team.validateStrategy();
 
-  // Ensure log array exists, then append entry. Same shape regardless of
-  // which log we're appending to — UI displays both identically.
+  // Ensure log array exists, then append entry.
   if (!Array.isArray(gameState.season[logKey])) {
     gameState.season[logKey] = [];
   }
@@ -340,6 +397,8 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
       age: signPlayer.age,
       overall: signPlayer.overall,
       nationality: signPlayer.nationality,
+      salary: newSalary,
+      years: newLength,
     },
     released: {
       tag: releasePlayer.tag,
@@ -347,6 +406,9 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
       age: releasePlayer.age,
       overall: releasePlayer.overall,
       nationality: releasePlayer.nationality,
+      buyout,
     },
   });
+
+  return true;
 }

@@ -46,6 +46,10 @@ export default function Sidebar({
   // Phase 6f
   isMidseason, onStartStage, midseasonMovesUsed, midseasonMovesMax,
   godMode, onToggleGodMode,
+  // Phase 7b — cap meter
+  capUsed, capMax,
+  // Phase 7d — resign window
+  isResignWindow, onCloseResignWindow,
   // Fast-forward (Phase 6e+ Ask 3)
   hasActiveSeries: ffHasActive,
   canSimGroup, canSimPlayoffs,
@@ -96,6 +100,63 @@ export default function Sidebar({
         )}
       </div>
 
+      {/* Phase 7b: cap meter — always visible just below the team title */}
+      {capUsed != null && capMax != null && (
+        <div style={{
+          margin: '0 12px 12px',
+          padding: '8px 10px',
+          background: 'rgba(255,255,255,0.02)',
+          border: capUsed > capMax
+            ? '1px solid rgba(255, 84, 96, 0.5)'
+            : '1px solid rgba(255,255,255,0.06)',
+          borderRadius: 6,
+          fontSize: '0.74rem',
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            marginBottom: 4,
+          }}>
+            <span style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.58rem',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: '#8a98b1',
+            }}>
+              Cap
+            </span>
+            <span style={{
+              color: capUsed > capMax ? '#ff8c95' : '#cdd5e5',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.7rem',
+            }}>
+              ${Math.round(capUsed / 1000)}K / ${Math.round(capMax / 1000)}K
+            </span>
+          </div>
+          <div style={{
+            height: 4,
+            background: 'rgba(255,255,255,0.06)',
+            borderRadius: 2,
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              width: `${Math.min(100, Math.round(100 * capUsed / capMax))}%`,
+              height: '100%',
+              background: capUsed > capMax
+                ? '#ff5460'
+                : (capUsed >= capMax * 0.95
+                  ? '#ffb070'
+                  : (capUsed >= capMax * 0.80
+                    ? '#a3d977'
+                    : '#6aa9ff')),
+              transition: 'width 200ms',
+            }} />
+          </div>
+        </div>
+      )}
+
       {NAV_ITEMS.map(item => (
         <button
           key={item.id}
@@ -120,7 +181,41 @@ export default function Sidebar({
             {stageName}
           </div>
         )}
-        {isOffseason ? (
+        {isResignWindow ? (
+          <>
+            <div id="week-display" style={{ textAlign: 'center', marginBottom: 6 }}>
+              📝 Re-Sign Window
+            </div>
+            <div style={{
+              textAlign: 'center',
+              fontSize: '0.62rem',
+              color: '#8ab8ff',
+              marginBottom: 8,
+              padding: '0 4px',
+              lineHeight: 1.3,
+            }}>
+              Negotiate extensions with expiring players
+            </div>
+            <button
+              onClick={onCloseResignWindow}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: 'var(--accent, #ff4655)',
+                border: '1px solid var(--accent, #ff4655)',
+                color: '#fff',
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+              }}
+            >
+              ▶ Continue to Offseason
+            </button>
+          </>
+        ) : isOffseason ? (
           <>
             <div id="week-display" style={{ textAlign: 'center', marginBottom: 6 }}>
               🌴 Offseason
