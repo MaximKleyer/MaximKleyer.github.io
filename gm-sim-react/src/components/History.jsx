@@ -1,0 +1,1754 @@
+/**
+ * History.jsx — Browsable archive of the current season's events.
+ *
+ * Reads from gameState.season.history (populated incrementally as stages,
+ * internationals, and worlds complete) and gameState.season.points for the
+ * current circuit standings.
+ *
+ * Layout:
+ *   Left rail  — list of events + Season Overview entry
+ *   Right pane — detail for the selected entry
+ *
+ * Detail views by entry type:
+ *   'overview'       → circuit-points leaderboard per region (switcher)
+ *   'stage'          → per-region standings + bracket top-8 + points awarded
+ *   'international'  → champion/runner-up + full 1–8 + points awarded per region
+ *   'worlds'         → qualified teams + groups + bracket 1–8 + champion card
+ *
+ * History is per-save. When a new save begins the history resets.
+ */
+
+import { useState } from 'react';
+import { REGION_KEYS } from '../data/regions.js';
+import { flagClass, nationalityName } from '../data/nationalities.js';
+import RegionSelector from './RegionSelector.jsx';
+import MatchCard from './MatchCard.jsx';
+
+/* ─────────────── Shared styles ─────────────── */
+
+const sectionHeader = {
+  fontSize: '0.68rem',
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  color: '#8a98b1',
+  fontFamily: "'JetBrains Mono', monospace",
+  marginBottom: 12,
+  paddingBottom: 6,
+  borderBottom: '1px solid rgba(255,255,255,0.06)',
+};
+
+const subHeader = {
+  fontSize: '0.62rem',
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  color: '#6f7d93',
+  fontFamily: "'JetBrains Mono', monospace",
+  marginBottom: 8,
+  marginTop: 16,
+};
+
+const card = {
+  border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: 8,
+  background: 'rgba(255,255,255,0.015)',
+  overflow: 'hidden',
+};
+
+const table = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  fontSize: '0.86rem',
+};
+
+const th = {
+  padding: '9px 12px',
+  textAlign: 'left',
+  fontSize: '0.62rem',
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  color: '#8a98b1',
+  fontFamily: "'JetBrains Mono', monospace",
+  background: 'rgba(255,255,255,0.04)',
+  borderBottom: '1px solid rgba(255,255,255,0.06)',
+};
+
+const td = {
+  padding: '9px 12px',
+  borderTop: '1px solid rgba(255,255,255,0.04)',
+};
+
+function ordinal(n) {
+  if (n === 1) return '1st';
+  if (n === 2) return '2nd';
+  if (n === 3) return '3rd';
+  return `${n}th`;
+}
+
+/* ─────────────── Bracket renderers (read-only, no interactivity) ─────────────── */
+
+/**
+ * Regional stage bracket grid. Mirrors the layout in Bracket.jsx but as a
+ * read-only view — no match expansion, no click handlers. Reuses the same
+ * CSS classes (bracket-grid, bracket-col, bracket-half, round-label, etc.)
+ * so it renders identically to the live view.
+ *
+ * `bracket` is the fullBracket reference stashed in the history entry by
+ * snapshotAllBrackets. It carries match objects whose .result fields are
+ * frozen after the stage completes.
+ */
+function StageBracketGrid({ bracket }) {
+  if (!bracket) {
+    return <div className="muted" style={{ fontSize: '0.82rem' }}>No bracket data.</div>;
+  }
+
+  const MC = ({ m, bestOf = 'bo3' }) => {
+    if (!m) return <div className="mc-card mc-empty" />;
+    return <MatchCard match={m} bestOf={bestOf} clickable={false} />;
+  };
+
+  const champion = bracket.grandFinal?.result?.winner || null;
+
+  return (
+    <div className="bracket-grid">
+      <div className="bracket-col">
+        <div className="bracket-half upper">
+          <div className="round-label">UB Quarterfinals</div>
+          <div className="round-matches">
+            <MC m={bracket.ubQF?.[0]} />
+            <MC m={bracket.ubQF?.[1]} />
+          </div>
+        </div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower">
+          <div className="round-label">LB Round 1</div>
+          <div className="round-matches">
+            <MC m={bracket.lbR1?.[0]} />
+            <MC m={bracket.lbR1?.[1]} />
+          </div>
+        </div>
+      </div>
+
+      <div className="bracket-connectors">
+        <div className="bracket-half upper"><div className="connector converge"><svg viewBox="0 0 32 100" preserveAspectRatio="none"><path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /><path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /></svg></div></div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower"><div className="connector converge"><svg viewBox="0 0 32 100" preserveAspectRatio="none"><path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /><path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /></svg></div></div>
+      </div>
+
+      <div className="bracket-col">
+        <div className="bracket-half upper">
+          <div className="round-label">UB Semifinals</div>
+          <div className="round-matches">
+            <MC m={bracket.ubSF?.[0]} />
+            <MC m={bracket.ubSF?.[1]} />
+          </div>
+        </div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower">
+          <div className="round-label">LB Quarterfinals</div>
+          <div className="round-matches">
+            <MC m={bracket.lbQF?.[0]} />
+            <MC m={bracket.lbQF?.[1]} />
+          </div>
+        </div>
+      </div>
+
+      <div className="bracket-connectors">
+        <div className="bracket-half upper"><div className="connector converge"><svg viewBox="0 0 32 100" preserveAspectRatio="none"><path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /><path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /></svg></div></div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower"><div className="connector converge"><svg viewBox="0 0 32 100" preserveAspectRatio="none"><path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /><path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /></svg></div></div>
+      </div>
+
+      <div className="bracket-col">
+        <div className="bracket-half upper">
+          <div className="round-label">&nbsp;</div>
+          <div className="round-matches round-matches-center">
+            <div className="bracket-through-line">→</div>
+          </div>
+        </div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower">
+          <div className="round-label">LB Semifinal</div>
+          <div className="round-matches round-matches-center">
+            <MC m={bracket.lbSF} />
+          </div>
+        </div>
+      </div>
+
+      <div className="bracket-connectors">
+        <div className="bracket-half upper"><div className="connector straight"><svg viewBox="0 0 32 10" preserveAspectRatio="none"><line x1="0" y1="5" x2="32" y2="5" stroke="var(--border-hover)" strokeWidth="2" /></svg></div></div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower"><div className="connector straight"><svg viewBox="0 0 32 10" preserveAspectRatio="none"><line x1="0" y1="5" x2="32" y2="5" stroke="var(--border-hover)" strokeWidth="2" /></svg></div></div>
+      </div>
+
+      <div className="bracket-col">
+        <div className="bracket-half upper">
+          <div className="round-label">UB Final</div>
+          <div className="round-matches round-matches-center">
+            <MC m={bracket.ubFinal} />
+          </div>
+        </div>
+        <div className="bracket-divider" />
+        <div className="bracket-half lower">
+          <div className="round-label">LB Final</div>
+          <div className="round-matches round-matches-center">
+            <MC m={bracket.lbFinal} bestOf="bo5" />
+          </div>
+        </div>
+      </div>
+
+      <div className="bracket-connectors">
+        <div className="connector converge"><svg viewBox="0 0 32 100" preserveAspectRatio="none"><path d="M 0 25 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /><path d="M 0 75 H 16 V 50 H 32" stroke="var(--border-hover)" strokeWidth="2" fill="none" /></svg></div>
+      </div>
+
+      <div className="bracket-col grand-final-col">
+        <div className="round-label grand-label">Grand Final</div>
+        <div className="round-matches round-matches-center">
+          <MC m={bracket.grandFinal} bestOf="bo5" />
+        </div>
+        {champion && (
+          <div className="champion-banner">
+            <span className="champion-icon">🏆</span>
+            <span>{champion.name}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * International bracket grid — absolute-positioned 5-column layout mirroring
+ * International.jsx's IntlBracketGrid. Read-only. Same constants so the
+ * layout is pixel-identical.
+ */
+const I_MW = 200, I_MH = 78, I_GAP = 40;
+const I_COL_X = [0, (I_MW + I_GAP), (I_MW + I_GAP) * 2, (I_MW + I_GAP) * 3, (I_MW + I_GAP) * 4];
+const I_UB1_TOP = 50, I_UB1_GAP = 24;
+const I_UB1_Y = [I_UB1_TOP, I_UB1_TOP + I_MH + I_UB1_GAP, I_UB1_TOP + (I_MH + I_UB1_GAP) * 2, I_UB1_TOP + (I_MH + I_UB1_GAP) * 3];
+const I_UB1_C = I_UB1_Y.map(y => y + I_MH / 2);
+const I_UBSF_C = [(I_UB1_C[0] + I_UB1_C[1]) / 2, (I_UB1_C[2] + I_UB1_C[3]) / 2];
+const I_UBSF_Y = I_UBSF_C.map(c => c - I_MH / 2);
+const I_UBF_C = (I_UBSF_C[0] + I_UBSF_C[1]) / 2;
+const I_UBF_Y = I_UBF_C - I_MH / 2;
+const I_LB1_TOP = I_UB1_Y[3] + I_MH + 60;
+const I_LB1_Y = [I_LB1_TOP, I_LB1_TOP + I_MH + 24];
+const I_LB1_C = I_LB1_Y.map(y => y + I_MH / 2);
+const I_LB3_C = (I_LB1_C[0] + I_LB1_C[1]) / 2;
+const I_LB3_Y = I_LB3_C - I_MH / 2;
+const I_LBF_Y = I_LB3_Y;
+const I_LBF_C = I_LB3_C;
+const I_GF_C = (I_UBF_C + I_LBF_C) / 2;
+const I_GF_Y = I_GF_C - I_MH / 2;
+const I_GRID_W = I_COL_X[4] + I_MW;
+const I_GRID_H = I_LB1_Y[1] + I_MH + 40;
+
+function IntlPositionedMatch({ x, y, match, bestOf = 'bo3' }) {
+  return (
+    <div style={{ position: 'absolute', left: x, top: y, width: I_MW }}>
+      <MatchCard match={match} bestOf={bestOf} clickable={false} />
+    </div>
+  );
+}
+
+function IntlRoundLabel({ x, y, children, gold }) {
+  return (
+    <div style={{
+      position: 'absolute', left: x, top: y, width: I_MW,
+      textAlign: 'center',
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: gold ? '0.68rem' : '0.62rem',
+      letterSpacing: '0.12em', textTransform: 'uppercase',
+      color: gold ? 'var(--gold, #ffd166)' : '#8a98b1',
+      fontWeight: gold ? 600 : 400,
+      pointerEvents: 'none',
+    }}>{children}</div>
+  );
+}
+
+function IntlConnectorOverlay() {
+  const S = 'rgba(255,255,255,0.15)', SW = 1.5;
+  const pair = (y1, y2, ty, lx, rx) => {
+    const mx = lx + (rx - lx) / 2;
+    return (
+      <g stroke={S} strokeWidth={SW} fill="none">
+        <path d={`M ${lx} ${y1} H ${mx} V ${ty}`} />
+        <path d={`M ${lx} ${y2} H ${mx}`} />
+        <path d={`M ${mx} ${ty} H ${rx}`} />
+      </g>
+    );
+  };
+  const st = (y, lx, rx) => <path d={`M ${lx} ${y} H ${rx}`} stroke={S} strokeWidth={SW} fill="none" />;
+  const c1R = I_COL_X[0] + I_MW, c2L = I_COL_X[1], c2R = I_COL_X[1] + I_MW;
+  const c3L = I_COL_X[2], c3R = I_COL_X[2] + I_MW;
+  const c4L = I_COL_X[3], c4R = I_COL_X[3] + I_MW, c5L = I_COL_X[4];
+  return (
+    <svg style={{ position: 'absolute', top: 0, left: 0, width: I_GRID_W, height: I_GRID_H, pointerEvents: 'none' }}>
+      {pair(I_UB1_C[0], I_UB1_C[1], I_UBSF_C[0], c1R, c2L)}
+      {pair(I_UB1_C[2], I_UB1_C[3], I_UBSF_C[1], c1R, c2L)}
+      {pair(I_UBSF_C[0], I_UBSF_C[1], I_UBF_C, c2R, c3L)}
+      {st(I_LB1_C[0], c1R, c2L)}
+      {st(I_LB1_C[1], c1R, c2L)}
+      {pair(I_LB1_C[0], I_LB1_C[1], I_LB3_C, c2R, c3L)}
+      {st(I_LB3_C, c3R, c4L)}
+      {pair(I_UBF_C, I_LBF_C, I_GF_C, c4R, c5L)}
+    </svg>
+  );
+}
+
+/**
+ * Renders an 8-team double-elim bracket. Same layout for international
+ * and worlds — only difference is worlds plays UB Final as BO5 and uses
+ * "BO5" suffixes on the relevant labels for clarity.
+ */
+function InternationalBracketGrid({ bracket, isWorlds = false }) {
+  if (!bracket) {
+    return <div className="muted" style={{ fontSize: '0.82rem' }}>No bracket data.</div>;
+  }
+  const champion = bracket.grandFinal?.result?.winner || null;
+
+  const ubFinalBestOf = isWorlds ? 'bo5' : 'bo3';
+  const ubFinalLabel = isWorlds ? 'UB Final · BO5' : 'UB Final';
+  const lbFinalLabel = isWorlds ? 'LB Final · BO5' : 'LB Final';
+  const gfLabel = isWorlds ? 'Grand Final · BO5' : 'Grand Final';
+
+  return (
+    <div style={{ overflowX: 'auto', paddingBottom: 16 }}>
+      <div style={{ position: 'relative', width: I_GRID_W, height: I_GRID_H }}>
+        <IntlConnectorOverlay />
+
+        <IntlRoundLabel x={I_COL_X[0]} y={I_UB1_Y[0] - 28}>UB Round 1</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[1]} y={I_UBSF_Y[0] - 28}>UB Semifinals</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[2]} y={I_UBF_Y - 28}>{ubFinalLabel}</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[4]} y={I_GF_Y - 28} gold>{gfLabel}</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[0]} y={I_LB1_Y[0] - 28}>LB Round 1</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[1]} y={I_LB1_Y[0] - 28}>LB Round 2</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[2]} y={I_LB3_Y - 28}>LB Round 3</IntlRoundLabel>
+        <IntlRoundLabel x={I_COL_X[3]} y={I_LBF_Y - 28}>{lbFinalLabel}</IntlRoundLabel>
+
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[0]} match={bracket.ubR1?.[0]} />
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[1]} match={bracket.ubR1?.[1]} />
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[2]} match={bracket.ubR1?.[2]} />
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_UB1_Y[3]} match={bracket.ubR1?.[3]} />
+        <IntlPositionedMatch x={I_COL_X[1]} y={I_UBSF_Y[0]} match={bracket.ubSF?.[0]} />
+        <IntlPositionedMatch x={I_COL_X[1]} y={I_UBSF_Y[1]} match={bracket.ubSF?.[1]} />
+        <IntlPositionedMatch x={I_COL_X[2]} y={I_UBF_Y} match={bracket.ubFinal} bestOf={ubFinalBestOf} />
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_LB1_Y[0]} match={bracket.lbR1?.[0]} />
+        <IntlPositionedMatch x={I_COL_X[0]} y={I_LB1_Y[1]} match={bracket.lbR1?.[1]} />
+        <IntlPositionedMatch x={I_COL_X[1]} y={I_LB1_Y[0]} match={bracket.lbR2?.[0]} />
+        <IntlPositionedMatch x={I_COL_X[1]} y={I_LB1_Y[1]} match={bracket.lbR2?.[1]} />
+        <IntlPositionedMatch x={I_COL_X[2]} y={I_LB3_Y} match={bracket.lbR3} />
+        <IntlPositionedMatch x={I_COL_X[3]} y={I_LBF_Y} match={bracket.lbFinal} bestOf="bo5" />
+        <IntlPositionedMatch x={I_COL_X[4]} y={I_GF_Y} match={bracket.grandFinal} bestOf="bo5" />
+
+        {champion && (
+          <div style={{
+            position: 'absolute', left: I_COL_X[4], top: I_GF_Y + I_MH + 16,
+            width: I_MW, textAlign: 'center',
+            padding: '10px 12px',
+            background: 'rgba(255, 209, 102, 0.08)',
+            border: '1px solid rgba(255, 209, 102, 0.35)',
+            borderRadius: 8,
+            color: 'var(--gold, #ffd166)',
+            fontFamily: "'Sora', 'DM Sans', sans-serif",
+            fontWeight: 700, fontSize: '0.9rem',
+          }}>
+            🏆 {champion.name}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Left rail ─────────────── */
+
+/**
+ * Left rail event list. Shows the current season's events at the top
+ * (expanded by default) followed by collapsible sections for each
+ * archived past season.
+ *
+ * selectedKey format:
+ *   'overview'                           — current season's overview
+ *   '{type}-{slotIndex}'                 — current season event
+ *   'archive-{year}-overview'            — archived season overview
+ *   'archive-{year}-{type}-{slotIndex}'  — archived season event
+ */
+function EventList({ history, archive, currentYear, selectedKey, onSelect, circuitComplete }) {
+  // Track which archived season sections are expanded. Starts with all
+  // collapsed; user clicks the header to open one.
+  const [expandedYears, setExpandedYears] = useState(() => new Set());
+
+  function toggleYear(year) {
+    setExpandedYears(prev => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year);
+      else next.add(year);
+      return next;
+    });
+  }
+
+  // Current season entries (existing behavior)
+  const currentEntries = [
+    { key: 'overview', label: 'Season Overview', type: 'overview' },
+    ...history
+      .filter(e => !e.placeholder)
+      .map(e => ({
+        key: `${e.type}-${e.slotIndex}`,
+        label: e.name,
+        type: e.type,
+      })),
+  ];
+
+  // Archived seasons in reverse chronological order (newest first)
+  const archivedSeasons = [...(archive || [])].reverse();
+
+  return (
+    <nav style={{
+      ...card,
+      width: 240,
+      flexShrink: 0,
+    }}>
+      {/* ── Current season section ── */}
+      <div style={eventListSectionHeader}>
+        Season {currentYear}
+      </div>
+      {currentEntries.map(e => {
+        const isSelected = e.key === selectedKey;
+        return (
+          <button
+            key={e.key}
+            onClick={() => onSelect(e.key)}
+            style={navBtn(isSelected)}
+          >
+            {e.label}
+            {e.type !== 'overview' && (
+              <div style={navBtnSubtext}>{e.type}</div>
+            )}
+          </button>
+        );
+      })}
+      {circuitComplete && (
+        <div style={{
+          padding: '10px 14px',
+          borderTop: '1px solid rgba(255,255,255,0.04)',
+          fontSize: '0.68rem',
+          color: 'var(--gold, #ffd166)',
+          textAlign: 'center',
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: '0.08em',
+        }}>
+          🏆 SEASON COMPLETE
+        </div>
+      )}
+
+      {/* ── Archived seasons (collapsible) ── */}
+      {archivedSeasons.length > 0 && (
+        <div style={{
+          marginTop: 8,
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
+          <div style={{
+            ...eventListSectionHeader,
+            borderTop: 'none',
+            color: '#6f7d93',
+          }}>
+            Past Seasons
+          </div>
+          {archivedSeasons.map(arch => {
+            const isExpanded = expandedYears.has(arch.year);
+            const archEntries = (arch.history || []).filter(e => !e.placeholder);
+            return (
+              <div key={`arch-${arch.year}`}>
+                <button
+                  onClick={() => toggleYear(arch.year)}
+                  style={{
+                    ...navBtn(false),
+                    background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <span>
+                    <span style={{ color: '#a8b5c9', fontWeight: 600 }}>
+                      Season {arch.year}
+                    </span>
+                    {arch.worldChampion && (
+                      <div style={{
+                        fontSize: '0.66rem',
+                        color: 'var(--gold, #ffd166)',
+                        marginTop: 2,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        letterSpacing: '0.04em',
+                      }}>
+                        🏆 {arch.worldChampion.name}
+                      </div>
+                    )}
+                  </span>
+                  <span style={{
+                    color: '#6f7d93',
+                    fontSize: '0.7rem',
+                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.15s',
+                  }}>
+                    ▶
+                  </span>
+                </button>
+                {isExpanded && archEntries.map(e => {
+                  const archKey = `archive-${arch.year}-${e.type}-${e.slotIndex}`;
+                  const isSelected = archKey === selectedKey;
+                  return (
+                    <button
+                      key={archKey}
+                      onClick={() => onSelect(archKey)}
+                      style={{
+                        ...navBtn(isSelected),
+                        paddingLeft: 24,
+                      }}
+                    >
+                      {e.name}
+                      <div style={navBtnSubtext}>{e.type}</div>
+                    </button>
+                  );
+                })}
+                {isExpanded && arch.offseasonSummary && (
+                  <button
+                    key={`archive-${arch.year}-offseason`}
+                    onClick={() => onSelect(`archive-${arch.year}-offseason`)}
+                    style={{
+                      ...navBtn(`archive-${arch.year}-offseason` === selectedKey),
+                      paddingLeft: 24,
+                    }}
+                  >
+                    Offseason Summary
+                    <div style={navBtnSubtext}>retirements & development</div>
+                  </button>
+                )}
+                {isExpanded && arch.statsSnapshot && (
+                  <button
+                    key={`archive-${arch.year}-stats`}
+                    onClick={() => onSelect(`archive-${arch.year}-stats`)}
+                    style={{
+                      ...navBtn(`archive-${arch.year}-stats` === selectedKey),
+                      paddingLeft: 24,
+                    }}
+                  >
+                    Stats
+                    <div style={navBtnSubtext}>per-stage leaders</div>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Phase 6g: Hall of Fame across all archived seasons */}
+          {archivedSeasons.some(a => a.offseasonSummary?.retirees?.length > 0) && (
+            <button
+              onClick={() => onSelect('hall-of-fame')}
+              style={{
+                ...navBtn('hall-of-fame' === selectedKey),
+                marginTop: 8,
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <span style={{ color: 'var(--gold, #ffd166)', fontWeight: 600 }}>
+                🏆 Hall of Fame
+              </span>
+              <div style={navBtnSubtext}>retired players</div>
+            </button>
+          )}
+        </div>
+      )}
+    </nav>
+  );
+}
+
+const eventListSectionHeader = {
+  padding: '10px 14px',
+  borderBottom: '1px solid rgba(255,255,255,0.06)',
+  background: 'rgba(255,255,255,0.02)',
+  fontSize: '0.66rem',
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  color: '#8a98b1',
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+function navBtn(isSelected) {
+  return {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '10px 14px',
+    border: 'none',
+    background: isSelected ? 'rgba(106, 169, 255, 0.08)' : 'transparent',
+    color: isSelected ? '#e8ecf3' : '#a8b5c9',
+    borderTop: '1px solid rgba(255,255,255,0.04)',
+    borderLeft: isSelected ? '2px solid #6aa9ff' : '2px solid transparent',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: '0.84rem',
+    fontWeight: isSelected ? 600 : 400,
+  };
+}
+
+const navBtnSubtext = {
+  fontSize: '0.6rem',
+  color: '#6f7d93',
+  fontFamily: "'JetBrains Mono', monospace",
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  marginTop: 2,
+};
+
+/* ─────────────── Detail: Season Overview ─────────────── */
+
+function SeasonOverview({ gameState }) {
+  const [viewRegion, setViewRegion] = useState(gameState.humanRegion);
+  const region = gameState.regions[viewRegion];
+
+  const rows = region.teams.map(team => {
+    const total = gameState.season.points[`${viewRegion}:${team.abbr}`] || 0;
+    return { team, total };
+  }).sort((a, b) => b.total - a.total);
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Circuit Points — {region.name}</h3>
+      <RegionSelector current={viewRegion} onChange={setViewRegion} />
+
+      <div style={{ marginTop: 14, ...card }}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={{ ...th, width: 44 }}>#</th>
+              <th style={th}>Team</th>
+              <th style={{ ...th, textAlign: 'right', width: 80 }}>Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ team, total }, idx) => (
+              <tr key={team.abbr} style={{
+                fontWeight: team.isHuman ? 600 : 400,
+              }}>
+                <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {idx + 1}
+                </td>
+                <td style={{ ...td, color: team.color }}>
+                  {team.name}
+                  {team.isHuman && (
+                    <span style={{
+                      marginLeft: 6, fontSize: '0.6rem', color: '#6aa9ff',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                    }}>You</span>
+                  )}
+                </td>
+                <td style={{ ...td, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
+                  {total}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Detail: Stage ─────────────── */
+
+function StageDetail({ entry, gameState }) {
+  const [viewRegion, setViewRegion] = useState(gameState.humanRegion);
+  const frozen = entry.frozenStandings?.[viewRegion];
+  const bracket = entry.bracketResults?.[viewRegion];
+  const points = entry.pointsAwarded?.[viewRegion] || [];
+
+  const pointsSorted = [...points].sort((a, b) => a.placement - b.placement);
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>{entry.name}</h3>
+      <RegionSelector current={viewRegion} onChange={setViewRegion} />
+
+      {bracket?.champion && (
+        <>
+          <div style={subHeader}>Champion</div>
+          <div style={{
+            padding: '12px 16px',
+            background: 'rgba(255, 209, 102, 0.08)',
+            border: '1px solid rgba(255, 209, 102, 0.3)',
+            borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <span style={{ fontSize: '1.3rem' }}>🏆</span>
+            <span style={{ color: bracket.champion.color, fontWeight: 700, fontSize: '1rem' }}>
+              {bracket.champion.name}
+            </span>
+            {bracket.runnerUp && (
+              <span style={{ marginLeft: 'auto', color: '#8a98b1', fontSize: '0.82rem' }}>
+                over <span style={{ color: bracket.runnerUp.color }}>{bracket.runnerUp.name}</span>
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      <div style={subHeader}>Final Placements + Points Earned</div>
+      <div style={card}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={{ ...th, width: 44 }}>#</th>
+              <th style={th}>Team</th>
+              <th style={{ ...th, textAlign: 'right', width: 80 }}>Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pointsSorted.map(row => (
+              <tr key={row.abbr}>
+                <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {row.placement}
+                </td>
+                <td style={{ ...td, color: row.color, fontWeight: 600 }}>{row.name}</td>
+                <td style={{
+                  ...td, textAlign: 'right',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: row.points > 0 ? '#6fe8a8' : '#6f7d93',
+                }}>
+                  {row.points > 0 ? `+${row.points}` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {bracket?.fullBracket && (
+        <>
+          <div style={subHeader}>Playoff Bracket</div>
+          <StageBracketGrid bracket={bracket.fullBracket} />
+        </>
+      )}
+
+      {frozen && (
+        <>
+          <div style={subHeader}>Group Stage Final Standings</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {['A', 'B'].map(grp => (
+              <div key={grp} style={card}>
+                <div style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  background: 'rgba(255,255,255,0.02)',
+                  fontSize: '0.64rem',
+                  letterSpacing: '0.14em',
+                  textTransform: 'uppercase',
+                  color: '#8a98b1',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}>
+                  Group {grp}
+                </div>
+                <table style={table}>
+                  <tbody>
+                    {(frozen[grp] || []).map((team, i) => (
+                      <tr key={team.abbr}>
+                        <td style={{ ...td, color: '#6f7d93', width: 32, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' }}>
+                          {i + 1}
+                        </td>
+                        <td style={{ ...td, color: team.color, fontWeight: team.isHuman ? 600 : 400 }}>
+                          {team.name}
+                        </td>
+                        <td style={{ ...td, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.74rem', color: '#a8b5c9' }}>
+                          {team.record.wins}-{team.record.losses}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Detail: International ─────────────── */
+
+function InternationalDetail({ entry, gameState }) {
+  const [viewRegion, setViewRegion] = useState(gameState.humanRegion);
+  const points = entry.pointsAwarded?.[viewRegion] || [];
+  const pointsSorted = [...points].sort((a, b) => a.placement - b.placement);
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>{entry.name}</h3>
+
+      {entry.champion && (
+        <>
+          <div style={subHeader}>Champion</div>
+          <div style={{
+            padding: '14px 18px',
+            background: 'rgba(255, 209, 102, 0.1)',
+            border: '1px solid rgba(255, 209, 102, 0.35)',
+            borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 12,
+          }}>
+            <span style={{ fontSize: '1.5rem' }}>🏆</span>
+            <span style={{ color: entry.champion.color, fontWeight: 700, fontSize: '1.1rem' }}>
+              {entry.champion.name}
+            </span>
+            {entry.runnerUp && (
+              <span style={{ marginLeft: 'auto', color: '#8a98b1', fontSize: '0.85rem' }}>
+                over <span style={{ color: entry.runnerUp.color }}>{entry.runnerUp.name}</span>
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10 }}>
+          <div style={{ ...subHeader, margin: 0 }}>Points Awarded</div>
+          <RegionSelector current={viewRegion} onChange={setViewRegion} />
+        </div>
+        {pointsSorted.length === 0 ? (
+          <div style={{ color: '#6f7d93', fontSize: '0.82rem', fontStyle: 'italic' }}>
+            No teams from {gameState.regions[viewRegion].name} participated.
+          </div>
+        ) : (
+          <div style={card}>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, width: 44 }}>#</th>
+                  <th style={th}>Team</th>
+                  <th style={{ ...th, textAlign: 'right', width: 80 }}>Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pointsSorted.map(row => (
+                  <tr key={row.abbr}>
+                    <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {row.placement}
+                    </td>
+                    <td style={{ ...td, color: row.color, fontWeight: 600 }}>{row.name}</td>
+                    <td style={{
+                      ...td, textAlign: 'right',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: row.points > 0 ? '#6fe8a8' : '#6f7d93',
+                    }}>
+                      {row.points > 0 ? `+${row.points}` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {entry.selectionShow && entry.selectionShow.picks?.length > 0 && (
+        <>
+          <div style={subHeader}>Selection Show</div>
+          <div style={card}>
+            <table style={table}>
+              <tbody>
+                {entry.selectionShow.picks.map((p, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, color: '#6f7d93', width: 36, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' }}>
+                      #{p.order}
+                    </td>
+                    <td style={{ ...td, color: p.picker.color, fontWeight: 600 }}>
+                      {p.picker.name}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 60 }}>picked</td>
+                    <td style={{ ...td, color: p.picked.color, fontWeight: 600 }}>
+                      {p.picked.name}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {entry.bracket && (
+        <>
+          <div style={subHeader}>Playoff Bracket</div>
+          <InternationalBracketGrid bracket={entry.bracket} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Detail: Worlds ─────────────── */
+
+function WorldsDetail({ entry, gameState }) {
+  const finalPlacements = [...(entry.bracketPlacements || [])]
+    .sort((a, b) => a.placement - b.placement);
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>{entry.name}</h3>
+
+      {entry.champion && (
+        <>
+          <div style={subHeader}>World Champion</div>
+          <div style={{
+            padding: '18px 22px',
+            background: 'rgba(255, 209, 102, 0.12)',
+            border: '1px solid rgba(255, 209, 102, 0.45)',
+            borderRadius: 10,
+            display: 'flex', alignItems: 'center', gap: 14,
+          }}>
+            <span style={{ fontSize: '1.8rem' }}>🏆</span>
+            <span style={{ color: entry.champion.color, fontWeight: 700, fontSize: '1.3rem' }}>
+              {entry.champion.name}
+            </span>
+            {entry.runnerUp && (
+              <span style={{ marginLeft: 'auto', color: '#8a98b1', fontSize: '0.9rem' }}>
+                over <span style={{ color: entry.runnerUp.color, fontWeight: 600 }}>
+                  {entry.runnerUp.name}
+                </span>
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {finalPlacements.length > 0 && (
+        <>
+          <div style={subHeader}>Final Standings (1–8)</div>
+          <div style={card}>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, width: 44 }}>#</th>
+                  <th style={th}>Team</th>
+                </tr>
+              </thead>
+              <tbody>
+                {finalPlacements.map(p => (
+                  <tr key={p.abbr}>
+                    <td style={{ ...td, color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {p.placement}
+                    </td>
+                    <td style={{ ...td, color: p.color, fontWeight: 600 }}>{p.name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {entry.groups && (
+        <>
+          <div style={subHeader}>Group Stage Results</div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: 12,
+          }}>
+            {Object.keys(entry.groups).map(gk => {
+              const g = entry.groups[gk];
+              return (
+                <div key={gk} style={{ ...card, padding: '10px 14px' }}>
+                  <div style={{
+                    fontSize: '0.62rem',
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color: '#8a98b1',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    marginBottom: 6,
+                  }}>
+                    Group {gk}
+                  </div>
+                  <div style={{ fontSize: '0.58rem', color: '#6fe8a8', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                    Advanced
+                  </div>
+                  {(g.advanced || []).map(c => (
+                    <div key={c.abbr} style={{ color: c.color, fontSize: '0.84rem', fontWeight: 600, padding: '1px 0' }}>
+                      {c.name}
+                    </div>
+                  ))}
+                  <div style={{ fontSize: '0.58rem', color: '#7a8596', letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 8, marginBottom: 4 }}>
+                    Eliminated
+                  </div>
+                  {(g.eliminated || []).map(c => (
+                    <div key={c.abbr} style={{ color: '#7a8596', fontSize: '0.78rem', padding: '1px 0' }}>
+                      {c.name}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {entry.qualified && (
+        <>
+          <div style={subHeader}>Qualified Teams by Region</div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 12,
+          }}>
+            {REGION_KEYS.map(rk => {
+              const seeds = entry.qualified[rk] || [];
+              if (seeds.length === 0) return null;
+              return (
+                <div key={rk} style={{ ...card, padding: '8px 12px' }}>
+                  <div style={{
+                    fontSize: '0.6rem',
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color: '#8a98b1',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    marginBottom: 6,
+                  }}>
+                    {gameState.regions[rk].name}
+                  </div>
+                  {seeds.map((c, i) => (
+                    <div key={c.abbr} style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '2px 0',
+                      fontSize: '0.78rem',
+                    }}>
+                      <span style={{ color: '#6f7d93', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.66rem', width: 14 }}>
+                        {i + 1}
+                      </span>
+                      <span style={{ color: c.color, fontWeight: 600 }}>{c.name}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {entry.playoffSelection && entry.playoffSelection.picks?.length > 0 && (
+        <>
+          <div style={subHeader}>Playoff Selection Show</div>
+          <div style={card}>
+            <table style={table}>
+              <tbody>
+                {entry.playoffSelection.picks.map((p, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, color: '#6f7d93', width: 36, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' }}>
+                      #{p.order}
+                    </td>
+                    <td style={{ ...td, color: p.picker.color, fontWeight: 600 }}>
+                      {p.picker.name}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 60 }}>
+                      Grp {p.pickerGroup}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 50 }}>picked</td>
+                    <td style={{ ...td, color: p.picked.color, fontWeight: 600 }}>
+                      {p.picked.name}
+                    </td>
+                    <td style={{ ...td, color: '#6f7d93', width: 60 }}>
+                      Grp {p.pickedGroup}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {entry.bracket && (
+        <>
+          <div style={subHeader}>Playoff Bracket</div>
+          <InternationalBracketGrid bracket={entry.bracket} isWorlds={true} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Offseason Summary detail (Phase 6g) ─────────────── */
+
+function OffseasonSummaryDetail({ archEntry }) {
+  const summary = archEntry.offseasonSummary;
+  const year = archEntry.year;
+
+  if (!summary) {
+    return (
+      <div className="empty-state">
+        <p>No offseason data archived for Season {year}.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          This save predates Phase 6g — only seasons completed afterward
+          will have offseason summaries.
+        </p>
+      </div>
+    );
+  }
+
+  const retirees = summary.retirees || [];
+  const gainers = summary.biggestGainers || [];
+  const losers = summary.biggestLosers || [];
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Season {year} → {year + 1} Offseason</h3>
+
+      {/* Top stat strip — at-a-glance counts */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+        gap: 10,
+        marginBottom: 20,
+      }}>
+        <StatTile label="Retirements" value={summary.retiredCount || 0} accent="#ff8c95" />
+        <StatTile label="Rookies generated" value={summary.rookiesGenerated || 0} accent="#8ab8ff" />
+        <StatTile label="AI signings" value={summary.aiSigningsCount || 0} accent="#a3d977" />
+        <StatTile label="Players developed" value={summary.developedCount || 0} accent="#cdb6f2" />
+      </div>
+
+      {/* Movers */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 16,
+        marginBottom: 20,
+      }}>
+        <MoverPanel title="Biggest Gainers" players={gainers} positive />
+        <MoverPanel title="Biggest Losers" players={losers} positive={false} />
+      </div>
+
+      {/* Retirees for this season */}
+      {retirees.length > 0 && (
+        <>
+          <div style={subHeader}>Retired this offseason ({retirees.length})</div>
+          <div style={card}>
+            <table style={table}>
+              <thead>
+                <tr>
+                  <th style={th}>Tag</th>
+                  <th style={th}>Name</th>
+                  <th style={th}>Nat</th>
+                  <th style={th}>Age</th>
+                  <th style={th}>OVR</th>
+                  <th style={th}>Last team</th>
+                </tr>
+              </thead>
+              <tbody>
+                {retirees.map((r, i) => (
+                  <tr key={i}>
+                    <td style={td}><strong>{r.tag}</strong></td>
+                    <td style={td}>{r.name}</td>
+                    <td style={td}>
+                      {r.nationality && (
+                        <span
+                          className={`fi ${flagClass(r.nationality)}`}
+                          title={nationalityName(r.nationality)}
+                        />
+                      )}
+                    </td>
+                    <td style={td}>{r.age}</td>
+                    <td style={td}>{r.overall}</td>
+                    <td style={td}>
+                      {r.wasFA ? (
+                        <span style={{ color: '#6f7d93', fontStyle: 'italic' }}>FA</span>
+                      ) : (
+                        <>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 10,
+                              height: 10,
+                              borderRadius: 2,
+                              background: r.teamColor || '#444',
+                              marginRight: 6,
+                              verticalAlign: 'middle',
+                            }}
+                          />
+                          {r.teamAbbr}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatTile({ label, value, accent }) {
+  return (
+    <div style={{
+      padding: '12px 14px',
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 8,
+    }}>
+      <div style={{
+        fontSize: '0.6rem',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        color: '#8a98b1',
+        fontFamily: "'JetBrains Mono', monospace",
+        marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: '1.6rem',
+        fontWeight: 700,
+        color: accent || '#fff',
+      }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function MoverPanel({ title, players, positive }) {
+  return (
+    <div style={card}>
+      <div style={{
+        ...sectionHeader,
+        marginBottom: 0,
+        padding: '10px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        {title}
+      </div>
+      {players.length === 0 ? (
+        <div style={{ padding: 14, color: '#6f7d93', fontSize: '0.85rem' }}>
+          No data
+        </div>
+      ) : (
+        <table style={table}>
+          <tbody>
+            {players.map((p, i) => {
+              const delta = p.delta || 0;
+              const deltaColor = delta > 0 ? '#a3d977' : delta < 0 ? '#ff8c95' : '#8a98b1';
+              const deltaStr = delta > 0 ? `+${delta}` : `${delta}`;
+              return (
+                <tr key={i}>
+                  <td style={td}><strong>{p.tag}</strong></td>
+                  <td style={td}>{p.name}</td>
+                  <td style={{ ...td, color: '#8a98b1', width: 50 }}>{p.overall}</td>
+                  <td style={{ ...td, color: deltaColor, fontWeight: 600, width: 50, textAlign: 'right' }}>
+                    {deltaStr}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Archived per-season stats detail (Phase 6h-B) ─────────────── */
+
+/**
+ * Resolve the stat object for one archived player given a stage filter.
+ * Mirror of resolveStats() in Stats.jsx but reads from a stored
+ * snapshot (no live `player.stats` to merge in — the season is over).
+ *
+ * Filter values: 1 / 2 / 3 / 'season' (sums all populated stages).
+ */
+function resolveArchivedStats(playerEntry, filter) {
+  const stageStats = playerEntry.stageStats || {};
+
+  if (filter === 'season') {
+    const totals = { kills: 0, deaths: 0, assists: 0, acs: 0, maps: 0 };
+    for (const num of Object.keys(stageStats)) {
+      const s = stageStats[num];
+      totals.kills   += s.kills   || 0;
+      totals.deaths  += s.deaths  || 0;
+      totals.assists += s.assists || 0;
+      totals.acs     += s.acs     || 0;
+      totals.maps    += s.maps    || 0;
+    }
+    return finalizeStats(totals);
+  }
+
+  const snap = stageStats[filter];
+  if (snap) return finalizeStats(snap);
+  return finalizeStats({ kills: 0, deaths: 0, assists: 0, acs: 0, maps: 0 });
+}
+
+function finalizeStats(s) {
+  const kd = s.deaths === 0 ? s.kills : +(s.kills / s.deaths).toFixed(2);
+  const avgAcs = s.maps === 0 ? 0 : Math.round(s.acs / s.maps);
+  return { ...s, kd, avgAcs };
+}
+
+function ArchivedStatsDetail({ archEntry }) {
+  const [sortKey, setSortKey] = useState('kills');
+  const [stageFilter, setStageFilter] = useState('season');
+  const [region, setRegion] = useState('all');
+
+  const snapshot = archEntry.statsSnapshot;
+  const year = archEntry.year;
+
+  if (!snapshot) {
+    return (
+      <div className="empty-state">
+        <p>No stats archived for Season {year}.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          This save predates Phase 6h — only seasons completed afterward
+          will have per-season stats.
+        </p>
+      </div>
+    );
+  }
+
+  // Determine which stages have data. Walk every player; collect stage
+  // numbers seen in their stageStats.
+  const availableStages = new Set();
+  for (const rk of REGION_KEYS) {
+    for (const p of (snapshot[rk] || [])) {
+      for (const num of Object.keys(p.stageStats || {})) {
+        availableStages.add(Number(num));
+      }
+    }
+  }
+  const stages = [...availableStages].sort((a, b) => a - b);
+
+  const effectiveFilter = (stageFilter === 'season' || availableStages.has(stageFilter))
+    ? stageFilter
+    : 'season';
+
+  // Gather players from selected region(s)
+  const regionKeys = region === 'all' ? REGION_KEYS : [region];
+  const rows = [];
+  for (const rk of regionKeys) {
+    for (const p of (snapshot[rk] || [])) {
+      const stats = resolveArchivedStats(p, effectiveFilter);
+      rows.push({ p, stats, regionKey: rk });
+    }
+  }
+
+  rows.sort((a, b) => {
+    switch (sortKey) {
+      case 'kd': return b.stats.kd - a.stats.kd;
+      case 'avgAcs': return b.stats.avgAcs - a.stats.avgAcs;
+      case 'maps': return b.stats.maps - a.stats.maps;
+      default: return (b.stats[sortKey] || 0) - (a.stats[sortKey] || 0);
+    }
+  });
+
+  const sortOptions = [
+    { key: 'kills', label: 'Kills' },
+    { key: 'deaths', label: 'Deaths' },
+    { key: 'assists', label: 'Assists' },
+    { key: 'kd', label: 'K/D' },
+    { key: 'avgAcs', label: 'ACS' },
+    { key: 'maps', label: 'Maps' },
+  ];
+
+  const filterLabel = effectiveFilter === 'season' ? 'Season Total' : `Stage ${effectiveFilter}`;
+
+  const stageBtnStyle = (active) => ({
+    padding: '5px 12px',
+    background: active ? 'var(--accent, #ff4655)' : 'rgba(255,255,255,0.03)',
+    border: active ? '1px solid var(--accent, #ff4655)' : '1px solid rgba(255,255,255,0.08)',
+    color: active ? '#fff' : '#cdd5e5',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: '0.66rem',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    marginRight: 6,
+  });
+
+  // Region row (replaces RegionSelector since this is in History view)
+  const regionBtnStyle = (active) => ({
+    ...stageBtnStyle(active),
+  });
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>Season {year} Stats</h3>
+      <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 14 }}>
+        Player stat leaders from Season {year}. Filter by stage or view season totals.
+      </p>
+
+      {/* Region selector */}
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          Region
+        </span>
+        <button onClick={() => setRegion('all')} style={regionBtnStyle(region === 'all')}>All</button>
+        {REGION_KEYS.map(rk => (
+          <button key={rk} onClick={() => setRegion(rk)} style={regionBtnStyle(region === rk)}>
+            {rk.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      {/* Stage filter */}
+      <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          View
+        </span>
+        {stages.map(num => (
+          <button key={num} onClick={() => setStageFilter(num)} style={stageBtnStyle(effectiveFilter === num)}>
+            Stage {num}
+          </button>
+        ))}
+        <button onClick={() => setStageFilter('season')} style={stageBtnStyle(effectiveFilter === 'season')}>
+          Season Total
+        </button>
+      </div>
+
+      <p className="muted" style={{ fontSize: '0.78rem', marginBottom: 10 }}>
+        Showing: <strong style={{ color: '#cdd5e5' }}>{filterLabel}</strong>
+      </p>
+
+      {/* Sort buttons */}
+      <div className="sort-buttons" style={{ marginBottom: 10 }}>
+        {sortOptions.map(opt => (
+          <button
+            key={opt.key}
+            className={sortKey === opt.key ? 'active' : ''}
+            onClick={() => setSortKey(opt.key)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={card}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={th}>#</th>
+              <th style={th}>Player</th>
+              <th style={th}>Team</th>
+              {region === 'all' && <th style={th}>Region</th>}
+              <th style={th}>Nat</th>
+              <th style={th}>Age</th>
+              <th style={th}>Maps</th>
+              <th style={th}>K</th>
+              <th style={th}>D</th>
+              <th style={th}>A</th>
+              <th style={th}>K/D</th>
+              <th style={th}>ACS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ p, stats, regionKey }, i) => (
+              <tr key={`${regionKey}-${p.tag}-${i}`}>
+                <td style={td}>{i + 1}</td>
+                <td style={td}><strong>{p.tag}</strong></td>
+                <td style={td}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 10,
+                      height: 10,
+                      borderRadius: 2,
+                      background: p.teamColor || '#444',
+                      marginRight: 6,
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                  {p.teamAbbr}
+                </td>
+                {region === 'all' && <td style={{ ...td, color: '#8a98b1' }}>{regionKey.toUpperCase()}</td>}
+                <td style={td} title={nationalityName(p.nationality)}>
+                  {p.nationality && (
+                    <span className={`fi ${flagClass(p.nationality)}`} />
+                  )}
+                </td>
+                <td style={td}>{p.age}</td>
+                <td style={td}>{stats.maps}</td>
+                <td style={td}>{stats.kills}</td>
+                <td style={td}>{stats.deaths}</td>
+                <td style={td}>{stats.assists}</td>
+                <td style={td}>{stats.kd}</td>
+                <td style={td}>{stats.avgAcs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Hall of Fame (Phase 6g) ─────────────── */
+
+function HallOfFame({ archive }) {
+  const [sortKey, setSortKey] = useState('year');
+
+  // Aggregate retirees across all archived seasons. Retiree cards already
+  // include `year` and team metadata, so we can render directly.
+  const all = [];
+  for (const arch of archive) {
+    const retirees = arch.offseasonSummary?.retirees || [];
+    for (const r of retirees) all.push(r);
+  }
+
+  if (all.length === 0) {
+    return (
+      <div className="empty-state">
+        <p>The Hall of Fame is empty.</p>
+        <p className="muted" style={{ fontSize: '0.78rem' }}>
+          Players appear here when they retire during the offseason.
+          Run more seasons to populate it.
+        </p>
+      </div>
+    );
+  }
+
+  const sorted = [...all].sort((a, b) => {
+    switch (sortKey) {
+      case 'overall': return (b.overall || 0) - (a.overall || 0);
+      case 'age': return (b.age || 0) - (a.age || 0);
+      case 'tag': return (a.tag || '').localeCompare(b.tag || '');
+      case 'year':
+      default: return (b.year || 0) - (a.year || 0);
+    }
+  });
+
+  function SortBtn({ label, value }) {
+    const active = sortKey === value;
+    return (
+      <button
+        onClick={() => setSortKey(value)}
+        style={{
+          padding: '5px 10px',
+          background: active ? 'var(--accent, #ff4655)' : 'rgba(255,255,255,0.03)',
+          border: active ? '1px solid var(--accent, #ff4655)' : '1px solid rgba(255,255,255,0.08)',
+          color: active ? '#fff' : '#cdd5e5',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '0.66rem',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          marginRight: 6,
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>
+        🏆 <span style={{ color: 'var(--gold, #ffd166)' }}>Hall of Fame</span>
+      </h3>
+      <p className="muted" style={{ fontSize: '0.82rem', marginBottom: 14 }}>
+        {all.length} retired player{all.length === 1 ? '' : 's'} across {archive.length} season{archive.length === 1 ? '' : 's'}.
+      </p>
+
+      <div style={{ marginBottom: 12 }}>
+        <span style={{
+          fontSize: '0.6rem',
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: '#8a98b1',
+          fontFamily: "'JetBrains Mono', monospace",
+          marginRight: 8,
+        }}>
+          Sort by
+        </span>
+        <SortBtn label="Year" value="year" />
+        <SortBtn label="OVR" value="overall" />
+        <SortBtn label="Age" value="age" />
+        <SortBtn label="Tag" value="tag" />
+      </div>
+
+      <div style={card}>
+        <table style={table}>
+          <thead>
+            <tr>
+              <th style={th}>Year</th>
+              <th style={th}>Tag</th>
+              <th style={th}>Name</th>
+              <th style={th}>Nat</th>
+              <th style={th}>Age</th>
+              <th style={th}>OVR</th>
+              <th style={th}>Last team</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr key={i}>
+                <td style={{ ...td, color: '#8a98b1', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem' }}>
+                  {r.year}
+                </td>
+                <td style={td}><strong>{r.tag}</strong></td>
+                <td style={td}>{r.name}</td>
+                <td style={td}>
+                  {r.nationality && (
+                    <span
+                      className={`fi ${flagClass(r.nationality)}`}
+                      title={nationalityName(r.nationality)}
+                    />
+                  )}
+                </td>
+                <td style={td}>{r.age}</td>
+                <td style={{ ...td, fontWeight: 600 }}>{r.overall}</td>
+                <td style={td}>
+                  {r.wasFA ? (
+                    <span style={{ color: '#6f7d93', fontStyle: 'italic' }}>FA</span>
+                  ) : (
+                    <>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 10,
+                          height: 10,
+                          borderRadius: 2,
+                          background: r.teamColor || '#444',
+                          marginRight: 6,
+                          verticalAlign: 'middle',
+                        }}
+                      />
+                      {r.teamAbbr}
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Main component ─────────────── */
+
+export default function History({ gameState }) {
+  const history = gameState.season.history || [];
+  const archive = gameState.archive || [];
+  const currentYear = gameState.seasonNumber || 2025;
+  const circuitComplete = gameState.season.status === 'season-complete';
+
+  // Default selection: most recent event in current season, else overview
+  const mostRecent = history.filter(e => !e.placeholder).slice(-1)[0];
+  const defaultKey = mostRecent
+    ? `${mostRecent.type}-${mostRecent.slotIndex}`
+    : 'overview';
+
+  const [selectedKey, setSelectedKey] = useState(defaultKey);
+
+  // Resolve selected entry. Three cases:
+  //   1. 'overview'                       — current season overview
+  //   2. '{type}-{slotIndex}'             — current season event
+  //   3. 'archive-{year}-{type}-{slot}'   — past season event
+  let detail = null;
+
+  if (selectedKey === 'overview') {
+    detail = <SeasonOverview gameState={gameState} />;
+  } else if (selectedKey === 'hall-of-fame') {
+    detail = <HallOfFame archive={archive} />;
+  } else if (selectedKey.startsWith('archive-')) {
+    // Phase 6g: dedicated key for offseason summary panels.
+    // Format: archive-{year}-offseason
+    const offseasonMatch = selectedKey.match(/^archive-(\d+)-offseason$/);
+    if (offseasonMatch) {
+      const year = parseInt(offseasonMatch[1], 10);
+      const archEntry = archive.find(a => a.year === year);
+      if (archEntry) {
+        detail = <OffseasonSummaryDetail archEntry={archEntry} />;
+      }
+    } else {
+      // Phase 6h-B: archived per-season stats.
+      // Format: archive-{year}-stats
+      const statsMatch = selectedKey.match(/^archive-(\d+)-stats$/);
+      if (statsMatch) {
+        const year = parseInt(statsMatch[1], 10);
+        const archEntry = archive.find(a => a.year === year);
+        if (archEntry) {
+          detail = <ArchivedStatsDetail archEntry={archEntry} />;
+        }
+      } else {
+        // Parse archive event key. Format: archive-{year}-{type}-{slotIndex}
+        const m = selectedKey.match(/^archive-(\d+)-(stage|international|worlds)-(\d+)$/);
+        if (m) {
+          const year = parseInt(m[1], 10);
+          const eventType = m[2];
+          const slotIdx = parseInt(m[3], 10);
+          const archEntry = archive.find(a => a.year === year);
+          if (archEntry) {
+            const found = (archEntry.history || []).find(
+              e => e.type === eventType && e.slotIndex === slotIdx
+            );
+            if (found) {
+              if (found.type === 'stage') detail = <StageDetail entry={found} gameState={gameState} />;
+              else if (found.type === 'international') detail = <InternationalDetail entry={found} gameState={gameState} />;
+              else if (found.type === 'worlds') detail = <WorldsDetail entry={found} gameState={gameState} />;
+            }
+          }
+        }
+      }
+    }
+  } else {
+    const found = history.find(e => `${e.type}-${e.slotIndex}` === selectedKey);
+    if (found) {
+      if (found.type === 'stage') detail = <StageDetail entry={found} gameState={gameState} />;
+      else if (found.type === 'international') detail = <InternationalDetail entry={found} gameState={gameState} />;
+      else if (found.type === 'worlds') detail = <WorldsDetail entry={found} gameState={gameState} />;
+    }
+  }
+
+  return (
+    <div>
+      <h2>History</h2>
+      <p className="muted" style={{ fontSize: '0.78rem', marginBottom: 18 }}>
+        Browse events from the current season and past seasons. Past seasons
+        are stored in your save and persist until you delete it.
+      </p>
+
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <EventList
+          history={history}
+          archive={archive}
+          currentYear={currentYear}
+          selectedKey={selectedKey}
+          onSelect={setSelectedKey}
+          circuitComplete={circuitComplete}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {detail || (
+            <div className="empty-state">
+              <p>Nothing to show yet — play through some events first.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
