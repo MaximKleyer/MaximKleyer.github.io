@@ -82,10 +82,12 @@ export default function MainMenu({ player, onNavigate }) {
       {/* Menu Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 4 }}>
         <MenuButton icon="🗺️" label="Quests" sub="Explore & Battle" onClick={() => onNavigate("quests")} color="#4a9" />
-        <MenuButton icon="🏆" label="Champion" sub="Boss Gauntlet" onClick={() => onNavigate("champion")} color="#d64" />
+        <MenuButton icon="⚔️" label="Battle" sub="PVP & Tournaments" onClick={() => onNavigate("battleHub")} color="#e64" />
+        <MenuButton icon="🏆" label="Champion" sub="Raid Bosses" onClick={() => onNavigate("champion")} color="#d64" />
         <MenuButton icon="🛡️" label="Guards" sub="Train & Manage" onClick={() => onNavigate("guards")} color="#68c" />
         <MenuButton icon="🏪" label="Shop" sub="Buy Guards" onClick={() => onNavigate("shop")} color="#c84" />
         <MenuButton icon="👤" label="Profile" sub="Stats & Info" onClick={() => onNavigate("profile")} color="#a6d" />
+        <MenuButton icon="⚙️" label="Settings" sub="QoL Options" onClick={() => onNavigate("settings")} color="#888" />
       </div>
     </div>
   );

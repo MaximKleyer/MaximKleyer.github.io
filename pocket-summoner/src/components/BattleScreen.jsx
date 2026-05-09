@@ -6,11 +6,14 @@ import { useState, useEffect, useRef } from "react";
  * Replays the pre-computed battle log with 2-second delays between moves.
  * Shows both guards, health bars, move used, damage, and effectiveness.
  */
-export default function BattleScreen({ playerGuard, enemyGuard, battleLog, onComplete }) {
+export default function BattleScreen({ playerGuard, enemyGuard, battleLog, onComplete, speed = "normal" }) {
   const [step, setStep] = useState(0);
   const [finished, setFinished] = useState(false);
   const timerRef = useRef(null);
   const logEndRef = useRef(null);
+
+  // Speed multiplier: fast = 0.5x delay, normal = 1x, slow = 1.5x
+  const speedMult = speed === "fast" ? 0.5 : speed === "slow" ? 1.5 : 1;
 
   const current = battleLog[step] || battleLog[0];
   const pHP = current.pHP;
@@ -21,15 +24,14 @@ export default function BattleScreen({ playerGuard, enemyGuard, battleLog, onCom
   // Auto-advance through battle log
   useEffect(() => {
     if (step >= battleLog.length - 1) {
-      // Last entry — wait a beat then mark finished
-      timerRef.current = setTimeout(() => setFinished(true), 1500);
+      timerRef.current = setTimeout(() => setFinished(true), 1000 * speedMult);
       return () => clearTimeout(timerRef.current);
     }
 
-    const delay = step === 0 ? 1200 : 2000;
-    timerRef.current = setTimeout(() => setStep((s) => s + 1), delay);
+    const baseDelay = step === 0 ? 1200 : 2000;
+    timerRef.current = setTimeout(() => setStep((s) => s + 1), baseDelay * speedMult);
     return () => clearTimeout(timerRef.current);
-  }, [step, battleLog.length]);
+  }, [step, battleLog.length, speedMult]);
 
   // Scroll log into view
   useEffect(() => {

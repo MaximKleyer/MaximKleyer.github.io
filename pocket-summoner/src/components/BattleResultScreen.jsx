@@ -1,7 +1,6 @@
 export default function BattleResultScreen({ result, onContinue }) {
   const { battle, encounter, xp, gold, spiritFound, reduced,
-          championCleared, championFailed, championAdvance,
-          tierName, nextFight, totalFights, spiritsAwarded } = result;
+          raidCleared, raidFailed, bossName, spiritsAwarded } = result;
 
   return (
     <div className="screen-center">
@@ -14,39 +13,43 @@ export default function BattleResultScreen({ result, onContinue }) {
         <h2 style={{
           fontFamily: "var(--font-pixel)", fontSize: 13,
           marginBottom: 8,
-          color: championFailed ? "var(--danger)"
-            : championCleared ? "var(--success)"
+          color: result.isPvp
+            ? (battle.won ? "var(--success)" : "var(--danger)")
+            : raidFailed ? "var(--danger)"
+            : raidCleared ? "var(--success)"
             : battle.won ? "var(--accent)" : "var(--danger)",
         }}>
-          {championCleared ? "🏆 TIER CLEARED!" :
-           championFailed ? "💀 CHALLENGE FAILED" :
-           championAdvance ? "✅ Fight Won!" :
-           battle.won ? "🏆 Victory!" : "💀 Defeat"}
+          {result.isPvp
+            ? (battle.won ? "🏆 PVP VICTORY!" : "💀 PVP DEFEAT")
+            : raidCleared ? "🏆 RAID DEFEATED!"
+            : raidFailed ? "💀 RAID FAILED"
+            : battle.won ? "🏆 Victory!" : "💀 Defeat"
+          }
         </h2>
 
         <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 16 }}>
           {encounter}
         </div>
 
-        {/* Champion advance info */}
-        {championAdvance && (
-          <div style={{
-            background: "rgba(240,192,64,0.12)", border: "1px solid rgba(240,192,64,0.25)",
-            borderRadius: 8, padding: "10px 14px", marginBottom: 12,
-            fontSize: 13, fontWeight: 700, color: "var(--accent)",
-          }}>
-            Next up: Fight {nextFight}/{totalFights}
-          </div>
-        )}
-
-        {/* Champion failed info */}
-        {championFailed && (
+        {/* Raid failed info */}
+        {raidFailed && (
           <div style={{
             background: "rgba(240,96,80,0.12)", border: "1px solid rgba(240,96,80,0.25)",
             borderRadius: 8, padding: "10px 14px", marginBottom: 12,
             fontSize: 12, color: "var(--danger)",
           }}>
-            Progress in {tierName} tier has been reset. Try again!
+            {bossName} stands victorious. Train more and try again.
+          </div>
+        )}
+
+        {/* Raid cleared first time info */}
+        {raidCleared && spiritFound && (
+          <div style={{
+            background: "rgba(240,192,64,0.15)", border: "1px solid rgba(240,192,64,0.3)",
+            borderRadius: 8, padding: "10px 14px", marginBottom: 12,
+            fontSize: 12, fontWeight: 700, color: "var(--accent)",
+          }}>
+            🌟 {bossName}'s essence has been added to your collection!
           </div>
         )}
 
@@ -70,19 +73,19 @@ export default function BattleResultScreen({ result, onContinue }) {
         </div>
 
         {/* Rewards */}
-        {(battle.won || championCleared) && (xp || gold || spiritFound || spiritsAwarded) && (
+        {(battle.won || raidCleared || result.isPvp) && (xp || gold || spiritFound || spiritsAwarded || result.isPvp) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "12px 0" }}>
             {reduced && (
               <div style={{ fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
-                {championCleared ? "Already cleared — rewards reduced" : "Already cleared — rewards reduced to 25%"}
+                Already cleared — rewards reduced to 25%
               </div>
             )}
-            {xp != null && (
+            {xp != null && xp > 0 && (
               <div style={{ background: "var(--card2)", borderRadius: 6, padding: "6px 12px", fontWeight: 600, fontSize: 13 }}>
                 +{xp} XP
               </div>
             )}
-            {gold != null && (
+            {gold != null && gold > 0 && (
               <div style={{ background: "var(--card2)", borderRadius: 6, padding: "6px 12px", fontWeight: 600, fontSize: 13 }}>
                 +{gold} 💰
               </div>
@@ -105,6 +108,23 @@ export default function BattleResultScreen({ result, onContinue }) {
                 🌟 Spirit Essence: {name}
               </div>
             ))}
+            {result.isPvp && result.repChange != null && (
+              <div style={{
+                background: result.repChange >= 0 ? "rgba(64,216,128,0.12)" : "rgba(240,96,80,0.12)",
+                color: result.repChange >= 0 ? "var(--success)" : "var(--danger)",
+                border: `1px solid ${result.repChange >= 0 ? "rgba(64,216,128,0.25)" : "rgba(240,96,80,0.25)"}`,
+                borderRadius: 6, padding: "6px 12px", fontWeight: 600, fontSize: 13,
+              }}>
+                {result.repChange >= 0 ? "+" : ""}{result.repChange} ⭐ Reputation
+              </div>
+            )}
+            {result.isPvp && result.survivors != null && battle.won && (
+              <div style={{
+                fontSize: 11, color: "var(--text-dim)", textAlign: "center", marginTop: 4,
+              }}>
+                {result.survivors} guard{result.survivors !== 1 ? "s" : ""} survived
+              </div>
+            )}
           </div>
         )}
 
