@@ -13,6 +13,7 @@ import { REGIONS, REGION_KEYS } from '../data/regions.js';
 import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 import { calculateBaseSalary } from '../data/salary.js';
+import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 
 /**
  * Initialize the full game — all 4 regions.
@@ -50,6 +51,13 @@ export function initGame(humanRegion, humanTeamIndex) {
       team.autoAssignStrategy();
     }
 
+    // Per-map Attack/Defense strengths. Generated here (not in the Team
+    // constructor) because the anchor is team overall, which only exists
+    // once the roster has been generated above.
+    for (const team of teams) {
+      team.mapRatings = generateMapRatings(team.overallRating || 70);
+    }
+
     // Free agents
     const freeAgents = [];
     for (let i = 0; i < FREE_AGENT_POOL_SIZE; i++) {
@@ -80,10 +88,18 @@ export function initGame(humanRegion, humanTeamIndex) {
     };
   }
 
+  // Mirror the pool for the batch sim paths (see maps.js).
+  const pool = initMapPool();
+  syncCurrentPool({ mapPool: pool });
+
   return {
     regions,
     humanRegion,
     humanTeamIndex,
+    // Live map pool: 7 active, the rest benched. Rotates one in / one out
+    // after each completed stage. Lives on gameState (not in maps.js)
+    // because it changes during play and must survive a save/load.
+    mapPool: pool,
   };
 }
 

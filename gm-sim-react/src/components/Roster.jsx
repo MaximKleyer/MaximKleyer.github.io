@@ -18,6 +18,7 @@ import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { mapName, getActivePool } from '../data/maps.js';
 import {
   computeTeamSalary, computeCapRemaining, calculateBuyout,
   moraleTier, SALARY_CAP,
@@ -42,7 +43,7 @@ function moraleColor(morale) {
 
 export default function Roster({
   team, onRelease, onUpdate, allowMinRelease = false,
-  godMode = false, onEditPlayer,
+  godMode = false, onEditPlayer, mapPool = null,
 }) {
   const [, forceUpdate] = useState(0);
   const [confirmingRelease, setConfirmingRelease] = useState(null); // player or null
@@ -280,7 +281,7 @@ export default function Roster({
                     fontWeight: 500,
                   }}
                 >
-                  {moraleTier(player.morale)}
+                  {player.morale ?? 65}
                 </span>
               </td>
 
@@ -393,7 +394,91 @@ export default function Roster({
         </div>
       )}
 
+      <MapStrengths team={team} pool={mapPool} />
+
       <Strategy team={team} onUpdate={handleStrategyUpdate} />
     </>
+  );
+}
+
+/**
+ * MapStrengths — per-map Attack/Defense comfort for the active pool.
+ *
+ * These are TEAM attributes: they represent how well-drilled the org is
+ * on each map, drift a few points each offseason, and drive both the
+ * veto AI and round performance (see data/maps.js and SIM.MAP_IMPACT).
+ * Sorted strongest-first so your comfort picks and problem maps are
+ * obvious at a glance when you go into a veto.
+ */
+function ratingColor(v) {
+  if (v >= 85) return '#4ade80';
+  if (v >= 72) return '#a3e635';
+  if (v >= 60) return '#facc15';
+  if (v >= 48) return '#fb923c';
+  return '#ff5460';
+}
+
+function RatingBar({ label, value }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+      <span style={{ width: 26, fontSize: '0.7em', opacity: 0.65, letterSpacing: '0.04em' }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${value}%`, height: '100%', background: ratingColor(value) }} />
+      </div>
+      <span style={{ width: 22, textAlign: 'right', fontSize: '0.78em', fontWeight: 600, color: ratingColor(value) }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MapStrengths({ team, pool }) {
+  const active = (pool && pool.length ? pool : getActivePool(null)) || [];
+  const ratings = team?.mapRatings || {};
+
+  const rows = active
+    .map(id => {
+      const r = ratings[id] || { attack: 70, defense: 70 };
+      return { id, attack: r.attack ?? 70, defense: r.defense ?? 70,
+               overall: Math.round(((r.attack ?? 70) + (r.defense ?? 70)) / 2) };
+    })
+    .sort((a, b) => b.overall - a.overall);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginTop: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>Map Strengths</h3>
+        <span style={{ fontSize: '0.75em', opacity: 0.6 }}>
+          active pool · strongest first
+        </span>
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+        gap: 14,
+      }}>
+        {rows.map(r => (
+          <div key={r.id} style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 6,
+            padding: '10px 12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <strong style={{ fontSize: '0.92em' }}>{mapName(r.id)}</strong>
+              <span style={{ fontSize: '0.8em', fontWeight: 700, color: ratingColor(r.overall) }}>
+                {r.overall}
+              </span>
+            </div>
+            <RatingBar label="ATK" value={r.attack} />
+            <RatingBar label="DEF" value={r.defense} />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

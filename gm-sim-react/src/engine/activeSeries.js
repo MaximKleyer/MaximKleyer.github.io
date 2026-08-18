@@ -35,6 +35,8 @@
  */
 
 import { startSeries, simulateNextMap, isSeriesComplete } from '../classes/Match.js';
+import { getActivePool } from '../data/maps.js';
+import { autoMapPlan, createVeto, runAIUntilHumanTurn } from './veto.js';
 
 /**
  * Ensure the activeSeries field exists on the season. Safe to call
@@ -87,14 +89,69 @@ export function seedActiveSeries(gameState, specs) {
     // Only `series` is computed locally — everything else comes from the
     // caller. teamA/teamB/bestOf/origin are consumed by startSeries but
     // also kept on the entry for any consumers that want them.
+    // Map plan: use the one the caller supplied (a human veto result),
+    // otherwise auto-resolve the veto with AI on both sides.
+    const bestOf = s.bestOf || 3;
+    const pool = getActivePool(gameState);
+    const grandFinal = !!s.grandFinal;
+    const mapPlan = s.mapPlan
+      || autoMapPlan(pool, bestOf, s.teamA, s.teamB, { grandFinal });
     const entry = {
       ...s,
-      series: startSeries(s.teamA, s.teamB, s.bestOf || 3, s.origin),
+      series: startSeries(s.teamA, s.teamB, bestOf, s.origin, mapPlan),
     };
     list.push(entry);
     seeded.push(entry);
+
+    // If the human team is in this series and they haven't opted out for
+    // the season, park an interactive veto. The series already carries a
+    // usable auto plan, so declining the prompt costs nothing — accepting
+    // it just overwrites that plan before any map is played.
+    if (!s.mapPlan && !gameState.season?.skipVetoThisSeason && isHumanSeries(s)) {
+      const humanSide = s.teamA?.isHuman ? 'A' : 'B';
+      const veto = createVeto(pool, bestOf, { grandFinal, humanSide });
+      // Let the AI take any steps that come before the human's first turn.
+      runAIUntilHumanTurn(veto, side => (side === 'A' ? s.teamA : s.teamB));
+      gameState.season.pendingVeto = {
+        entryIndex: list.length - 1,
+        teamAAbbr: s.teamA?.abbr,
+        teamBAbbr: s.teamB?.abbr,
+        humanSide,
+        bestOf,
+        grandFinal,
+        veto,
+      };
+    }
   }
   return seeded;
+}
+
+function isHumanSeries(spec) {
+  return !!(spec?.teamA?.isHuman || spec?.teamB?.isHuman);
+}
+
+/**
+ * True while a human veto is waiting on input. Map advancement must be
+ * blocked until it resolves, otherwise maps would be played before the
+ * user's picks could be applied.
+ */
+export function hasPendingVeto(gameState) {
+  return !!gameState?.season?.pendingVeto;
+}
+
+/**
+ * Apply a finished veto to its series and clear the prompt.
+ * Passing null for `plan` keeps whatever auto plan the series already
+ * has — that's the "Auto-pick & Sim" path.
+ */
+export function resolvePendingVeto(gameState, plan) {
+  const pending = gameState?.season?.pendingVeto;
+  if (!pending) return;
+  const entry = gameState.season.activeSeries?.[pending.entryIndex];
+  if (entry && plan && plan.length > 0) {
+    entry.series.mapPlan = plan;
+  }
+  gameState.season.pendingVeto = null;
 }
 
 /**
