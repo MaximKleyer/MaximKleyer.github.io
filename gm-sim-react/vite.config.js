@@ -18,5 +18,9 @@ export default defineConfig({
     // After running "npm run build", you'll see a gm-sim/ folder appear
     // in maximkleyer.github.io/ with index.html, assets/, etc.
     outDir: '../gm-sim',
+    // outDir is outside this project root, so vite refuses to clear it
+    // unless told to. Without this, renamed asset hashes pile up in
+    // gm-sim/ forever and get committed.
+    emptyOutDir: true,
   },
 });

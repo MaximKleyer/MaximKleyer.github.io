@@ -8,9 +8,11 @@
  * simulateSeries also stores roster snapshots.
  */
 
-import { SIM } from '../data/constants.js';
+import { SIM, ROUNDS_TO_WIN, HALF_LENGTH, REGULATION_ROUNDS } from '../data/constants.js';
 import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
 import { moralePerformanceModifier } from '../data/salary.js';
+import { teamMapRating, getCurrentPool } from '../data/maps.js';
+import { autoMapPlan } from '../engine/veto.js';
 
 const ROLE_AGGRESSION = {
   duelist: 1.4, initiator: 1.1, flex: 1.0, controller: 0.8, sentinel: 0.7,
@@ -23,7 +25,14 @@ for (const role of Object.keys(SUBTYPES)) {
   }
 }
 
-function getDuelRating(player, assignment) {
+/**
+ * `sideMult` is the team's map/side strength modifier for the round
+ * currently being played — 1.0 is neutral. It multiplies the duel
+ * rating before randomness, exactly like morale does, so a team on its
+ * best attacking map wins more duels on average without the round
+ * becoming deterministic.
+ */
+function getDuelRating(player, assignment, sideMult = 1) {
   const r = player.ratings;
   let weights = null;
   if (assignment && assignment.subtypeId) {
@@ -42,7 +51,19 @@ function getDuelRating(player, assignment) {
   // randomness so the noise window is the same regardless of morale —
   // the modifier shifts the mean, not the spread.
   base *= moralePerformanceModifier(player.morale);
+  // Map/side comfort. Applied before the noise window for the same
+  // reason as morale: it shifts the mean, not the spread.
+  base *= sideMult;
   return base + (Math.random() * 16) - 8;
+}
+
+/**
+ * Convert a 0-100 map/side rating into a duel multiplier centred on the
+ * neutral baseline of 70. See SIM.MAP_IMPACT.
+ */
+export function mapSideModifier(rating) {
+  const r = typeof rating === 'number' ? rating : 70;
+  return 1 + ((r - 70) / 100) * SIM.MAP_IMPACT;
 }
 
 function getIglBonus(team) {
@@ -95,7 +116,7 @@ function checkAssist(killer, aliveAllies) {
 
 const KILL_BONUS = { 5: 150, 4: 130, 3: 110, 2: 90, 1: 70 };
 
-function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assignMapB) {
+function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assignMapB, sideMultA = 1, sideMultB = 1) {
   const aliveA = [...teamAPlayers];
   const aliveB = [...teamBPlayers];
   const roundKills = {}, roundCS = {};
@@ -106,8 +127,8 @@ function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assig
   while (aliveA.length > 0 && aliveB.length > 0) {
     const fA = pickFighter(aliveA, assignMapA);
     const fB = pickFighter(aliveB, assignMapB);
-    const rA = getDuelRating(fA, assignMapA[fA.id]);
-    const rB = getDuelRating(fB, assignMapB[fB.id]);
+    const rA = getDuelRating(fA, assignMapA[fA.id], sideMultA);
+    const rB = getDuelRating(fB, assignMapB[fB.id], sideMultB);
     const pA = rA ** 3, pB = rB ** 3;
     const prob = pA / (pA + pB);
 
@@ -157,33 +178,88 @@ function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assig
   return aliveA.length > 0 ? 'A' : 'B';
 }
 
-export function simulateMap(teamA, teamB) {
+/**
+ * Which team is attacking on a given 0-based round index?
+ *
+ *   rounds 0-11   first half   — as decided by the side pick
+ *   rounds 12-23  second half  — sides swap
+ *   rounds 24+    overtime     — played in 2-round blocks. The first
+ *                                round of each block uses the SECOND
+ *                                half's sides, the second round flips.
+ *
+ * Returns true when team A is on attack.
+ */
+export function isTeamAAttacking(roundIndex, firstHalfAttacker) {
+  const aStartsAttack = firstHalfAttacker !== 'B';
+  if (roundIndex < HALF_LENGTH) return aStartsAttack;            // 1st half
+  if (roundIndex < REGULATION_ROUNDS) return !aStartsAttack;     // 2nd half
+  // Overtime: block of 2. Even offset = second-half sides, odd = flipped.
+  const otOffset = (roundIndex - REGULATION_ROUNDS) % 2;
+  return otOffset === 0 ? !aStartsAttack : aStartsAttack;
+}
+
+/**
+ * Simulate one map.
+ *
+ * `plan` describes what is being played and from which sides:
+ *   { mapId, firstHalfAttacker: 'A' | 'B', pickedBy, sidePickedBy }
+ * All fields are optional — with no plan the map is side-neutral, which
+ * keeps older callers and older saves working.
+ */
+export function simulateMap(teamA, teamB, plan = null) {
   let roundsA = 0, roundsB = 0;
   const assignMapA = buildAssignmentMap(teamA);
   const assignMapB = buildAssignmentMap(teamB);
   const iglBonusA = getIglBonus(teamA);
   const iglBonusB = getIglBonus(teamB);
 
+  const mapId = plan?.mapId || null;
+  const firstHalfAttacker = plan?.firstHalfAttacker === 'B' ? 'B' : 'A';
+
+  // Precompute both side multipliers per team so the per-round lookup is
+  // just a branch. Neutral (1.0) when the map is unknown.
+  const multA = mapId
+    ? { attack: mapSideModifier(teamMapRating(teamA, mapId, 'attack')),
+        defense: mapSideModifier(teamMapRating(teamA, mapId, 'defense')) }
+    : { attack: 1, defense: 1 };
+  const multB = mapId
+    ? { attack: mapSideModifier(teamMapRating(teamB, mapId, 'attack')),
+        defense: mapSideModifier(teamMapRating(teamB, mapId, 'defense')) }
+    : { attack: 1, defense: 1 };
+
   const roundStats = {};
   for (const p of [...teamA.roster, ...teamB.roster]) {
     roundStats[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
   }
 
+  // Track which side each team played each round, so the UI can show
+  // half-by-half scorelines.
+  const roundSides = [];
+
   function playRound() {
+    const roundIndex = roundsA + roundsB;
+    const aAttacking = isTeamAAttacking(roundIndex, firstHalfAttacker);
+    const sideMultA = aAttacking ? multA.attack : multA.defense;
+    const sideMultB = aAttacking ? multB.defense : multB.attack;
+    roundSides.push(aAttacking ? 'A-atk' : 'B-atk');
+
     const iglDiff = iglBonusA - iglBonusB;
     const iglSwing = iglDiff * 0.01;
     if (Math.random() < Math.abs(iglSwing)) {
-      simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB);
+      simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
       return iglSwing > 0 ? 'A' : 'B';
     }
-    return simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB);
+    return simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
   }
 
-  while (roundsA < 13 && roundsB < 13) {
-    if (roundsA === 12 && roundsB === 12) break;
+  const OT_TRIGGER = ROUNDS_TO_WIN - 1; // 12
+
+  while (roundsA < ROUNDS_TO_WIN && roundsB < ROUNDS_TO_WIN) {
+    if (roundsA === OT_TRIGGER && roundsB === OT_TRIGGER) break;
     playRound() === 'A' ? roundsA++ : roundsB++;
   }
-  if (roundsA === 12 && roundsB === 12) {
+  if (roundsA === OT_TRIGGER && roundsB === OT_TRIGGER) {
+    // Overtime in 2-round blocks until someone is up by 2.
     while (Math.abs(roundsA - roundsB) < 2) {
       playRound() === 'A' ? roundsA++ : roundsB++;
       playRound() === 'A' ? roundsA++ : roundsB++;
@@ -232,15 +308,26 @@ export function simulateMap(teamA, teamB) {
     // Roster snapshots — these IDs won't change even if roster moves happen later
     rosterAIds,
     rosterBIds,
+    // Map identity + sides, so the UI can name the map and show who
+    // started where instead of a positional "Map 1".
+    mapId,
+    firstHalfAttacker,
+    pickedBy: plan?.pickedBy ?? null,
+    sidePickedBy: plan?.sidePickedBy ?? null,
+    wentToOvertime: totalRounds > REGULATION_ROUNDS,
+    roundSides,
   };
 }
 
-export function simulateSeries(teamA, teamB, bestOf = 3) {
+export function simulateSeries(teamA, teamB, bestOf = 3, mapPlan = null, opts = {}) {
   const mapsNeeded = Math.ceil(bestOf / 2);
   const maps = [];
   let winsA = 0, winsB = 0;
+  // Batch callers (brackets, swiss) don't run an interactive veto, so
+  // resolve one automatically against the live pool.
+  const plan = mapPlan || autoMapPlan(getCurrentPool(), bestOf, teamA, teamB, opts);
   while (winsA < mapsNeeded && winsB < mapsNeeded) {
-    const result = simulateMap(teamA, teamB);
+    const result = simulateMap(teamA, teamB, plan?.[maps.length] || null);
     maps.push(result);
     result.winner === teamA ? winsA++ : winsB++;
   }
@@ -278,7 +365,7 @@ export function simulateSeries(teamA, teamB, bestOf = 3) {
  *   }
  */
 
-export function startSeries(teamA, teamB, bestOf = 3, origin = null) {
+export function startSeries(teamA, teamB, bestOf = 3, origin = null, mapPlan = null) {
   return {
     teamA, teamB,
     bestOf,
@@ -288,6 +375,9 @@ export function startSeries(teamA, teamB, bestOf = 3, origin = null) {
     loser: null,
     score: null,
     origin,
+    // Ordered veto result: one entry per map slot, in play order.
+    // { mapId, firstHalfAttacker, pickedBy, sidePickedBy }
+    mapPlan,
   };
 }
 
@@ -310,7 +400,10 @@ export function isSeriesComplete(series) {
 export function simulateNextMap(series) {
   if (isSeriesComplete(series)) return null;
   const { teamA, teamB } = series;
-  const mapResult = simulateMap(teamA, teamB);
+  // Play the map the veto assigned to this slot. Falls back to a
+  // side-neutral map if the series has no plan (older saves).
+  const plan = series.mapPlan?.[series.maps.length] || null;
+  const mapResult = simulateMap(teamA, teamB, plan);
   series.maps.push(mapResult);
   if (mapResult.winner === teamA) series.winsA++;
   else series.winsB++;

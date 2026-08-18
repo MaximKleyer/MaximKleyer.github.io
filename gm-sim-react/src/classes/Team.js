@@ -51,6 +51,15 @@ export class Team {
     // ever bought someone out. Most teams will have empty arrays most
     // of the time.
     this.deadCapHits = [];
+
+    // ── Map strengths ──
+    //
+    // { mapId: { attack, defense } } for every map in the game, not just
+    // the currently-active pool — so a map rotating back in years later
+    // still has a history behind it. Populated by generateMapRatings()
+    // in initGame once rosters exist (the anchor is team overall), and
+    // drifted each offseason. See data/maps.js.
+    this.mapRatings = {};
   }
 
   get overallRating() {

@@ -20,7 +20,7 @@ import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import {
-  calculateBaseSalary, moraleTier,
+  calculateBaseSalary,
 } from '../data/salary.js';
 
 function formatSalary(n) {
@@ -236,7 +236,7 @@ export default function FreeAgents({
                   title={`Morale ${player.morale ?? 65}`}
                   style={{ color: moraleColor(player.morale), fontWeight: 500 }}
                 >
-                  {moraleTier(player.morale)}
+                  {player.morale ?? 65}
                 </span>
               </td>
               <td>
@@ -296,7 +296,7 @@ export default function FreeAgents({
               marginTop: 0,
               marginBottom: 18,
             }}>
-              Morale: {moraleTier(signTarget.morale)} ({signTarget.morale ?? 65})
+              Morale: {signTarget.morale ?? 65}
             </p>
 
             {/* Salary input */}
