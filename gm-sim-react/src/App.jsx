@@ -13,6 +13,8 @@ import 'flag-icons/css/flag-icons.min.css';
 
 import { initGame, getHumanTeam, ensureContracts } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
+import MapVeto from './components/MapVeto.jsx';
+import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runCpuMoves } from './engine/ai.js';
@@ -328,12 +330,44 @@ export default function App() {
     });
   }
 
+  // ── Map veto ──
+  //
+  // The pending veto stores team ABBRs rather than live Team refs, so it
+  // survives a save/load without needing rehydration. Resolve them back
+  // to instances here off the series entry the veto belongs to.
+  const vetoTeams = (() => {
+    const pending = gameState?.season?.pendingVeto;
+    if (!pending) return { human: null, opponent: null };
+    const entry = gameState.season.activeSeries?.[pending.entryIndex];
+    if (!entry) return { human: null, opponent: null };
+    const human = pending.humanSide === 'A' ? entry.series.teamA : entry.series.teamB;
+    const opponent = pending.humanSide === 'A' ? entry.series.teamB : entry.series.teamA;
+    return { human, opponent };
+  })();
+
+  function handleVetoResolve(plan) {
+    resolvePendingVeto(gameState, plan);
+    setGameState(prev => ({ ...prev }));
+  }
+
+  function handleVetoSkipSeason() {
+    // Keep the auto plan for the current series and stop prompting for
+    // the rest of the season. Cleared again on the next new season.
+    gameState.season.skipVetoThisSeason = true;
+    resolvePendingVeto(gameState, null);
+    setGameState(prev => ({ ...prev }));
+  }
+
   // ── Main advance function — handles both group + bracket ──
   function advanceAll() {
     // Block advancement while the transition screen is up or circuit is done.
     // Phase 6e: also block during offseason-active — user must click
     // "Start Preseason" from the Offseason view to progress.
     if (inTransition || circuitComplete || offseasonActive || midseasonActive) return;
+
+    // A human map veto is waiting on input — no map may be played until
+    // it resolves, or the picks would land after the fact.
+    if (hasPendingVeto(gameState)) return;
 
     // During international selection show, block advance while waiting for human
     if (isAwaitingHumanPick(gameState)) return;
@@ -1420,7 +1454,7 @@ export default function App() {
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive || midseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive || midseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} mapPool={gameState.mapPool?.active} />;
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}
@@ -1528,6 +1562,15 @@ export default function App() {
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}
       {inTransition && (
         <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
+      )}
+      {gameState.season?.pendingVeto && (
+        <MapVeto
+          pending={gameState.season.pendingVeto}
+          humanTeam={vetoTeams.human}
+          oppTeam={vetoTeams.opponent}
+          onResolve={handleVetoResolve}
+          onSkipSeason={handleVetoSkipSeason}
+        />
       )}
     </div>
   );

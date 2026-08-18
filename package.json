@@ -1,0 +1,12 @@
+{
+  "name": "maximkleyer.github.io",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Personal site. Static pages at the root plus three Vite apps built into root-level folders and committed, served by branch-based GitHub Pages.",
+  "scripts": {
+    "build": "npm run build:gm-sim && npm run build:champions && npm run build:pocket",
+    "build:gm-sim": "npm --prefix gm-sim-react install && npm --prefix gm-sim-react run build",
+    "build:champions": "npm --prefix champions-speed-calc install && npm --prefix champions-speed-calc run build",
+    "build:pocket": "npm --prefix pocket-summoner install && npm --prefix pocket-summoner run build"
+  }
+}

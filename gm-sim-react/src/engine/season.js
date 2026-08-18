@@ -19,6 +19,7 @@
  */
 
 import { REGION_KEYS } from '../data/regions.js';
+import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
 import { generateSchedule } from './league.js';
@@ -264,9 +265,23 @@ export function completeCurrentStage(gameState) {
     bracketResults: snapshotAllBrackets(gameState),
     pointsAwarded,
     groupWinsAwarded,
+    // What the pool rotation did at the end of this stage, so History
+    // can show how the map pool evolved across a career.
+    mapRotation: rotateStageMapPool(gameState),
   });
 
   gameState.season.status = 'transition';
+}
+
+/**
+ * Retire one active map and promote one from the bench. Called once per
+ * completed stage. Keeps the batch-sim pool mirror in step.
+ */
+function rotateStageMapPool(gameState) {
+  if (!gameState.mapPool) gameState.mapPool = initMapPool();
+  const change = rotateMapPool(gameState.mapPool);
+  syncCurrentPool(gameState);
+  return change;
 }
 
 /* ─────────────── International completion ─────────────── */
@@ -1441,11 +1456,21 @@ export function beginNewSeason(gameState) {
 export function closeResignWindowAndBeginOffseason(gameState) {
   if (gameState.season?.status !== 'resign-window') return;
 
-  // Pull the offseasonSummary reference stashed during openResignWindow
-  // (which is the upper half of beginNewSeason). All subsequent stat
-  // accumulation (retiree count, AI signings count) lands in the same
-  // archive entry's summary.
-  const offseasonSummary = gameState.season._offseasonSummaryRef;
+  // Resolve the summary from the archive itself — NOT from the stashed
+  // back-pointer alone. In memory the two are the same object, but a
+  // save/load in between (the user refreshing during the re-sign window,
+  // which is a natural pause point) serializes them as two independent
+  // copies. Mutating the detached copy leaves the archived offseason
+  // report reading all zeros forever, silently. The archive entry that
+  // owns this window is the one beginNewSeason just pushed, i.e. the last.
+  const lastArchived = Array.isArray(gameState.archive) && gameState.archive.length > 0
+    ? gameState.archive[gameState.archive.length - 1]
+    : null;
+  const offseasonSummary =
+    lastArchived?.offseasonSummary || gameState.season._offseasonSummaryRef;
+  // Keep the back-pointer aimed at whatever we resolved, so any later
+  // reader in this pass sees the same object we're about to mutate.
+  if (offseasonSummary) gameState.season._offseasonSummaryRef = offseasonSummary;
   if (!offseasonSummary) {
     // Defensive: if somehow the ref is missing, create a stub. The
     // archive entry won't get the per-pass counts but at least we
@@ -1508,6 +1533,13 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
   //   - FA retirees are just spliced out of the pool
   for (const regionKey of REGION_KEYS) {
     const region = gameState.regions[regionKey];
+
+    // Map comfort drifts a few points each offseason, pulled gently
+    // toward the team's current strength, so the map meta shifts across
+    // a career instead of a team owning the same picks forever.
+    for (const team of region.teams) {
+      team.mapRatings = driftMapRatings(team.mapRatings, team.overallRating || 70);
+    }
 
     // Roster aging + retirement
     for (const team of region.teams) {

@@ -41,6 +41,7 @@
 import { Team } from '../classes/Team.js';
 import { Player } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
+import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -123,12 +124,19 @@ function serialize(gameState) {
   const seen = new WeakSet();
 
   // Force key iteration order: regions FIRST so teams get seen before
-  // any reference in season/international/worlds.
+  // any reference in season/international/worlds/archive.
+  //
+  // `archive` MUST stay after `regions` — archived seasons hold team
+  // references (worldChampion, runnerUp), which only serialize correctly
+  // as __ref markers once the canonical teams have been visited.
   const ordered = {
     regions: gameState.regions,
     season: gameState.season,
     international: gameState.international,
     worlds: gameState.worlds,
+    archive: gameState.archive,
+    seasonNumber: gameState.seasonNumber,
+    mapPool: gameState.mapPool,
     humanRegion: gameState.humanRegion,
     humanTeamIndex: gameState.humanTeamIndex,
   };
@@ -156,6 +164,11 @@ function serialize(gameState) {
         record: value.record,
         group: value.group,
         strategy: value.strategy,
+        // Phase 7 cap state — without this, buyout dead cap silently
+        // resets to empty on every load.
+        deadCapHits: value.deadCapHits,
+        // Per-map Attack/Defense strengths.
+        mapRatings: value.mapRatings,
         roster: value.roster,
       };
     }
@@ -175,6 +188,15 @@ function serialize(gameState) {
         ratings: value.ratings,
         overall: value.overall,
         stats: value.stats,
+        // Phase 6h per-stage stat snapshots.
+        stageStats: value.stageStats,
+        // Phase 7 morale + contract. `contract` in particular MUST be
+        // saved: ensureContracts() treats a missing contract as "needs
+        // one" and rolls a fresh random deal, so omitting it silently
+        // re-randomizes every salary in the league on every load.
+        morale: value.morale,
+        moraleHistory: value.moraleHistory,
+        contract: value.contract,
       };
     }
 
@@ -222,6 +244,20 @@ function deserialize(json) {
   if (!Array.isArray(data.archive)) {
     data.archive = [];
   }
+  // Saves predating map support get a fresh pool, and any team missing
+  // map ratings gets a generated set anchored to its current strength.
+  if (!data.mapPool || !Array.isArray(data.mapPool.active) || data.mapPool.active.length === 0) {
+    data.mapPool = initMapPool();
+  }
+  // Keep the batch-sim mirror in step with the pool we just loaded.
+  syncCurrentPool(data);
+  for (const rk of REGION_KEYS) {
+    for (const team of data.regions?.[rk]?.teams || []) {
+      if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
+        team.mapRatings = generateMapRatings(team.overallRating || 70);
+      }
+    }
+  }
   // Legacy status migration: very old saves used 'complete' for end-of-season,
   // Phase 6c renamed it to 'season-complete'. Translate so the new flow works.
   if (data.season?.status === 'complete') {
@@ -248,6 +284,10 @@ function rehydrateTeam(td, regionKey, teamMap) {
   if (td.record) team.record = { ...td.record };
   if (td.group !== undefined) team.group = td.group;
   if (td.strategy) team.strategy = td.strategy;
+  // Restore cap state. Left as the constructor's [] for pre-Phase-7
+  // saves, which ensureContracts() then backfills.
+  if (Array.isArray(td.deadCapHits)) team.deadCapHits = td.deadCapHits;
+  if (td.mapRatings && typeof td.mapRatings === 'object') team.mapRatings = td.mapRatings;
 
   // Roster: each entry is a serialized player
   if (Array.isArray(td.roster)) {
@@ -276,6 +316,15 @@ function rehydratePlayer(pd) {
   );
   player.id = pd.id;
   if (pd.stats) player.stats = { ...pd.stats };
+  if (pd.stageStats) player.stageStats = { ...pd.stageStats };
+
+  // Phase 7 fields. Each is only applied when actually present, so
+  // older saves fall through to the constructor defaults and get
+  // backfilled by ensureContracts() — the real migration path.
+  if (typeof pd.morale === 'number') player.morale = pd.morale;
+  if (Array.isArray(pd.moraleHistory)) player.moraleHistory = pd.moraleHistory;
+  if (pd.contract) player.contract = { ...pd.contract };
+
   return player;
 }
 
