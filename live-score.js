@@ -1,15 +1,31 @@
+// API credentials come from config.js (gitignored — see config.example.js).
+// Keeping them out of this file keeps them out of version control.
+function getApiHeaders() {
+  const cfg = window.APP_CONFIG;
+  if (!cfg || !cfg.RAPIDAPI_KEY || cfg.RAPIDAPI_KEY === 'YOUR_RAPIDAPI_KEY_HERE') {
+    console.error(
+      'Missing API key. Copy config.example.js to config.js and add your ' +
+      'RapidAPI key, then load config.js before this script.'
+    );
+    return null;
+  }
+  return {
+    'content-type': 'application/json',
+    'X-RapidAPI-Key': cfg.RAPIDAPI_KEY,
+    'X-RapidAPI-Host': cfg.RAPIDAPI_HOST
+  };
+}
+
 // Get the match ID from the scoreButton that was clicked
 function getLiveScore(matchId) {
   // API endpoint URL
   const url = 'https://free-football-live-score.p.rapidapi.com/live/all-details';
+  const headers = getApiHeaders();
+  if (!headers) return Promise.resolve({ lineupsAvailable: false, content: null });
   // Options for the API request
   const options = {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'X-RapidAPI-Key': 'e0509ed000msh6adfb6291f31c92p1f1d20jsn0cca2a92a57a',
-      'X-RapidAPI-Host': 'free-football-live-score.p.rapidapi.com'
-    },
+    headers,
     body: JSON.stringify({ match_id: matchId })
   };
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import MatchCard from './MatchCard.jsx';
 import RegionSelector from './RegionSelector.jsx';
 import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
+import { mapName } from '../data/maps.js';
 
 export default function Schedule({ regionData, viewRegion, onChangeRegion, gameState }) {
   const { schedule, currentWeek } = regionData;
@@ -65,7 +66,7 @@ function MatchDetail({ result, teamA, teamB }) {
       <div className="map-score-row">
         {result.maps.map((m, i) => (
           <button key={i} className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`} onClick={() => setSelectedMap(i)}>
-            <span className="map-pill-label">Map {i + 1}</span>
+            <span className="map-pill-label">{m.mapId ? mapName(m.mapId) : `Map ${i + 1}`}</span>
             <span className="map-pill-score">{Math.max(m.roundsA, m.roundsB)}-{Math.min(m.roundsA, m.roundsB)}</span>
             <span className="map-pill-winner">{m.winner.abbr}</span>
           </button>

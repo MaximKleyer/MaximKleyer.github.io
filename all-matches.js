@@ -5,13 +5,13 @@ async function fetchMatches(date = new Date()) {
 	// API endpoint URL
 	const url = 'https://free-football-live-score.p.rapidapi.com/all-matches';
 	// Options for the API request
+	// Credentials come from config.js via getApiHeaders(), defined in
+	// live-score.js — both scripts are loaded together on the home page.
+	const headers = typeof getApiHeaders === 'function' ? getApiHeaders() : null;
+	if (!headers) return;
 	const options = {
 	  method: 'POST',
-	  headers: {
-		'content-type': 'application/json',
-		'X-RapidAPI-Key': 'e0509ed000msh6adfb6291f31c92p1f1d20jsn0cca2a92a57a',
-		'X-RapidAPI-Host': 'free-football-live-score.p.rapidapi.com'
-	  },
+	  headers,
 	  body: JSON.stringify({
 		date: parseInt(formattedDate),
 		country_code: 'USA',

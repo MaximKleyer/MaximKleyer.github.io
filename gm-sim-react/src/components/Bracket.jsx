@@ -9,6 +9,7 @@ import { computeLivePlacements } from '../engine/placements.js';
 import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
 import MatchCard from './MatchCard.jsx';
 import RegionSelector from './RegionSelector.jsx';
+import { mapName } from '../data/maps.js';
 
 function BracketMatchDetail({ match }) {
   const [selectedMap, setSelectedMap] = useState(0);
@@ -23,7 +24,7 @@ function BracketMatchDetail({ match }) {
     <div className="bracket-detail-popup">
       <div className="bracket-detail-header"><strong>{teamA?.abbr}</strong> vs <strong>{teamB?.abbr}</strong><span className="muted"> — {result.score[0]}-{result.score[1]}</span></div>
       <div className="map-score-row">
-        {result.maps.map((m, i) => (<button key={i} className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`} onClick={(e) => { e.stopPropagation(); setSelectedMap(i); }}><span className="map-pill-label">Map {i+1}</span><span className="map-pill-score">{Math.max(m.roundsA,m.roundsB)}-{Math.min(m.roundsA,m.roundsB)}</span><span className="map-pill-winner">{m.winner?.abbr}</span></button>))}
+        {result.maps.map((m, i) => (<button key={i} className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`} onClick={(e) => { e.stopPropagation(); setSelectedMap(i); }}><span className="map-pill-label">{m.mapId ? mapName(m.mapId) : `Map ${i+1}`}</span><span className="map-pill-score">{Math.max(m.roundsA,m.roundsB)}-{Math.min(m.roundsA,m.roundsB)}</span><span className="map-pill-winner">{m.winner?.abbr}</span></button>))}
       </div>
       <div className="map-stats-grid">
         <ST stats={aStats} name={teamA?.name} color={teamA?.color} />

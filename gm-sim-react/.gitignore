@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output. Note vite.config.js writes to ../gm-sim, which is
+# covered by the root .gitignore (gitignore patterns cannot escape
+# their own directory, so it cannot be ignored from here).
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store

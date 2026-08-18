@@ -29,7 +29,7 @@
 
 import { useState } from 'react';
 import {
-  calculateBaseSalary, calculateAsk, moraleTier, resolveOffer,
+  calculateBaseSalary, calculateAsk, resolveOffer,
   computeTeamSalary, computeCapRemaining, SALARY_CAP,
 } from '../data/salary.js';
 import { flagClass, nationalityName } from '../data/nationalities.js';
@@ -298,7 +298,7 @@ export default function ResignWindow({
                       fontSize: '0.85rem',
                       fontWeight: 500,
                     }}>
-                      {moraleTier(player.morale)} ({player.morale ?? 65})
+                      {player.morale ?? 65}
                     </span>
                   </div>
 
@@ -436,7 +436,7 @@ export default function ResignWindow({
                   <td>{formatSalary(p.contract.salary)}</td>
                   <td>{p.contract.yearsRemaining}</td>
                   <td style={{ color: moraleColor(p.morale) }}>
-                    {moraleTier(p.morale)}
+                    {p.morale ?? 65}
                   </td>
                 </tr>
               ))}
