@@ -17,6 +17,7 @@ import MapVeto from './components/MapVeto.jsx';
 import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
 import { trainMap, mapName } from './data/maps.js';
 import Settings from './components/Settings.jsx';
+import Tier2 from './components/Tier2.jsx';
 import { syncSalaryCap } from './data/salary.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
@@ -1587,6 +1588,8 @@ export default function App() {
           } : null}
           capRemaining={computeCapRemaining(humanTeam)}
         />;
+      case 'tier2':
+        return <Tier2 gameState={gameState} viewRegion={viewRegion} onChangeRegion={setViewRegion} />;
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'bracket':

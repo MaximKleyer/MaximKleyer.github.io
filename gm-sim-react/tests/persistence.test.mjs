@@ -57,6 +57,9 @@ const TEAM_FIELDS = {
   _midseasonMoves: { persisted: true, lazy: true },
   _offseasonMoves: { persisted: true, lazy: true },
   archetype:    { persisted: false, why: 'recomputed from abbr by the Team constructor' },
+  // 1 = franchised top flight, 2 = the open second division.
+  tier:         { persisted: true },
+  parentAbbr:   { persisted: true },
 };
 
 const PLAYER_FIELDS = {
@@ -300,6 +303,48 @@ describe('regressions', () => {
     assert.deepEqual(loaded.mapPool.active,
       ['bind', 'haven', 'abyss', 'pearl', 'breeze', 'lotus', 'split']);
     assert.equal(loaded.mapPool.active.length, 7);
+  });
+
+  test('tier-2 teams rehydrate as Team instances with their rosters', async () => {
+    const { REGION_KEYS } = await import('../src/data/regions.js');
+    const gs = newGame();
+    const before = gs.regions.americas.tier2.teams;
+    assert.equal(before.length, 16, 'expected 16 tier-2 teams per region');
+
+    const loaded = roundTrip(gs);
+    let checked = 0;
+    for (const rk of REGION_KEYS) {
+      const t2 = loaded.regions[rk].tier2.teams;
+      assert.equal(t2.length, 16, `${rk} lost tier-2 teams`);
+      for (const team of t2) {
+        assert.ok(team instanceof Team,
+          `${rk} ${team.abbr} deserialized as a plain object, not a Team`);
+        assert.equal(team.tier, 2, `${rk} ${team.abbr} lost its tier`);
+        assert.equal(team.roster.length, 5, `${rk} ${team.abbr} lost roster players`);
+        assert.ok(team.roster[0] instanceof Player, 'tier-2 player is not a Player');
+        assert.equal(typeof team.overallRating, 'number', 'getter missing after rehydrate');
+        checked++;
+      }
+    }
+    assert.equal(checked, 64, 'expected 64 tier-2 teams across all regions');
+  });
+
+  test('an academy keeps its link to its tier-1 parent', () => {
+    const loaded = roundTrip(newGame());
+    const academies = loaded.regions.americas.tier2.teams.filter(t => t.parentAbbr);
+    assert.ok(academies.length > 0, 'no academy teams generated');
+    for (const a of academies) {
+      assert.ok(loaded.regions.americas.teams.some(t => t.abbr === a.parentAbbr),
+        `${a.abbr} points at parent ${a.parentAbbr}, which is not in tier 1`);
+    }
+  });
+
+  test('a tier-2 abbr never collides with a tier-1 team on load', () => {
+    const loaded = roundTrip(newGame());
+    for (const t of loaded.regions.americas.tier2.teams) {
+      const clash = loaded.regions.americas.teams.find(x => x.abbr === t.abbr);
+      assert.ok(!clash, `${t.abbr} exists in both tiers — refs would resolve to the wrong team`);
+    }
   });
 
   test('depth chart order survives (drives who actually plays)', () => {
