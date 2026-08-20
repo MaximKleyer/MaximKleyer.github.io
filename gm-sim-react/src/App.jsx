@@ -18,6 +18,7 @@ import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
 import { trainMap, mapName } from './data/maps.js';
 import Settings from './components/Settings.jsx';
 import Tier2 from './components/Tier2.jsx';
+import { executePoach, evaluatePoach } from './engine/poaching.js';
 import { syncSalaryCap } from './data/salary.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
@@ -392,6 +393,41 @@ export default function App() {
     if (slot?.type === 'international' || slot?.type === 'worlds') return true;
     return REGION_KEYS.every(k => gameState.regions[k].phase !== 'group') && !allBracketsDone;
   })();
+
+  // ── Poaching ──
+  //
+  // A tier-2 signing spends one of the same two mid-season moves as a
+  // free-agent signing, so the budget cannot be dodged by raiding tier 2.
+  function handlePoach(player) {
+    if (!midseasonActive) return;
+    const club = getHumanTeam(gameState);
+    const remaining = midseasonMovesRemaining(club);
+    const evaluation = evaluatePoach(gameState, club, player, { movesRemaining: remaining });
+    if (!evaluation.allowed) {
+      setToast({ message: evaluation.reason, type: 'loss', mapScores: null });
+      return;
+    }
+
+    const result = executePoach(gameState, club, player);
+    if (result.refused) {
+      // A refusal costs nothing but the approach.
+      setToast({ message: result.message, type: 'loss', mapScores: null });
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+    if (!result.ok) {
+      setToast({ message: result.message, type: 'loss', mapScores: null });
+      return;
+    }
+
+    club._midseasonMoves = (club._midseasonMoves || 0) + 1;
+    setToast({
+      message: result.message,
+      type: result.requiresRelease ? 'loss' : 'win',
+      mapScores: null,
+    });
+    setGameState(prev => ({ ...prev }));
+  }
 
   // ── Settings ──
   function handleChangeSalaryCap(value) {
@@ -1589,7 +1625,15 @@ export default function App() {
           capRemaining={computeCapRemaining(humanTeam)}
         />;
       case 'tier2':
-        return <Tier2 gameState={gameState} viewRegion={viewRegion} onChangeRegion={setViewRegion} />;
+        return <Tier2
+          gameState={gameState}
+          viewRegion={viewRegion}
+          onChangeRegion={setViewRegion}
+          humanTeam={humanTeam}
+          canPoach={midseasonActive}
+          movesRemaining={midseasonMovesRemaining(humanTeam)}
+          onPoach={handlePoach}
+        />;
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
       case 'bracket':

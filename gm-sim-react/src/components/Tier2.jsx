@@ -14,6 +14,8 @@
 import { useState } from 'react';
 import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { evaluatePoach, refusalChance, REFUSAL_MORALE, expectedAcs } from '../engine/poaching.js';
+import { getSwissStandings } from '../engine/swissFormat.js';
 
 // A tier-2 player at or above this is worth a tier-1 team's attention.
 const NOTABLE_OVR = 72;
@@ -31,8 +33,10 @@ function formatSalary(n) {
   return '$' + Math.round(n / 1000) + 'K';
 }
 
-function RosterRow({ player }) {
+function RosterRow({ player, scouting }) {
   const notable = player.overall >= NOTABLE_OVR;
+  const form = scouting?.form ?? 0;
+  const resists = (player.morale ?? 65) >= REFUSAL_MORALE;
   return (
     <tr style={notable ? { background: 'rgba(74,222,128,0.07)' } : undefined}>
       <td style={{ fontWeight: 600 }}>
@@ -62,11 +66,43 @@ function RosterRow({ player }) {
       <td>{player.ratings.clutch}</td>
       <td>{formatSalary(player.contract?.salary)}</td>
       <td>{player.contract?.yearsRemaining ?? '—'}</td>
+      <td style={{ textAlign: 'right' }}>{scouting?.acs || '—'}</td>
+      <td style={{
+        textAlign: 'right', fontWeight: 600,
+        color: form > 12 ? '#4ade80' : form < -12 ? '#ff5460' : 'inherit',
+      }}>
+        {scouting?.acs ? (form > 0 ? `+${form}` : form) : '—'}
+      </td>
+      <td style={{ textAlign: 'right' }}>
+        <span title={resists
+          ? `Morale ${player.morale} — may refuse a move (${Math.round(refusalChance(player) * 100)}% chance)`
+          : `Morale ${player.morale ?? 65}`}
+          style={{ color: resists ? '#fb923c' : 'inherit', fontWeight: resists ? 700 : 400 }}>
+          {player.morale ?? 65}{resists ? '★' : ''}
+        </span>
+      </td>
+      {scouting?.onPoach && (
+        <td style={{ textAlign: 'right' }}>
+          <button
+            onClick={() => scouting.onPoach(player)}
+            disabled={!scouting.canPoach}
+            title={scouting.poachReason}
+            style={{
+              padding: '3px 9px', fontSize: '0.7rem', fontWeight: 700, borderRadius: 3,
+              cursor: scouting.canPoach ? 'pointer' : 'not-allowed',
+              background: scouting.canPoach ? 'rgba(255,70,85,0.85)' : 'transparent',
+              border: `1px solid ${scouting.canPoach ? '#ff4655' : 'rgba(255,255,255,0.15)'}`,
+              color: scouting.canPoach ? '#fff' : 'inherit',
+              opacity: scouting.canPoach ? 1 : 0.4,
+            }}
+          >SIGN</button>
+        </td>
+      )}
     </tr>
   );
 }
 
-function TeamCard({ team, rank, expanded, onToggle }) {
+function TeamCard({ team, rank, expanded, onToggle, scoutFor, standing }) {
   const notable = team.roster.filter(p => p.overall >= NOTABLE_OVR);
   const ages = team.roster.map(p => p.age);
   const avgAge = ages.length ? (ages.reduce((s, a) => s + a, 0) / ages.length).toFixed(1) : '—';
@@ -98,6 +134,14 @@ function TeamCard({ team, rank, expanded, onToggle }) {
             }}>ACADEMY · {team.parentAbbr}</span>
           )}
         </span>
+        {standing && (
+          <span style={{
+            fontSize: '0.72em', fontWeight: 700,
+            color: standing.qualified ? '#4ade80' : standing.eliminated ? '#ff5460' : 'inherit',
+          }} title={`Round diff ${standing.roundDiff}`}>
+            {standing.wins}-{standing.losses}
+          </span>
+        )}
         {notable.length > 0 && (
           <span style={{ fontSize: '0.7em', color: '#4ade80', fontWeight: 700 }}>
             {notable.length} to watch
@@ -121,10 +165,16 @@ function TeamCard({ team, rank, expanded, onToggle }) {
                 <th>Nat</th><th>Age</th><th>OVR</th>
                 <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
                 <th>Salary</th><th>Yrs</th>
+                <th title="Average combat score this stage" style={{ textAlign: 'right' }}>ACS</th>
+                <th title="ACS against what this player's rating predicts" style={{ textAlign: 'right' }}>Form</th>
+                <th title="90+ may refuse a move" style={{ textAlign: 'right' }}>Mor</th>
+                {scoutFor?.enabled && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {team.roster.map(p => <RosterRow key={p.id} player={p} />)}
+              {team.roster.map(p => (
+                <RosterRow key={p.id} player={p} scouting={scoutFor?.for(p)} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -133,7 +183,10 @@ function TeamCard({ team, rank, expanded, onToggle }) {
   );
 }
 
-export default function Tier2({ gameState, viewRegion, onChangeRegion }) {
+export default function Tier2({
+  gameState, viewRegion, onChangeRegion,
+  humanTeam = null, canPoach = false, movesRemaining = null, onPoach = null,
+}) {
   const [expanded, setExpanded] = useState(null);
 
   const region = gameState.regions?.[viewRegion];
@@ -149,7 +202,35 @@ export default function Tier2({ gameState, viewRegion, onChangeRegion }) {
     );
   }
 
-  const ranked = [...tier2.teams].sort((a, b) => b.overallRating - a.overallRating);
+  // Once a stage has been played, rank by actual result rather than raw
+  // strength — the table should reflect what happened, not the preseason.
+  const standings = tier2.swiss ? getSwissStandings(tier2.swiss) : null;
+  const standingFor = t => standings?.find(s2 => s2.team === t) || null;
+  const ranked = standings
+    ? standings.map(s2 => s2.team)
+    : [...tier2.teams].sort((a, b) => b.overallRating - a.overallRating);
+
+  // Scouting: form is only meaningful once a stage has been played.
+  const scoutFor = {
+    enabled: !!(canPoach && humanTeam && onPoach),
+    for(player) {
+      const acs = player.avgAcs;
+      const expected = expectedAcs(player.overall);
+      const base = {
+        acs,
+        form: acs > 0 ? Math.round(acs - expected) : 0,
+      };
+      if (!this.enabled) return base;
+      const evaluation = evaluatePoach(gameState, humanTeam, player, { movesRemaining });
+      return {
+        ...base,
+        onPoach,
+        canPoach: evaluation.allowed,
+        poachReason: evaluation.reason ||
+          `Sign ${player.tag} for the rest of the season ($${Math.round((player.contract?.salary || 0) / 1000)}K)`,
+      };
+    },
+  };
   const allPlayers = tier2.teams.flatMap(t => t.roster);
   const watch = allPlayers.filter(p => p.overall >= NOTABLE_OVR).sort((a, b) => b.overall - a.overall);
   const avgOvr = Math.round(tier2.teams.reduce((s, t) => s + t.overallRating, 0) / tier2.teams.length);
@@ -164,6 +245,23 @@ export default function Tier2({ gameState, viewRegion, onChangeRegion }) {
         <span style={{ color: '#4ade80' }}>{watch.length} players worth watching</span>
         {' '}· click a team to see its roster
       </p>
+
+      {scoutFor.enabled ? (
+        <p style={{
+          margin: '0 0 14px', fontSize: '0.82em', padding: '8px 12px', borderRadius: 5,
+          background: 'rgba(255,70,85,0.08)', border: '1px solid rgba(255,70,85,0.3)',
+        }}>
+          <strong>Signing window open.</strong>{' '}
+          {movesRemaining} signing{movesRemaining === 1 ? '' : 's'} left this season — a tier-2
+          poach spends one, the same as a free agent. Players marked{' '}
+          <span style={{ color: '#fb923c', fontWeight: 700 }}>★</span> are happy where they are and
+          may turn you down.
+        </p>
+      ) : (
+        <p style={{ margin: '0 0 14px', fontSize: '0.8em', opacity: 0.5 }}>
+          Poaching opens during the mid-season window between stages.
+        </p>
+      )}
 
       {watch.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
@@ -192,6 +290,8 @@ export default function Tier2({ gameState, viewRegion, onChangeRegion }) {
           key={team.abbr}
           team={team}
           rank={i + 1}
+          standing={standingFor(team)}
+          scoutFor={scoutFor}
           expanded={expanded === team.abbr}
           onToggle={() => setExpanded(e => (e === team.abbr ? null : team.abbr))}
         />

@@ -1,0 +1,269 @@
+/**
+ * tier2.test.mjs — the second division: generation, the stage, poaching.
+ *
+ * The cap/roster rules around poaching are the sharp edge here. A club may
+ * go over the cap only when it still has somebody it is allowed to cut;
+ * at the five-player floor there is nobody, so the signing must be
+ * blocked outright rather than leaving the club stranded over the cap.
+ */
+
+import { test, describe, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { installLocalStorage, newGame, roundTrip, humanTeam } from './helpers.mjs';
+import { runTier2Stage, initTier2Bracket, applyTier2Morale } from '../src/engine/tier2.js';
+import {
+  evaluatePoach, executePoach, refusalChance, scoutTier2,
+  findTier2Team, backfillTier2Team, REFUSAL_MORALE, POACH_RESET_MORALE,
+} from '../src/engine/poaching.js';
+import { getSwissStandings, getQualifiedSeeds } from '../src/engine/swissFormat.js';
+import { getSalaryCap, computeTeamSalary } from '../src/data/salary.js';
+import { ROSTER_MIN } from '../src/data/constants.js';
+
+before(() => { installLocalStorage(); });
+
+describe('generation', () => {
+  test('16 teams per region, all tier 2, five players each', () => {
+    const gs = newGame();
+    for (const rk of ['americas', 'emea', 'pacific', 'china']) {
+      const t2 = gs.regions[rk].tier2.teams;
+      assert.equal(t2.length, 16, `${rk} team count`);
+      for (const t of t2) {
+        assert.equal(t.tier, 2);
+        assert.equal(t.roster.length, 5, `${t.abbr} roster`);
+        assert.ok(t.roster.every(p => p.contract), `${t.abbr} missing contracts`);
+      }
+    }
+  });
+
+  test('tier 2 is weaker than tier 1 and skews younger', () => {
+    const gs = newGame();
+    const t1 = gs.regions.americas.teams;
+    const t2 = gs.regions.americas.tier2.teams;
+    const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+
+    assert.ok(avg(t2.map(t => t.overallRating)) < avg(t1.map(t => t.overallRating)) - 5,
+      'tier 2 should be clearly weaker than tier 1');
+    assert.ok(avg(t2.flatMap(t => t.roster.map(p => p.age))) <
+              avg(t1.flatMap(t => t.roster.map(p => p.age))),
+      'tier 2 should skew younger');
+  });
+
+  test('academies link to a real tier-1 parent', () => {
+    const gs = newGame();
+    const t2 = gs.regions.americas.tier2.teams;
+    const academies = t2.filter(t => t.parentAbbr);
+    assert.ok(academies.length > 0);
+    for (const a of academies) {
+      assert.ok(gs.regions.americas.teams.some(t => t.abbr === a.parentAbbr),
+        `${a.abbr} parent ${a.parentAbbr} is not a tier-1 team`);
+    }
+  });
+});
+
+describe('the stage', () => {
+  test('resolves to 8 qualifiers and a champion', () => {
+    const gs = newGame();
+    const t2 = runTier2Stage(gs, 'americas');
+    const standings = getSwissStandings(t2.swiss);
+    assert.equal(standings.filter(s => s.qualified).length, 8);
+    assert.equal(standings.filter(s => s.eliminated).length, 8);
+    assert.ok(t2.champion, 'no champion crowned');
+    assert.equal(t2.phase, 'complete');
+  });
+
+  test('bracket seeds 1v8, 3v6, 4v5, 2v7 and splits the halves correctly', () => {
+    const gs = newGame();
+    const seeds = gs.regions.americas.tier2.teams.slice(0, 8);
+    const b = initTier2Bracket(seeds);
+    const pair = m => [m.teamA, m.teamB];
+    assert.deepEqual(pair(b.ubR1[0]), [seeds[0], seeds[7]], 'slot 0 should be 1v8');
+    assert.deepEqual(pair(b.ubR1[1]), [seeds[2], seeds[5]], 'slot 1 should be 3v6');
+    assert.deepEqual(pair(b.ubR1[2]), [seeds[3], seeds[4]], 'slot 2 should be 4v5');
+    assert.deepEqual(pair(b.ubR1[3]), [seeds[1], seeds[6]], 'slot 3 should be 2v7');
+  });
+
+  test('every upper-bracket loser lands in the lower bracket', () => {
+    const gs = newGame();
+    const t2 = runTier2Stage(gs, 'americas');
+    const b = t2.bracket;
+    const ubR1Losers = b.ubR1.map(m => m.result.loser);
+    const lbR1Teams = b.lbR1.flatMap(m => [m.teamA, m.teamB]);
+    for (const loser of ubR1Losers) {
+      assert.ok(lbR1Teams.includes(loser),
+        `${loser.abbr} lost in UB R1 but never appeared in LB R1`);
+    }
+    // Semifinal losers drop into LB R2, crossed against LB R1 winners.
+    const sfLosers = b.ubSF.map(m => m.result.loser);
+    const lbR2Teams = b.lbR2.flatMap(m => [m.teamA, m.teamB]);
+    for (const loser of sfLosers) {
+      assert.ok(lbR2Teams.includes(loser), `${loser.abbr} lost in UB SF but skipped LB R2`);
+    }
+    // The upper-bracket final loser gets the lower-bracket final.
+    assert.equal(b.lbFinal.teamB, b.ubFinal.result.loser);
+  });
+
+  test('a completed stage survives save/load with team identity intact', () => {
+    const gs = newGame();
+    runTier2Stage(gs, 'americas');
+    const championAbbr = gs.regions.americas.tier2.champion.abbr;
+
+    const loaded = roundTrip(gs);
+    const t2 = loaded.regions.americas.tier2;
+    assert.equal(t2.champion?.abbr, championAbbr, 'champion lost across reload');
+    assert.ok(t2.teams.includes(t2.champion),
+      'champion deserialized as a copy rather than the canonical team');
+    assert.equal(t2.swiss.entries.length, 16);
+    assert.ok(t2.swiss.entries.every(e => t2.teams.includes(e.team)),
+      'a Swiss entry points at a team that is not in the league');
+  });
+});
+
+describe('morale', () => {
+  test('stage results move morale off the default', () => {
+    const gs = newGame();
+    runTier2Stage(gs, 'americas');
+    const morale = gs.regions.americas.tier2.teams.flatMap(t => t.roster.map(p => p.morale));
+    assert.ok(new Set(morale).size > 1, 'every tier-2 player still sits on the default');
+  });
+
+  test('90+ stays rare across many stages', () => {
+    const gs = newGame();
+    for (let i = 0; i < 12; i++) runTier2Stage(gs, 'americas');
+    const morale = gs.regions.americas.tier2.teams.flatMap(t => t.roster.map(p => p.morale));
+    const high = morale.filter(m => m >= REFUSAL_MORALE).length;
+    assert.ok(high / morale.length < 0.25,
+      `${high}/${morale.length} players reached ${REFUSAL_MORALE}+ — refusal should be uncommon`);
+    assert.ok(morale.every(m => m >= 0 && m <= 100), 'morale escaped 0-100');
+  });
+});
+
+describe('poaching rules', () => {
+  function setup() {
+    const gs = newGame();
+    runTier2Stage(gs, 'americas');
+    const club = humanTeam(gs);
+    const target = gs.regions.americas.tier2.teams[0].roster[0];
+    return { gs, club, target };
+  }
+
+  test('under the cap, a poach is allowed', () => {
+    const { gs, club, target } = setup();
+    target.contract.salary = 50000;
+    // Make room.
+    for (const p of club.roster) p.contract.salary = 100000;
+    const evaluation = evaluatePoach(gs, club, target);
+    assert.ok(evaluation.allowed, evaluation.reason);
+    assert.equal(evaluation.requiresRelease, false);
+  });
+
+  test('over the cap at 6+ players is allowed but demands a release', () => {
+    const { gs, club, target } = setup();
+    const cap = getSalaryCap();
+    // Five players already at the cap, so any addition goes over.
+    for (const p of club.roster) p.contract.salary = Math.round(cap / 5);
+    assert.equal(club.roster.length, ROSTER_MIN);
+
+    // Adding a 6th puts the club over — allowed, with a release required.
+    const evaluation = evaluatePoach(gs, club, target);
+    assert.ok(evaluation.allowed, `should be allowed at 6 players: ${evaluation.reason}`);
+    assert.ok(evaluation.requiresRelease, 'a release should be required');
+    assert.ok(evaluation.overBy > 0);
+  });
+
+  test('over the cap when it would leave exactly five players is refused', () => {
+    const { gs, club, target } = setup();
+    const cap = getSalaryCap();
+    // Four players, so the signing makes five — the floor, nobody to cut.
+    club.roster.splice(4);
+    assert.equal(club.roster.length, 4);
+    for (const p of club.roster) p.contract.salary = Math.round(cap / 3);
+    target.contract.salary = 500000;
+
+    const evaluation = evaluatePoach(gs, club, target);
+    assert.equal(evaluation.allowed, false, 'must be blocked at the roster floor');
+    assert.match(evaluation.reason, /cannot release below/);
+  });
+
+  test('a spent signing budget blocks the poach', () => {
+    const { gs, club, target } = setup();
+    const evaluation = evaluatePoach(gs, club, target, { movesRemaining: 0 });
+    assert.equal(evaluation.allowed, false);
+    assert.match(evaluation.reason, /No signings left/);
+  });
+
+  test('executing a poach moves the player and backfills the tier-2 club', () => {
+    const { gs, club, target } = setup();
+    const source = findTier2Team(gs, target);
+    const sizeBefore = source.team.roster.length;
+    const clubBefore = club.roster.length;
+
+    const result = executePoach(gs, club, target, { force: true });
+    assert.ok(result.ok, result.message);
+    assert.ok(club.roster.includes(target), 'player did not arrive');
+    assert.ok(!source.team.roster.includes(target), 'player did not leave');
+    assert.equal(source.team.roster.length, sizeBefore, 'tier-2 club was not backfilled');
+    assert.equal(club.roster.length, clubBefore + 1);
+    assert.ok(result.replacement.player, 'no replacement recorded');
+  });
+
+  test('the poached player arrives as a sub, not a starter', () => {
+    const { gs, club, target } = setup();
+    executePoach(gs, club, target, { force: true });
+    assert.ok(!club.isStarter(target),
+      'a signing should arrive on the bench and be promoted deliberately');
+  });
+
+  test('morale resets on arrival', () => {
+    const { gs, club, target } = setup();
+    target.morale = 95;
+    executePoach(gs, club, target, { force: true });
+    assert.equal(target.morale, POACH_RESET_MORALE);
+  });
+
+  test('backfill generates a weaker player when the FA pool is empty', () => {
+    const { gs } = setup();
+    const region = gs.regions.americas;
+    region.freeAgents.length = 0;
+    const club = region.tier2.teams[0];
+    const departed = club.roster[0];
+    club.roster.splice(0, 1);
+
+    const { player, generated } = backfillTier2Team(gs, 'americas', club, departed);
+    assert.ok(generated, 'should have generated a replacement');
+    assert.ok(player.overall < departed.overall,
+      `replacement (${player.overall}) should be weaker than the departed player (${departed.overall})`);
+    assert.ok(player.contract, 'replacement has no contract');
+  });
+
+  test('only a 90+ player can refuse', () => {
+    const gs = newGame();
+    const players = gs.regions.americas.tier2.teams.flatMap(t => t.roster);
+    for (const p of players) {
+      p.morale = 70;
+      assert.equal(refusalChance(p), 0, 'a contented player should never refuse');
+    }
+    const p = players[0];
+    p.morale = 90;
+    assert.ok(refusalChance(p) > 0, '90 should carry some chance of refusal');
+    p.morale = 100;
+    assert.ok(refusalChance(p) > refusalChance({ morale: 92 }),
+      'refusal should rise with morale');
+    assert.ok(refusalChance(p) <= 0.5, 'refusal should never be a certainty');
+  });
+});
+
+describe('scouting', () => {
+  test('ranks by rating and form, and flags who resists', () => {
+    const gs = newGame();
+    runTier2Stage(gs, 'americas');
+    const board = scoutTier2(gs, 'americas');
+    assert.equal(board.length, 80, 'expected every tier-2 player in the region');
+    for (let i = 1; i < board.length; i++) {
+      const prev = board[i - 1].player.overall + board[i - 1].form * 0.4;
+      const cur = board[i].player.overall + board[i].form * 0.4;
+      assert.ok(cur <= prev + 0.001, 'scouting board is not sorted');
+    }
+    assert.ok(board.every(r => typeof r.form === 'number'), 'form not computed');
+    assert.ok(board.some(r => r.acs > 0), 'no player recorded any combat score');
+  });
+});
