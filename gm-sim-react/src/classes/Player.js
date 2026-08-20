@@ -185,6 +185,10 @@ export class Player {
  *   regionKey     — used to pick a region-appropriate nationality
  *   ageOverride   — explicit age (for rookies, set to 17 or 18)
  *   ratingFloor   — minimum rating on all 5 stats
+ *   ratingCeiling — maximum rating on all 5 stats. Tier 2 uses this to
+ *                   generate genuinely weaker players rather than merely
+ *                   raising the floor, which would only compress the
+ *                   distribution upward.
  *
  * No `role` parameter — players are role-agnostic.
  *
@@ -209,12 +213,13 @@ export function generatePlayer(options = {}) {
   const tag = getUniqueTag();
 
   const floor = options.ratingFloor ?? 45;
+  const ceiling = Math.max(floor + 1, options.ratingCeiling ?? 99);
   const ratings = {
-    aim:         randRating(floor, 99),
-    positioning: randRating(floor, 99),
-    utility:     randRating(floor, 99),
-    gamesense:   randRating(floor, 99),
-    clutch:      randRating(floor, 99),
+    aim:         randRating(floor, ceiling),
+    positioning: randRating(floor, ceiling),
+    utility:     randRating(floor, ceiling),
+    gamesense:   randRating(floor, ceiling),
+    clutch:      randRating(floor, ceiling),
   };
 
   const age = options.ageOverride ?? randAge();
