@@ -38,7 +38,7 @@ import {
 } from './worlds.js';
 import {
   calculateBaseSalary, calculateBuyout, computeTeamSalary, resolveOffer,
-  adjustMorale, SALARY_CAP,
+  adjustMorale, getSalaryCap,
 } from '../data/salary.js';
 
 /* ─────────────── Circuit definition ─────────────── */
@@ -1134,7 +1134,7 @@ function buildAIResignOffer(team, player, currentTeamSalary) {
   // proposed new salary.
   const oldSalary = player.contract?.salary || 0;
   const projectedSalary = currentTeamSalary - oldSalary + baseSalary;
-  if (projectedSalary > SALARY_CAP) return null; // can't afford
+  if (projectedSalary > getSalaryCap()) return null; // can't afford
 
   // Length roll — slight bias toward 2yr
   const r = Math.random();
@@ -1613,7 +1613,7 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
       if (team.isHuman) continue;
       while (team.roster.length < ROSTER_MIN && region.freeAgents.length > 0) {
         const currentSalary = computeTeamSalary(team);
-        const headroom = SALARY_CAP - currentSalary;
+        const headroom = getSalaryCap() - currentSalary;
 
         // Look for the best-OVR FA whose base salary fits headroom.
         let bestIdx = -1;

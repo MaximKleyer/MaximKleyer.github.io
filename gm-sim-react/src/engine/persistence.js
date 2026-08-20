@@ -42,6 +42,7 @@ import { Team } from '../classes/Team.js';
 import { Player } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
+import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -137,6 +138,7 @@ function serialize(gameState) {
     archive: gameState.archive,
     seasonNumber: gameState.seasonNumber,
     mapPool: gameState.mapPool,
+    settings: gameState.settings,
     humanRegion: gameState.humanRegion,
     humanTeamIndex: gameState.humanTeamIndex,
   };
@@ -251,6 +253,13 @@ function deserialize(json) {
   }
   // Keep the batch-sim mirror in step with the pool we just loaded.
   syncCurrentPool(data);
+
+  // Settings. Saves predating them get the defaults.
+  if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+  if (typeof data.settings.salaryCap !== 'number' || data.settings.salaryCap <= 0) {
+    data.settings.salaryCap = DEFAULT_SALARY_CAP;
+  }
+  syncSalaryCap(data);
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
@@ -288,6 +297,17 @@ function rehydrateTeam(td, regionKey, teamMap) {
   // saves, which ensureContracts() then backfills.
   if (Array.isArray(td.deadCapHits)) team.deadCapHits = td.deadCapHits;
   if (td.mapRatings && typeof td.mapRatings === 'object') team.mapRatings = td.mapRatings;
+  // Migration: `starters` used to be a separate id list. The depth chart
+  // now IS the roster order, so lift those players to the top and drop
+  // the field. Saves written after this keep their order naturally.
+  if (Array.isArray(td.starters) && td.starters.length > 0) {
+    const rank = new Map(td.starters.map((id, i) => [id, i]));
+    team.roster.sort((a, b) => {
+      const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+      return ra - rb;
+    });
+  }
 
   // Roster: each entry is a serialized player
   if (Array.isArray(td.roster)) {
