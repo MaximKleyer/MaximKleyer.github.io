@@ -43,6 +43,7 @@ import { Player } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
+import { initTier2Region } from './tier2.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -280,6 +281,17 @@ function deserialize(json) {
     data.settings.salaryCap = DEFAULT_SALARY_CAP;
   }
   syncSalaryCap(data);
+
+  // Saves written before tier 2 existed have no second division. Generate
+  // one rather than leaving the region permanently empty — without this
+  // an existing save can never see the tier-2 scene at all.
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+    if (!region.tier2?.teams?.length) {
+      region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+    }
+  }
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
