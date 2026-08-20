@@ -15,6 +15,7 @@ import { COMPOSITIONS } from '../data/strategy.js';
 
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
+import { initTier2Region } from './tier2.js';
 
 /**
  * Initialize the full game — all 4 regions.
@@ -86,6 +87,9 @@ export function initGame(humanRegion, humanTeamIndex) {
       results: [],
       bracket: null,
       frozenStandings: null,
+      // The open second division: 16 teams, Swiss + double-elim, no
+      // promotion for now. Poaching targets live here.
+      tier2: initTier2Region(regionKey),
     };
   }
 

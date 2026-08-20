@@ -116,9 +116,15 @@ function serialize(gameState) {
   const teamIdMap = new Map();
   for (const rk of REGION_KEYS) {
     const region = gameState.regions?.[rk];
-    if (!region?.teams) continue;
-    for (const t of region.teams) {
-      teamIdMap.set(t, { region: rk, abbr: t.abbr });
+    if (!region) continue;
+    for (const t of region.teams || []) {
+      teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 1 });
+    }
+    // Tier-2 teams are canonical too. Without them here they would fall
+    // through the replacer as ordinary objects, deserialize as plain data
+    // with no class identity, and lose every getter the sim relies on.
+    for (const t of region.tier2?.teams || []) {
+      teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
     }
   }
 
@@ -148,7 +154,7 @@ function serialize(gameState) {
     if (value && typeof value === 'object' && teamIdMap.has(value)) {
       const ident = teamIdMap.get(value);
       if (seen.has(value)) {
-        return { __ref: 'team', region: ident.region, abbr: ident.abbr };
+        return { __ref: 'team', region: ident.region, abbr: ident.abbr, tier: ident.tier };
       }
       seen.add(value);
       // First visit → serialize full team data. Note: we cannot return
@@ -159,6 +165,8 @@ function serialize(gameState) {
       return {
         __type: 'team',
         region: ident.region,
+        tier: ident.tier,
+        parentAbbr: value.parentAbbr,
         name: value.name,
         abbr: value.abbr,
         color: value.color,
@@ -228,7 +236,11 @@ function deserialize(json) {
     if (!region) continue;
 
     if (Array.isArray(region.teams)) {
-      region.teams = region.teams.map(td => rehydrateTeam(td, rk, teamMap));
+      region.teams = region.teams.map(td => rehydrateTeam(td, rk, teamMap, 1));
+    }
+
+    if (Array.isArray(region.tier2?.teams)) {
+      region.tier2.teams = region.tier2.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
     }
 
     if (Array.isArray(region.freeAgents)) {
@@ -294,7 +306,7 @@ function deserialize(json) {
  * Rehydrate a serialized team data object into a Team class instance.
  * The roster is rehydrated recursively (players into Player instances).
  */
-function rehydrateTeam(td, regionKey, teamMap) {
+function rehydrateTeam(td, regionKey, teamMap, tier = 1) {
   if (td instanceof Team) return td; // already rehydrated (defensive)
   const team = new Team(td.name, td.abbr, td.color);
   team.isHuman = td.isHuman === true;
@@ -324,7 +336,11 @@ function rehydrateTeam(td, regionKey, teamMap) {
     team.roster = td.roster.map(pd => rehydratePlayer(pd));
   }
 
-  teamMap.set(`${regionKey}:${team.abbr}`, team);
+  team.tier = td.tier ?? tier;
+  team.parentAbbr = td.parentAbbr ?? null;
+  // Key by tier as well as abbr: a tier-2 academy could otherwise be
+  // confused with its tier-1 parent when refs are resolved.
+  teamMap.set(`${regionKey}:${team.tier}:${team.abbr}`, team);
   return team;
 }
 
@@ -377,7 +393,7 @@ function walkAndReplace(node, teamMap, visited) {
     for (let i = 0; i < node.length; i++) {
       const v = node[i];
       if (isRefMarker(v)) {
-        node[i] = teamMap.get(`${v.region}:${v.abbr}`) || null;
+        node[i] = resolveTeamRef(teamMap, v);
       } else {
         walkAndReplace(v, teamMap, visited);
       }
@@ -386,12 +402,23 @@ function walkAndReplace(node, teamMap, visited) {
     for (const k of Object.keys(node)) {
       const v = node[k];
       if (isRefMarker(v)) {
-        node[k] = teamMap.get(`${v.region}:${v.abbr}`) || null;
+        node[k] = resolveTeamRef(teamMap, v);
       } else {
         walkAndReplace(v, teamMap, visited);
       }
     }
   }
+}
+
+/**
+ * Resolve a { __ref:'team' } marker. Saves written before tier 2 carry no
+ * `tier`, so fall back to tier 1 and then to a bare abbr lookup.
+ */
+function resolveTeamRef(teamMap, v) {
+  const tier = v.tier ?? 1;
+  return teamMap.get(`${v.region}:${tier}:${v.abbr}`)
+      || teamMap.get(`${v.region}:1:${v.abbr}`)
+      || null;
 }
 
 function isRefMarker(v) {

@@ -67,6 +67,13 @@ export class Team {
     // in initGame once rosters exist (the anchor is team overall), and
     // drifted each offseason. See data/maps.js.
     this.mapRatings = {};
+
+    // ── Tier ──
+    // 1 = franchised top flight, 2 = the open second division. Set by the
+    // tier-2 generator; tier-1 teams keep the default. `parentAbbr` links
+    // an academy side to its tier-1 org (null for independents).
+    this.tier = 1;
+    this.parentAbbr = null;
   }
 
   get overallRating() {

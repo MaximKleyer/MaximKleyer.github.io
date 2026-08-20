@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { id: 'roster',        label: 'Roster' },
   { id: 'freeagents',    label: 'Free Agents' },
   { id: 'standings',     label: 'Standings' },
+  { id: 'tier2',         label: 'Tier 2' },
   { id: 'bracket',       label: 'Bracket' },
   { id: 'international', label: 'International' },
   { id: 'worlds',        label: 'Worlds' },
