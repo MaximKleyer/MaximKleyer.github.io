@@ -1,0 +1,297 @@
+/**
+ * persistence.test.mjs — the save boundary.
+ *
+ * WHY THIS FILE EXISTS
+ *
+ * Four separate bugs in this codebase have had the same shape: state
+ * that was correct in memory but did not survive save → load. None of
+ * them threw. All were invisible without deliberately reloading and
+ * diffing:
+ *
+ *   - seasonNumber / archive were never serialized, so season history
+ *     was wiped on every refresh.
+ *   - player.contract was never serialized, so ensureContracts() saw a
+ *     missing contract, assumed the player needed one, and RE-ROLLED A
+ *     RANDOM SALARY for every player in the league on every load.
+ *   - season._offseasonSummaryRef aliased an archive entry in memory;
+ *     JSON split them into two objects, so the archived offseason
+ *     report silently read zeros.
+ *   - handleStrategyUpdate mutated a Team in place without changing the
+ *     gameState reference, so the auto-save effect never fired.
+ *
+ * The FIELD REGISTRY below is the guard against a fifth. Every own
+ * property of Team, Player and gameState must be listed with an
+ * explicit decision about whether it is persisted. Add a field to a
+ * class without updating the registry and this file fails, forcing the
+ * decision to be made rather than forgotten.
+ */
+
+import { test, describe, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { installLocalStorage, newGame, roundTrip, humanTeam } from './helpers.mjs';
+import { Team } from '../src/classes/Team.js';
+import { Player, generatePlayer } from '../src/classes/Player.js';
+import { DEFAULT_SALARY_CAP } from '../src/data/salary.js';
+
+before(() => { installLocalStorage(); });
+
+/* ─────────────── Field registry ─────────────── */
+//
+// persisted:true  → must survive a round trip with its value intact.
+// persisted:false → deliberately not saved; `why` documents the reason.
+
+const TEAM_FIELDS = {
+  name:         { persisted: true },
+  abbr:         { persisted: true },
+  color:        { persisted: true },
+  roster:       { persisted: true },
+  isHuman:      { persisted: true },
+  record:       { persisted: true },
+  group:        { persisted: true },
+  strategy:     { persisted: true },
+  deadCapHits:  { persisted: true },
+  mapRatings:   { persisted: true },
+  archetype:    { persisted: false, why: 'recomputed from abbr by the Team constructor' },
+};
+
+const PLAYER_FIELDS = {
+  id:            { persisted: true },
+  name:          { persisted: true },
+  tag:           { persisted: true },
+  ratings:       { persisted: true },
+  overall:       { persisted: true },
+  age:           { persisted: true },
+  nationality:   { persisted: true },
+  stats:         { persisted: true },
+  stageStats:    { persisted: true },
+  morale:        { persisted: true },
+  moraleHistory: { persisted: true },
+  contract:      { persisted: true },
+};
+
+const GAMESTATE_FIELDS = {
+  regions:         { persisted: true },
+  season:          { persisted: true },
+  // Created lazily when the circuit reaches those slots, so a fresh
+  // gameState has neither. Still serialized once they exist.
+  international:   { persisted: true, lazy: true },
+  worlds:          { persisted: true, lazy: true },
+  archive:         { persisted: true },
+  seasonNumber:    { persisted: true },
+  mapPool:         { persisted: true },
+  settings:        { persisted: true },
+  humanRegion:     { persisted: true },
+  humanTeamIndex:  { persisted: true },
+};
+
+function assertRegistryCovers(label, instance, registry) {
+  const actual = Object.keys(instance).sort();
+  const known = Object.keys(registry).sort();
+  const unregistered = actual.filter(k => !known.includes(k));
+  // Lazily-created fields are legitimately absent from a fresh instance.
+  const stale = known.filter(k => !actual.includes(k) && !registry[k].lazy);
+
+  assert.deepEqual(unregistered, [],
+    `${label} has field(s) no one has decided about: ${unregistered.join(', ')}.\n` +
+    `  Add each to the registry in tests/persistence.test.mjs.\n` +
+    `  If it holds state, ALSO add it to serialize() and the rehydrate\n` +
+    `  function in src/engine/persistence.js — four bugs have come from\n` +
+    `  exactly this omission.`);
+
+  assert.deepEqual(stale, [],
+    `${label} registry lists field(s) that no longer exist: ${stale.join(', ')}. Remove them.`);
+}
+
+describe('field registry', () => {
+  test('Team has no unregistered fields', () => {
+    assertRegistryCovers('Team', new Team('Test', 'TST', '#fff'), TEAM_FIELDS);
+  });
+
+  test('Player has no unregistered fields', () => {
+    assertRegistryCovers('Player', generatePlayer({ regionKey: 'americas' }), PLAYER_FIELDS);
+  });
+
+  test('gameState has no unregistered top-level fields', () => {
+    assertRegistryCovers('gameState', newGame(), GAMESTATE_FIELDS);
+  });
+
+  test('every field the registry marks persisted survives a round trip', () => {
+    const gs = newGame();
+    // Populate the lazy fields so they are actually exercised rather than
+    // skipped — an unserialized lazy field is exactly the bug we hit.
+    gs.international = { phase: 'swiss', swiss: { round: 2 } };
+    gs.worlds = { phase: 'groups', groups: { A: { round: 1 } } };
+
+    const loaded = roundTrip(gs);
+    for (const [field, spec] of Object.entries(GAMESTATE_FIELDS)) {
+      if (!spec.persisted) continue;
+      assert.ok(field in loaded,
+        `gameState.${field} is marked persisted but is missing after a round trip — ` +
+        `add it to the ordered wrapper in serialize()`);
+    }
+    // and that the lazy ones kept their contents, not just their keys
+    assert.equal(loaded.international.phase, 'swiss');
+    assert.equal(loaded.international.swiss.round, 2);
+    assert.equal(loaded.worlds.phase, 'groups');
+  });
+});
+
+/* ─────────────── Round trip preserves values ─────────────── */
+
+describe('round trip preserves state', () => {
+  test('every persisted Team field keeps its value', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+
+    // Dirty each persisted field with a distinctive value so a field that
+    // silently resets to its constructor default is caught, not just one
+    // that vanishes entirely.
+    team.record = { wins: 7, losses: 3, mapWins: 15, mapLosses: 9, roundWins: 200, roundLosses: 180 };
+    team.group = 'B';
+    team.deadCapHits = [{ year: 2026, amount: 250000, fromPlayerTag: 'cut1' }];
+    team.mapRatings.ascent = { attack: 91, defense: 44 };
+    team.strategy = { ...team.strategy, comp: team.strategy.comp, iglId: team.roster[1].id };
+
+    const loaded = humanTeam(roundTrip(gs));
+
+    assert.equal(loaded.record.wins, 7);
+    assert.equal(loaded.record.roundWins, 200);
+    assert.equal(loaded.group, 'B');
+    assert.equal(loaded.deadCapHits.length, 1);
+    assert.equal(loaded.deadCapHits[0].amount, 250000);
+    assert.deepEqual(loaded.mapRatings.ascent, { attack: 91, defense: 44 });
+    assert.equal(loaded.strategy.iglId, team.roster[1].id);
+  });
+
+  test('every persisted Player field keeps its value', () => {
+    const gs = newGame();
+    const p = humanTeam(gs).roster[0];
+
+    p.stats = { kills: 111, deaths: 22, assists: 33, acs: 4400, maps: 20 };
+    p.stageStats = { 1: { kills: 50, deaths: 10, assists: 5, acs: 2000, maps: 9 } };
+    p.morale = 91;
+    p.moraleHistory = [{ delta: 12, reason: 'won championship' }];
+    p.contract = { salary: 987654, yearsRemaining: 3, signedYear: 2026 };
+    p.age = 27;
+
+    const loaded = humanTeam(roundTrip(gs)).roster.find(x => x.id === p.id);
+
+    assert.ok(loaded, 'player disappeared across the round trip');
+    assert.equal(loaded.stats.kills, 111);
+    assert.equal(loaded.stageStats[1].kills, 50);
+    assert.equal(loaded.morale, 91);
+    assert.equal(loaded.moraleHistory.length, 1);
+    assert.deepEqual(loaded.contract, { salary: 987654, yearsRemaining: 3, signedYear: 2026 });
+    assert.equal(loaded.age, 27);
+  });
+
+  test('classes rehydrate as instances, not plain objects', () => {
+    const loaded = roundTrip(newGame());
+    const team = humanTeam(loaded);
+    assert.ok(team instanceof Team, 'team is not a Team instance');
+    assert.ok(team.roster[0] instanceof Player, 'player is not a Player instance');
+    // Getters only exist on real instances.
+    assert.equal(typeof team.overallRating, 'number');
+    assert.equal(typeof team.startingFive, 'object');
+  });
+
+  test('team references resolve to the same instance, not copies', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    gs.archive = [{ year: 2025, history: [], worldChampion: team, runnerUp: null,
+                    offseasonSummary: {}, statsSnapshot: {} }];
+
+    const loaded = roundTrip(gs);
+    assert.equal(loaded.archive[0].worldChampion, humanTeam(loaded),
+      'archived team ref deserialized as a copy — identity comparisons will silently fail');
+  });
+
+  test('a second round trip is stable', () => {
+    const once = roundTrip(newGame());
+    const twice = roundTrip(once);
+    assert.equal(twice.seasonNumber, once.seasonNumber);
+    assert.equal(
+      JSON.stringify(humanTeam(twice).roster.map(p => p.contract)),
+      JSON.stringify(humanTeam(once).roster.map(p => p.contract)));
+  });
+});
+
+/* ─────────────── Regressions ─────────────── */
+
+describe('regressions', () => {
+  test('seasonNumber and archive survive (were dropped entirely)', () => {
+    const gs = newGame();
+    gs.seasonNumber = 2031;
+    gs.archive = [{ year: 2025, history: [], worldChampion: null, runnerUp: null,
+                    offseasonSummary: { retirees: [{ tag: 'old' }] }, statsSnapshot: {} }];
+    const loaded = roundTrip(gs);
+    assert.equal(loaded.seasonNumber, 2031);
+    assert.equal(loaded.archive.length, 1);
+    assert.equal(loaded.archive[0].offseasonSummary.retirees.length, 1);
+  });
+
+  test('NO contract is re-randomized on load (the salary-cap wipe)', () => {
+    const gs = newGame();
+    const before = gs.regions.americas.teams
+      .flatMap(t => t.roster.map(p => `${p.tag}:${p.contract.salary}:${p.contract.yearsRemaining}`));
+    const loaded = roundTrip(gs);
+    const after = loaded.regions.americas.teams
+      .flatMap(t => t.roster.map(p => `${p.tag}:${p.contract.salary}:${p.contract.yearsRemaining}`));
+    assert.deepEqual(after, before,
+      'contracts changed across a save/load — ensureContracts is re-rolling them again');
+  });
+
+  test('salary cap setting survives and re-syncs the engine mirror', async () => {
+    const { getSalaryCap, syncSalaryCap } = await import('../src/data/salary.js');
+    const gs = newGame();
+    gs.settings.salaryCap = 3150000;
+    syncSalaryCap(gs);
+    const loaded = roundTrip(gs);
+    assert.equal(loaded.settings.salaryCap, 3150000);
+    assert.equal(getSalaryCap(), 3150000,
+      'load did not re-sync the module mirror engine code reads through');
+  });
+
+  test('map pool survives with exactly 7 active', () => {
+    const gs = newGame();
+    gs.mapPool.active = ['bind', 'haven', 'abyss', 'pearl', 'breeze', 'lotus', 'split'];
+    const loaded = roundTrip(gs);
+    assert.deepEqual(loaded.mapPool.active,
+      ['bind', 'haven', 'abyss', 'pearl', 'breeze', 'lotus', 'split']);
+    assert.equal(loaded.mapPool.active.length, 7);
+  });
+
+  test('depth chart order survives (drives who actually plays)', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    team.roster.push(generatePlayer({ regionKey: 'americas' }));
+    team.movePlayer(5, 0);
+    const order = team.roster.map(p => p.id);
+    const loaded = humanTeam(roundTrip(gs));
+    assert.deepEqual(loaded.roster.map(p => p.id), order);
+    assert.deepEqual(loaded.startingFive.map(p => p.id), order.slice(0, 5));
+  });
+});
+
+/* ─────────────── Defaults for legacy saves ─────────────── */
+
+describe('legacy saves', () => {
+  test('a save missing settings/mapPool/seasonNumber loads with defaults', async () => {
+    const { loadGameState, saveGameState } = await import('../src/engine/persistence.js');
+    const gs = newGame();
+    saveGameState(gs);
+    const raw = JSON.parse(globalThis.localStorage.getItem('gm-sim-save-v2'));
+    delete raw.settings;
+    delete raw.mapPool;
+    delete raw.seasonNumber;
+    delete raw.archive;
+    globalThis.localStorage.setItem('gm-sim-save-v2', JSON.stringify(raw));
+
+    const loaded = loadGameState();
+    assert.ok(loaded, 'stripped save failed to load');
+    assert.equal(loaded.settings.salaryCap, DEFAULT_SALARY_CAP);
+    assert.equal(loaded.mapPool.active.length, 7);
+    assert.equal(typeof loaded.seasonNumber, 'number');
+    assert.ok(Array.isArray(loaded.archive));
+  });
+});

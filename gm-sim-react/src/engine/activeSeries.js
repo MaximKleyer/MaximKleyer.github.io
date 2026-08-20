@@ -102,12 +102,20 @@ export function seedActiveSeries(gameState, specs) {
     };
     list.push(entry);
     seeded.push(entry);
+    // Hold map play until the next advance — see isMapPlayBlocked().
+    gameState.season._seededThisTick = true;
+
+    // A fresh series means a fresh practice block. Reset before the veto
+    // so the player can see what they're about to play, then train for it
+    // on the next one.
+    if (isHumanSeries(s)) gameState.season.trainingUsed = false;
 
     // If the human team is in this series and they haven't opted out for
     // the season, park an interactive veto. The series already carries a
     // usable auto plan, so declining the prompt costs nothing — accepting
     // it just overwrites that plan before any map is played.
-    if (!s.mapPlan && !gameState.season?.skipVetoThisSeason && isHumanSeries(s)) {
+    if (!s.mapPlan && !gameState.season?.skipVetoThisSeason
+        && !gameState.season?._fastForward && isHumanSeries(s)) {
       const humanSide = s.teamA?.isHuman ? 'A' : 'B';
       const veto = createVeto(pool, bestOf, { grandFinal, humanSide });
       // Let the AI take any steps that come before the human's first turn.
@@ -128,6 +136,36 @@ export function seedActiveSeries(gameState, specs) {
 
 function isHumanSeries(spec) {
   return !!(spec?.teamA?.isHuman || spec?.teamB?.isHuman);
+}
+
+/**
+ * No map may be played on the same tick that seeded the series, and none
+ * while a human veto is open.
+ *
+ * Every advance handler seeds series and then immediately calls
+ * advanceOneMap in the same click. Without this gate, map 1 was played
+ * against the provisional auto veto BEFORE the player's ban/pick could
+ * be applied — so a map you banned could still show up as map 1, and the
+ * opening map of every series was played the instant the series started.
+ *
+ * Gating here rather than at the six call sites keeps the rule in one
+ * place: seeding shows the matchup (and the veto), the NEXT advance
+ * plays the opening map.
+ */
+function isMapPlayBlocked(gameState) {
+  const season = gameState?.season;
+  if (!season) return false;
+  // Fast-forward buttons opted out of both the veto prompt and the
+  // one-tick hold — the player asked to skip ahead, and blocking here
+  // would spin their sim loop without ever playing a map.
+  if (season._fastForward) return false;
+  if (season.pendingVeto) return true;
+  if (season._seededThisTick) {
+    // One-shot: consume the flag so the next advance plays normally.
+    season._seededThisTick = false;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -152,6 +190,10 @@ export function resolvePendingVeto(gameState, plan) {
     entry.series.mapPlan = plan;
   }
   gameState.season.pendingVeto = null;
+  // The veto screen WAS this tick's pause, so don't also spend the
+  // seeded-this-tick hold — otherwise the player would have to click
+  // advance twice after finishing a veto before any map is played.
+  gameState.season._seededThisTick = false;
 }
 
 /**
@@ -169,6 +211,8 @@ export function resolvePendingVeto(gameState, plan) {
  * the entry. Callers can show them in the UI until the series drains.
  */
 export function advanceOneMap(gameState) {
+  if (isMapPlayBlocked(gameState)) return { playedCount: 0, completed: [] };
+
   const list = ensureActiveSeries(gameState);
   const completed = [];
   const remaining = [];
@@ -207,6 +251,8 @@ export function advanceOneMap(gameState) {
  * filter pass through untouched.
  */
 export function advanceOneMapScoped(gameState, predicate) {
+  if (isMapPlayBlocked(gameState)) return { playedCount: 0, completed: [] };
+
   const list = ensureActiveSeries(gameState);
   const completed = [];
   const remaining = [];

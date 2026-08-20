@@ -205,3 +205,50 @@ export function syncCurrentPool(gameState) {
 export function getCurrentPool() {
   return CURRENT_POOL;
 }
+
+/* ─────────────── Map training ─────────────── */
+
+/**
+ * Between series a team may run one practice block on a single map.
+ *
+ * Gains shrink as a rating climbs, so training is a way to shore up a
+ * weak map rather than a treadmill to 99 on your best one:
+ *
+ *   rating 50 -> near the full base gain
+ *   rating 75 -> roughly half
+ *   rating 90 -> a point or two
+ *
+ * Focus picks the shape of the block:
+ *   'attack'  / 'defense' — all the work on one side
+ *   'balanced'            — split across both, less on each
+ */
+export const TRAIN_BASE_GAIN = 5;
+
+function trainGain(rating, weight) {
+  const headroom = Math.max(0, RATING_MAX - rating);
+  const scaled = TRAIN_BASE_GAIN * weight * (headroom / 45);
+  // Always worth at least a point while there's room, so a session
+  // never feels wasted.
+  return headroom <= 0 ? 0 : Math.max(1, Math.round(scaled));
+}
+
+/**
+ * Apply one training block. Mutates the team's ratings and returns
+ * { mapId, focus, attack, defense } describing the gain, or null if the
+ * team has no rating for that map.
+ */
+export function trainMap(team, mapId, focus = 'balanced') {
+  const entry = team?.mapRatings?.[mapId];
+  if (!entry) return null;
+
+  const wAtk = focus === 'attack' ? 1 : focus === 'defense' ? 0 : 0.5;
+  const wDef = focus === 'defense' ? 1 : focus === 'attack' ? 0 : 0.5;
+
+  const gainAtk = wAtk > 0 ? trainGain(entry.attack ?? 70, wAtk) : 0;
+  const gainDef = wDef > 0 ? trainGain(entry.defense ?? 70, wDef) : 0;
+
+  entry.attack = clampRating((entry.attack ?? 70) + gainAtk);
+  entry.defense = clampRating((entry.defense ?? 70) + gainDef);
+
+  return { mapId, focus, attack: gainAtk, defense: gainDef };
+}

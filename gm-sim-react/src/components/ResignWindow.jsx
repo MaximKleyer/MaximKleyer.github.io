@@ -30,7 +30,7 @@
 import { useState } from 'react';
 import {
   calculateBaseSalary, calculateAsk, resolveOffer,
-  computeTeamSalary, computeCapRemaining, SALARY_CAP,
+  computeTeamSalary, computeCapRemaining, getSalaryCap,
 } from '../data/salary.js';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 
@@ -192,11 +192,11 @@ export default function ResignWindow({
       </div>
 
       <p className="muted" style={{ fontSize: '0.85rem', marginBottom: 8 }}>
-        <strong style={{ color: capUsed > SALARY_CAP ? '#ff5460' : '#fff' }}>
+        <strong style={{ color: capUsed > getSalaryCap() ? '#ff5460' : '#fff' }}>
           {formatSalary(capUsed)}
         </strong>
         {' / '}
-        {formatSalary(SALARY_CAP)}
+        {formatSalary(getSalaryCap())}
         {' · '}
         <span style={{ color: capRemaining < 0 ? '#ff5460' : '#a3d977' }}>
           {capRemaining < 0 ? `${formatSalary(-capRemaining)} OVER` : `${formatSalary(capRemaining)} headroom`}

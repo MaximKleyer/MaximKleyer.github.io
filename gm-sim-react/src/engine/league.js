@@ -12,8 +12,9 @@ import { generatePlayer, resetTagPool } from '../classes/Player.js';
 import { REGIONS, REGION_KEYS } from '../data/regions.js';
 import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
-import { calculateBaseSalary } from '../data/salary.js';
+
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
+import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 
 /**
  * Initialize the full game — all 4 regions.
@@ -92,6 +93,11 @@ export function initGame(humanRegion, humanTeamIndex) {
   const pool = initMapPool();
   syncCurrentPool({ mapPool: pool });
 
+  // Tunable rules the player can change mid-save. Kept in one bag so
+  // future settings persist without touching persistence again.
+  const settings = { salaryCap: DEFAULT_SALARY_CAP };
+  syncSalaryCap({ settings });
+
   return {
     regions,
     humanRegion,
@@ -100,6 +106,7 @@ export function initGame(humanRegion, humanTeamIndex) {
     // after each completed stage. Lives on gameState (not in maps.js)
     // because it changes during play and must survive a save/load.
     mapPool: pool,
+    settings,
   };
 }
 
