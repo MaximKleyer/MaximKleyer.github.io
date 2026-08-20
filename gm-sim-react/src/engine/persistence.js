@@ -171,6 +171,12 @@ function serialize(gameState) {
         deadCapHits: value.deadCapHits,
         // Per-map Attack/Defense strengths.
         mapRatings: value.mapRatings,
+        // Signing-window budgets. These are consumed across MULTIPLE ticks
+        // (the mid-season window spans stages; reactive offseason signings
+        // fire when the user releases someone later), so losing them on
+        // reload would silently refund a team's signing allowance.
+        _midseasonMoves: value._midseasonMoves,
+        _offseasonMoves: value._offseasonMoves,
         roster: value.roster,
       };
     }
@@ -199,6 +205,8 @@ function serialize(gameState) {
         morale: value.morale,
         moraleHistory: value.moraleHistory,
         contract: value.contract,
+        // Drives the Roster delta indicators after an offseason.
+        lastOffseasonDelta: value.lastOffseasonDelta,
       };
     }
 
@@ -297,6 +305,8 @@ function rehydrateTeam(td, regionKey, teamMap) {
   // saves, which ensureContracts() then backfills.
   if (Array.isArray(td.deadCapHits)) team.deadCapHits = td.deadCapHits;
   if (td.mapRatings && typeof td.mapRatings === 'object') team.mapRatings = td.mapRatings;
+  if (typeof td._midseasonMoves === 'number') team._midseasonMoves = td._midseasonMoves;
+  if (typeof td._offseasonMoves === 'number') team._offseasonMoves = td._offseasonMoves;
   // Migration: `starters` used to be a separate id list. The depth chart
   // now IS the roster order, so lift those players to the top and drop
   // the field. Saves written after this keep their order naturally.
@@ -344,6 +354,7 @@ function rehydratePlayer(pd) {
   if (typeof pd.morale === 'number') player.morale = pd.morale;
   if (Array.isArray(pd.moraleHistory)) player.moraleHistory = pd.moraleHistory;
   if (pd.contract) player.contract = { ...pd.contract };
+  if (pd.lastOffseasonDelta) player.lastOffseasonDelta = pd.lastOffseasonDelta;
 
   return player;
 }

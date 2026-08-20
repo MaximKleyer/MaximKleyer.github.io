@@ -51,6 +51,11 @@ const TEAM_FIELDS = {
   strategy:     { persisted: true },
   deadCapHits:  { persisted: true },
   mapRatings:   { persisted: true },
+  // Added lazily by the signing engines, not the constructor. Both are
+  // consumed across multiple ticks, so both must persist or a reload
+  // refunds the team's signing allowance.
+  _midseasonMoves: { persisted: true, lazy: true },
+  _offseasonMoves: { persisted: true, lazy: true },
   archetype:    { persisted: false, why: 'recomputed from abbr by the Team constructor' },
 };
 
@@ -67,6 +72,8 @@ const PLAYER_FIELDS = {
   morale:        { persisted: true },
   moraleHistory: { persisted: true },
   contract:      { persisted: true },
+  // Set by the offseason development pass; drives the Roster deltas.
+  lastOffseasonDelta: { persisted: true, lazy: true },
 };
 
 const GAMESTATE_FIELDS = {
@@ -103,6 +110,28 @@ function assertRegistryCovers(label, instance, registry) {
 }
 
 describe('field registry', () => {
+  // Checking a freshly-constructed instance is not enough: three fields
+  // (_midseasonMoves, _offseasonMoves, lastOffseasonDelta) are attached
+  // later by the signing and development engines, and all three were
+  // unserialized precisely because a constructor-only check never saw
+  // them. Exercise the engine first, then look again.
+  test('no unregistered fields appear after gameplay', async () => {
+    const { runOffseasonAISignings } = await import('../src/engine/offseason.js');
+    const { runMidseasonAISignings } = await import('../src/engine/midseason.js');
+    const gs = newGame();
+    runMidseasonAISignings(gs);
+    runOffseasonAISignings(gs);
+
+    for (const rk of Object.keys(gs.regions)) {
+      for (const team of gs.regions[rk].teams) {
+        assertRegistryCovers('Team (after gameplay)', team, TEAM_FIELDS);
+        for (const player of team.roster) {
+          assertRegistryCovers('Player (after gameplay)', player, PLAYER_FIELDS);
+        }
+      }
+    }
+  });
+
   test('Team has no unregistered fields', () => {
     assertRegistryCovers('Team', new Team('Test', 'TST', '#fff'), TEAM_FIELDS);
   });
@@ -250,6 +279,18 @@ describe('regressions', () => {
     assert.equal(loaded.settings.salaryCap, 3150000);
     assert.equal(getSalaryCap(), 3150000,
       'load did not re-sync the module mirror engine code reads through');
+  });
+
+  test('signing-window budgets survive (reloading must not refund moves)', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    team._midseasonMoves = 2;      // both mid-season signings spent
+    team._offseasonMoves = 3;
+    const loaded = humanTeam(roundTrip(gs));
+    assert.equal(loaded._midseasonMoves, 2,
+      'reloading refunded the mid-season signing limit');
+    assert.equal(loaded._offseasonMoves, 3,
+      'reloading refunded the offseason move budget');
   });
 
   test('map pool survives with exactly 7 active', () => {
