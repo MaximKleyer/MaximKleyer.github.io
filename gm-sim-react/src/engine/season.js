@@ -21,6 +21,7 @@
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
 import { runTier2Stage } from './tier2.js';
+import { Team } from '../classes/Team.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
 import { generateSchedule } from './league.js';
@@ -504,13 +505,36 @@ function snapshotAllBrackets(gameState) {
       runnerUp: teamCard(elim[0]),
       top4: [championCard, ...elim.slice(0, 3).map(teamCard)],
       top8: [championCard, ...elim.slice(0, 7).map(teamCard)],
-      // Full bracket reference for History tab rendering. Safe to store —
-      // rolloverRegionsForNewStage drops the region.bracket pointer rather
-      // than mutating its matches, so these refs stay valid indefinitely.
-      // The matches already carry their own result objects with frozen
-      // series scores, maps, and player stats.
-      fullBracket: b,
+      // Bracket copy for the History tab.
+      //
+      // Stored WITHOUT per-map player stats. History renders bracket
+      // structure and scores only — it never reads playerStats — and
+      // those tables dominate the save: measured at 53% of a 4 MB save
+      // by the end of one season, which puts a browser's 5 MB
+      // localStorage quota within reach.
+      //
+      // Cloned rather than stripped in place: `b` is still the live
+      // bracket that the Bracket tab renders until the next stage rolls
+      // over, and that view DOES show player stats.
+      fullBracket: cloneWithoutPlayerStats(b),
     };
+  }
+  return out;
+}
+
+/**
+ * Deep copy that drops per-map playerStats and keeps Team references
+ * intact — cloning a Team would break identity comparisons and the
+ * __ref machinery in persistence.js.
+ */
+function cloneWithoutPlayerStats(node) {
+  if (node === null || typeof node !== 'object') return node;
+  if (node instanceof Team) return node;
+  if (Array.isArray(node)) return node.map(cloneWithoutPlayerStats);
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'playerStats') continue;
+    out[k] = cloneWithoutPlayerStats(v);
   }
   return out;
 }
