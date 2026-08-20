@@ -227,8 +227,13 @@ export function simulateMap(teamA, teamB, plan = null) {
         defense: mapSideModifier(teamMapRating(teamB, mapId, 'defense')) }
     : { attack: 1, defense: 1 };
 
+  // Only the starting five play. Rosters can hold up to ROSTER_MAX, and
+  // before this every signing walked onto the server alongside them.
+  const lineupA = teamA.startingFive;
+  const lineupB = teamB.startingFive;
+
   const roundStats = {};
-  for (const p of [...teamA.roster, ...teamB.roster]) {
+  for (const p of [...lineupA, ...lineupB]) {
     roundStats[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
   }
 
@@ -246,10 +251,10 @@ export function simulateMap(teamA, teamB, plan = null) {
     const iglDiff = iglBonusA - iglBonusB;
     const iglSwing = iglDiff * 0.01;
     if (Math.random() < Math.abs(iglSwing)) {
-      simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
+      simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
       return iglSwing > 0 ? 'A' : 'B';
     }
-    return simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
+    return simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
   }
 
   const OT_TRIGGER = ROUNDS_TO_WIN - 1; // 12
@@ -272,8 +277,10 @@ export function simulateMap(teamA, teamB, plan = null) {
 
   // Build per-player stats AND snapshot roster IDs at match time
   const playerStats = {};
-  const rosterAIds = teamA.roster.map(p => p.id);
-  const rosterBIds = teamB.roster.map(p => p.id);
+  // Snapshot the LINEUP, not the whole roster — this drives which players
+  // the match detail view lists.
+  const rosterAIds = lineupA.map(p => p.id);
+  const rosterBIds = lineupB.map(p => p.id);
 
   // Build assignment → role lookup so each player's match stats can
   // record the role they played. Assignment is authoritative — the
@@ -285,7 +292,7 @@ export function simulateMap(teamA, teamB, plan = null) {
     }
   }
 
-  for (const player of [...teamA.roster, ...teamB.roster]) {
+  for (const player of [...lineupA, ...lineupB]) {
     const rs = roundStats[player.id];
     const acs = Math.round(rs.combatScore / totalRounds);
     playerStats[player.id] = {

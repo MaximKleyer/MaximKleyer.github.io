@@ -1,3 +1,4 @@
+import { useState } from 'react';
 /**
  * Sidebar.jsx — Unified advance button for all phases.
  *
@@ -20,21 +21,40 @@ const NAV_ITEMS = [
   { id: 'stats',         label: 'Stats' },
 ];
 
-// Shared style for the three fast-forward buttons (Sim Series / Group / Playoffs)
+// Fast-forward buttons share the Advance button's shape and typography
+// so the sidebar reads as one control family. They stay a secondary
+// colour so the primary action is still obvious at a glance.
 const ffBtnStyle = {
+  position: 'relative',
   width: '100%',
-  padding: '5px 8px',
+  padding: '10px',
   background: 'transparent',
-  border: '1px solid rgba(106, 169, 255, 0.30)',
+  border: '1px solid rgba(106, 169, 255, 0.45)',
   color: '#8ab8ff',
-  borderRadius: 3,
+  borderRadius: 6,
   cursor: 'pointer',
-  fontFamily: 'inherit',
-  fontSize: '0.66rem',
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase',
-  fontWeight: 600,
+  fontFamily: "'DM Sans', sans-serif",
+  fontWeight: 700,
+  fontSize: '0.85rem',
+  transition: 'box-shadow 0.25s, background 0.2s',
 };
+
+/**
+ * A keycap hint that appears on hover, so shortcuts are discoverable
+ * without cluttering the sidebar. `title` carries the same info for
+ * keyboard and screen-reader users.
+ */
+function Keycap({ shown, children }) {
+  return (
+    <kbd style={{
+      position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+      fontFamily: "'JetBrains Mono', monospace", fontSize: '0.6rem',
+      padding: '2px 5px', borderRadius: 3, lineHeight: 1.4,
+      border: '1px solid currentColor', opacity: shown ? 0.75 : 0,
+      transition: 'opacity 0.15s', pointerEvents: 'none',
+    }}>{children}</kbd>
+  );
+}
 
 export default function Sidebar({
   currentView, onNavigate, currentWeek, onAdvanceWeek,
@@ -45,7 +65,7 @@ export default function Sidebar({
   isOffseason, onStartPreseason, humanRosterSize,
   // Phase 6f
   isMidseason, onStartStage, midseasonMovesUsed, midseasonMovesMax,
-  godMode, onToggleGodMode,
+  godMode, onToggleGodMode, onOpenSettings,
   // Phase 7b — cap meter
   capUsed, capMax,
   // Phase 7d — resign window
@@ -56,6 +76,12 @@ export default function Sidebar({
   onSimSeries, onSimGroupStage, onSimPlayoffs,
 }) {
   const isPreseason = currentWeek === 0 && phase === 'group';
+  // Which action button is hovered — drives the keycap hints.
+  const [hovered, setHovered] = useState(null);
+  const hoverProps = key => ({
+    onMouseEnter: () => setHovered(key),
+    onMouseLeave: () => setHovered(h => (h === key ? null : h)),
+  });
 
   // Phase 6e+ Ask 1: during offseason, sidebar shows "Start Preseason"
   // directly (disabled when roster < 5). This replaces the intermediate
@@ -347,9 +373,15 @@ export default function Sidebar({
               className={isPreseason ? 'btn-start-season' : ''}
               onClick={onAdvanceWeek}
               disabled={advanceDisabled}
-              style={advanceDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              title={isPreseason ? 'Start Season  (Space)' : 'Advance  (Space)'}
+              {...hoverProps('advance')}
+              style={{
+                position: 'relative',
+                ...(advanceDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+              }}
             >
-              {isPreseason ? '▶ Start Season' : 'Advance Week'}
+              {isPreseason ? '▶ Start Season' : 'Advance'}
+              <Keycap shown={hovered === 'advance' && !advanceDisabled}>Space</Keycap>
             </button>
           </>
         ) : phase === 'bracket' ? (
@@ -367,9 +399,15 @@ export default function Sidebar({
               id="btn-advance"
               onClick={onAdvanceWeek}
               disabled={advanceDisabled}
-              style={advanceDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              title="Advance  (Space)"
+              {...hoverProps('advance')}
+              style={{
+                position: 'relative',
+                ...(advanceDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+              }}
             >
-              {advanceDisabled ? 'Awaiting Pick' : 'Advance Bracket'}
+              {advanceDisabled ? 'Awaiting Pick' : 'Advance'}
+              <Keycap shown={hovered === 'advance' && !advanceDisabled}>Space</Keycap>
             </button>
           </>
         ) : (
@@ -415,21 +453,53 @@ export default function Sidebar({
               Fast Forward
             </div>
             {ffHasActive && (
-              <button onClick={onSimSeries} style={ffBtnStyle}>
+              <button
+                onClick={onSimSeries}
+                style={ffBtnStyle}
+                title="Sim Series  (S)"
+                {...hoverProps('series')}
+              >
                 ⏩ Sim Series
+                <Keycap shown={hovered === 'series'}>S</Keycap>
               </button>
             )}
             {canSimGroup && (
-              <button onClick={onSimGroupStage} style={{ ...ffBtnStyle, marginTop: 4 }}>
+              <button
+                onClick={onSimGroupStage}
+                style={{ ...ffBtnStyle, marginTop: 6 }}
+                title="Sim Group Stage  (G)"
+                {...hoverProps('group')}
+              >
                 ⏩⏩ Sim Group Stage
+                <Keycap shown={hovered === 'group'}>G</Keycap>
               </button>
             )}
             {canSimPlayoffs && (
-              <button onClick={onSimPlayoffs} style={{ ...ffBtnStyle, marginTop: 4 }}>
+              <button
+                onClick={onSimPlayoffs}
+                style={{ ...ffBtnStyle, marginTop: 6 }}
+                title="Sim Playoffs  (P)"
+                {...hoverProps('playoffs')}
+              >
                 ⏩⏩ Sim Playoffs
+                <Keycap shown={hovered === 'playoffs'}>P</Keycap>
               </button>
             )}
           </div>
+        )}
+
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            title="League settings"
+            style={{
+              width: '100%', marginTop: 8, padding: '7px 8px',
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+              color: 'inherit', borderRadius: 4, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: '0.68rem', letterSpacing: '0.06em',
+              textTransform: 'uppercase', fontWeight: 600, opacity: 0.85,
+            }}
+          >⚙ Settings</button>
         )}
 
         {onToggleGodMode && (

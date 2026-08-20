@@ -52,6 +52,13 @@ export class Team {
     // of the time.
     this.deadCapHits = [];
 
+    // ── Depth chart ──
+    //
+    // `roster` IS the depth chart: its order is meaningful. The first
+    // ROSTER_MIN players start, everyone below them is a sub. New
+    // signings are pushed onto the end, so they arrive as subs and the
+    // manager promotes them deliberately.
+
     // ── Map strengths ──
     //
     // { mapId: { attack, defense } } for every map in the game, not just
@@ -72,6 +79,54 @@ export class Team {
   get recordStr() { return `${this.record.wins}-${this.record.losses}`; }
   get rosterFull() { return this.roster.length >= ROSTER_MAX; }
   get atMinRoster() { return this.roster.length <= ROSTER_MIN; }
+
+  /**
+   * The five who actually take the server — the top of the depth chart.
+   *
+   * AI teams always field their best five by overall: they have no UI to
+   * order a depth chart, so reading their roster order would field
+   * whoever happened to be generated or signed first.
+   */
+  get startingFive() {
+    if (!this.isHuman) {
+      return [...this.roster].sort((a, b) => b.overall - a.overall).slice(0, ROSTER_MIN);
+    }
+    return this.roster.slice(0, ROSTER_MIN);
+  }
+
+  /** Everyone below the starter line. */
+  get bench() {
+    if (!this.isHuman) {
+      const starting = new Set(this.startingFive.map(p => p.id));
+      return this.roster.filter(p => !starting.has(p.id));
+    }
+    return this.roster.slice(ROSTER_MIN);
+  }
+
+  /** True when this player is currently starting. */
+  isStarter(player) {
+    return this.startingFive.some(p => p.id === player.id);
+  }
+
+  /**
+   * Move a player within the depth chart. Both indices are positions in
+   * `roster`. Crossing the ROSTER_MIN boundary is what promotes or
+   * benches someone — there is no separate starters list to keep in sync.
+   */
+  movePlayer(fromIdx, toIdx) {
+    const n = this.roster.length;
+    if (fromIdx < 0 || fromIdx >= n) return false;
+    const clamped = Math.max(0, Math.min(n - 1, toIdx));
+    if (clamped === fromIdx) return false;
+    const [moved] = this.roster.splice(fromIdx, 1);
+    this.roster.splice(clamped, 0, moved);
+    return true;
+  }
+
+  /** Order the depth chart best-first. Used by the Auto button. */
+  sortRosterByOverall() {
+    this.roster.sort((a, b) => b.overall - a.overall);
+  }
 
   get igl() {
     if (!this.strategy.iglId) return null;
@@ -100,6 +155,9 @@ export class Team {
     const slots = [...comp.slots];
     const assignments = new Array(slots.length).fill(null);
     const used = new Set();
+    // Role slots belong to the five who actually play, not the whole
+    // roster — otherwise a bench player could be handed a comp slot.
+    const eligible = this.startingFive;
 
     // For each slot, pick the unused player whose rating profile best
     // matches the role's weighted profile. This replaces the old
@@ -111,7 +169,7 @@ export class Team {
       const weights = ROLE_WEIGHTS[role] || null;
       let bestPlayer = null;
       let bestScore = -Infinity;
-      for (const p of this.roster) {
+      for (const p of eligible) {
         if (used.has(p.id)) continue;
         // Score = sum of (player.ratings[stat] * role weight for stat).
         // Falls back to overall if no weights defined for this role.
@@ -140,7 +198,7 @@ export class Team {
 
     // Fill any remaining slots with unassigned players sorted by overall
     // (should only trigger if roster is smaller than the comp's slot count)
-    const unassigned = this.roster
+    const unassigned = eligible
       .filter(p => !used.has(p.id))
       .sort((a, b) => b.overall - a.overall);
     let ui = 0;
