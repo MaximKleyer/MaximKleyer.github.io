@@ -60,6 +60,36 @@ describe('generation', () => {
   });
 });
 
+describe('save size and migration', () => {
+  test('a pre-tier-2 save gains a tier-2 scene on load', async () => {
+    const { saveGameState, loadGameState } = await import('../src/engine/persistence.js');
+    const gs = newGame();
+    saveGameState(gs);
+    const raw = JSON.parse(globalThis.localStorage.getItem('gm-sim-save-v2'));
+    for (const rk of Object.keys(raw.regions)) delete raw.regions[rk].tier2;
+    globalThis.localStorage.setItem('gm-sim-save-v2', JSON.stringify(raw));
+
+    const loaded = loadGameState();
+    for (const rk of Object.keys(loaded.regions)) {
+      assert.equal(loaded.regions[rk].tier2?.teams?.length, 16,
+        `${rk} did not get a tier-2 scene — an existing save would never see one`);
+    }
+  });
+
+  test('a finished tier-2 bracket carries no per-map player stats', () => {
+    const gs = newGame();
+    const t2 = runTier2Stage(gs, 'americas');
+    let withStats = 0;
+    for (const value of Object.values(t2.bracket)) {
+      for (const m of (Array.isArray(value) ? value : [value])) {
+        for (const map of m?.result?.maps || []) if (map.playerStats) withStats++;
+      }
+    }
+    assert.equal(withStats, 0,
+      'tier-2 maps still carry playerStats — never rendered, and they dominated save size');
+  });
+});
+
 describe('the stage', () => {
   test('resolves to 8 qualifiers and a champion', () => {
     const gs = newGame();

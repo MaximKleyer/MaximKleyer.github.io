@@ -268,10 +268,26 @@ export function runTier2Stage(gameState, regionKey) {
     tier2.bracket = b;
     tier2.champion = getInternationalChampion(b) || null;
   }
+  // Tier-2 match detail is never rendered map-by-map, so the per-player
+  // stat tables inside every bracket result are pure save weight. The
+  // scouting signal reads player.stats, which accumulates separately.
+  stripTier2PlayerStats(tier2.bracket);
+
   tier2.phase = 'complete';
   tier2.seeds = seeds;
   applyTier2Morale(gameState, regionKey);
   return tier2;
+}
+
+/** Drop per-map playerStats from every match in a finished bracket. */
+function stripTier2PlayerStats(bracket) {
+  if (!bracket) return;
+  for (const value of Object.values(bracket)) {
+    const matches = Array.isArray(value) ? value : [value];
+    for (const m of matches) {
+      for (const map of m?.result?.maps || []) delete map.playerStats;
+    }
+  }
 }
 
 /**

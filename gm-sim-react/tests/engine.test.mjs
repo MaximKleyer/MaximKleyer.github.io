@@ -82,21 +82,31 @@ describe('map simulation', () => {
     const A = humanTeam(gs), B = aiTeam(gs);
 
     const setMap = (t, v) => { t.mapRatings.ascent = { attack: v, defense: v }; };
-    const rate = () => {
+    const rateA = (n = 400) => {
       let w = 0;
-      for (let i = 0; i < 250; i++) {
+      for (let i = 0; i < n; i++) {
         if (simulateMap(A, B, { mapId: 'ascent', firstHalfAttacker: 'A' }).winner === A) w++;
       }
-      return w / 250;
+      return w / n;
     };
 
     setMap(A, 70); setMap(B, 70);
-    const even = rate();
-    setMap(A, 95); setMap(B, 45);
-    const favoured = rate();
+    const even = rateA();
 
-    assert.ok(favoured > even,
-      `a 50-point map edge did not raise win rate (even ${even}, favoured ${favoured})`);
+    // Boost whichever side is losing the even matchup. Boosting the side
+    // that is ALREADY dominant can saturate at ~100% and leave nothing to
+    // measure, which made an earlier version of this test flaky.
+    if (even <= 0.5) {
+      setMap(A, 95); setMap(B, 45);
+      const boosted = rateA();
+      assert.ok(boosted > even,
+        `boosting the weaker side did not raise its win rate (even ${even}, boosted ${boosted})`);
+    } else {
+      setMap(A, 45); setMap(B, 95);
+      const handicapped = rateA();
+      assert.ok(handicapped < even,
+        `handicapping the stronger side did not lower its win rate (even ${even}, after ${handicapped})`);
+    }
   });
 
   test('regression: only the starting five play', () => {
