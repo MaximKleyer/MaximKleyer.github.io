@@ -20,6 +20,7 @@
 
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
+import { runTier2Stage } from './tier2.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
 import { generateSchedule } from './league.js';
@@ -268,9 +269,26 @@ export function completeCurrentStage(gameState) {
     // What the pool rotation did at the end of this stage, so History
     // can show how the map pool evolved across a career.
     mapRotation: rotateStageMapPool(gameState),
+    // Tier 2 plays its own Swiss + bracket alongside each tier-1 stage.
+    // Run it here, at stage close, so the mid-season signing window that
+    // follows has fresh tier-2 form to scout and poach from.
+    tier2Champions: runTier2Stages(gameState),
   });
 
   gameState.season.status = 'transition';
+}
+
+/**
+ * Play every region's tier-2 stage. Returns { regionKey: championAbbr }
+ * for the stage history entry.
+ */
+function runTier2Stages(gameState) {
+  const champions = {};
+  for (const regionKey of REGION_KEYS) {
+    const t2 = runTier2Stage(gameState, regionKey);
+    if (t2?.champion) champions[regionKey] = t2.champion.abbr;
+  }
+  return champions;
 }
 
 /**
