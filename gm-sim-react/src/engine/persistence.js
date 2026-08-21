@@ -44,6 +44,7 @@ import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
+import { inferRoleFromStats } from '../data/roles.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -216,6 +217,10 @@ function serialize(gameState) {
         contract: value.contract,
         // Drives the Roster delta indicators after an offseason.
         lastOffseasonDelta: value.lastOffseasonDelta,
+        // Where this player belongs. Slotting them elsewhere costs
+        // rating, so losing this would silently change performance.
+        primaryRole: value.primaryRole,
+        secondaryRole: value.secondaryRole,
       };
     }
 
@@ -383,6 +388,16 @@ function rehydratePlayer(pd) {
   if (Array.isArray(pd.moraleHistory)) player.moraleHistory = pd.moraleHistory;
   if (pd.contract) player.contract = { ...pd.contract };
   if (pd.lastOffseasonDelta) player.lastOffseasonDelta = pd.lastOffseasonDelta;
+  if (pd.primaryRole) {
+    player.primaryRole = pd.primaryRole;
+    player.secondaryRole = pd.secondaryRole ?? null;
+  } else {
+    // Save predates roles. Infer from the stats the player already has
+    // so their tag agrees with their profile rather than being random.
+    const inferred = inferRoleFromStats(player);
+    player.primaryRole = inferred.primaryRole;
+    player.secondaryRole = inferred.secondaryRole;
+  }
 
   return player;
 }

@@ -16,6 +16,7 @@ import { COMPOSITIONS } from '../data/strategy.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
+import { assignRosterRoles } from '../data/roles.js';
 
 /**
  * Initialize the full game — all 4 regions.
@@ -38,17 +39,25 @@ export function initGame(humanRegion, humanTeamIndex) {
       teams[humanTeamIndex].isHuman = true;
     }
 
-    // Generate rosters — 5 players per team, no role assignment
+    // Generate rosters. Roles are assigned per TEAM, not per player:
+    // every composition needs all four roles and several need two of
+    // one, so rolling roles independently regularly left a squad missing
+    // a role entirely and permanently stuck with an off-role penalty.
+    // assignRosterRoles guarantees one of each plus a duplicate.
     for (const team of teams) {
+      const roles = assignRosterRoles(5);
       while (team.roster.length < 5) {
-        team.roster.push(generatePlayer({ regionKey }));
+        team.roster.push(generatePlayer({ regionKey, ...roles[team.roster.length] }));
       }
     }
 
     // Auto-assign strategy
     for (const team of teams) {
       if (!team.isHuman) {
-        team.strategy.comp = compKeys[Math.floor(Math.random() * compKeys.length)];
+        // Pick the composition this roster can actually field. Choosing
+        // at random regularly demanded two of a role the team had one of,
+        // leaving AI sides permanently off-role.
+        team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
       }
       team.autoAssignStrategy();
     }
