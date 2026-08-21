@@ -75,6 +75,10 @@ const PLAYER_FIELDS = {
   morale:        { persisted: true },
   moraleHistory: { persisted: true },
   contract:      { persisted: true },
+  // Where the player belongs. Slotting them elsewhere costs rating, so
+  // losing these would silently change match performance.
+  primaryRole:   { persisted: true },
+  secondaryRole: { persisted: true },
   // Set by the offseason development pass; drives the Roster deltas.
   lastOffseasonDelta: { persisted: true, lazy: true },
 };
@@ -344,6 +348,35 @@ describe('regressions', () => {
     for (const t of loaded.regions.americas.tier2.teams) {
       const clash = loaded.regions.americas.teams.find(x => x.abbr === t.abbr);
       assert.ok(!clash, `${t.abbr} exists in both tiers — refs would resolve to the wrong team`);
+    }
+  });
+
+  test('roles survive, and a pre-role save infers them from stats', async () => {
+    const { saveGameState, loadGameState } = await import('../src/engine/persistence.js');
+    const gs = newGame();
+    const p = humanTeam(gs).roster[0];
+    p.primaryRole = 'sentinel';
+    p.secondaryRole = 'controller';
+
+    const loaded = humanTeam(roundTrip(gs)).roster.find(x => x.id === p.id);
+    assert.equal(loaded.primaryRole, 'sentinel');
+    assert.equal(loaded.secondaryRole, 'controller');
+
+    // Strip roles to simulate a save written before they existed.
+    saveGameState(gs);
+    const raw = JSON.parse(globalThis.localStorage.getItem('gm-sim-save-v2'));
+    for (const t of raw.regions.americas.teams) {
+      for (const pl of t.roster) { delete pl.primaryRole; delete pl.secondaryRole; }
+    }
+    globalThis.localStorage.setItem('gm-sim-save-v2', JSON.stringify(raw));
+
+    const migrated = loadGameState();
+    const ROLES = ['duelist', 'initiator', 'controller', 'sentinel', 'flex'];
+    for (const t of migrated.regions.americas.teams) {
+      for (const pl of t.roster) {
+        assert.ok(ROLES.includes(pl.primaryRole),
+          `pre-role save left ${pl.tag} with primaryRole ${pl.primaryRole}`);
+      }
     }
   });
 

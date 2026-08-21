@@ -12,6 +12,7 @@ import { SIM, ROUNDS_TO_WIN, HALF_LENGTH, REGULATION_ROUNDS } from '../data/cons
 import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
 import { moralePerformanceModifier } from '../data/salary.js';
 import { teamMapRating, getCurrentPool } from '../data/maps.js';
+import { roleFitMultiplier } from '../data/roles.js';
 import { autoMapPlan } from '../engine/veto.js';
 
 const ROLE_AGGRESSION = {
@@ -54,6 +55,10 @@ function getDuelRating(player, assignment, sideMult = 1) {
   // Map/side comfort. Applied before the noise window for the same
   // reason as morale: it shifts the mean, not the spread.
   base *= sideMult;
+  // Role fit. A player slotted off-role performs roughly ten points of
+  // overall below themselves — an 80 plays like a 70. Secondary costs a
+  // little, flex a token amount everywhere. See data/roles.js.
+  base *= roleFitMultiplier(player, assignment?.role);
   return base + (Math.random() * 16) - 8;
 }
 

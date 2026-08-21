@@ -17,6 +17,7 @@
 
 import { TAGS, getNamePool } from '../data/names.js';
 import { randomNationalityForRegion } from '../data/nationalities.js';
+import { rollRole, ROLE_IQ_BIAS, FLEX, FLEX_RATING_CEILING } from '../data/roles.js';
 
 // ── Helpers ──
 
@@ -115,7 +116,7 @@ function calcNeutralOverall(ratings) {
 // ── Player class ──
 
 export class Player {
-  constructor(name, tag, ratings, { age, nationality } = {}) {
+  constructor(name, tag, ratings, { age, nationality, primaryRole, secondaryRole } = {}) {
     this.id = makeId();
     this.name = name;
     this.tag = tag;
@@ -123,6 +124,13 @@ export class Player {
     this.overall = calcNeutralOverall(ratings);
     this.age = age ?? 20;
     this.nationality = nationality || 'US';
+
+    // ── Role ──
+    // Where this player actually belongs. Slotting them anywhere else
+    // costs rating — see data/roles.js. `flex` covers every role at a
+    // token penalty and has no secondary.
+    this.primaryRole = primaryRole || 'duelist';
+    this.secondaryRole = secondaryRole ?? null;
 
     this.stats = {
       kills: 0,
@@ -212,8 +220,20 @@ export function generatePlayer(options = {}) {
   const lastName = randomFrom(pool.last);
   const tag = getUniqueTag();
 
+  // Role first — it constrains the ratings that follow.
+  const { primaryRole, secondaryRole } = options.primaryRole
+    ? { primaryRole: options.primaryRole, secondaryRole: options.secondaryRole ?? null }
+    : rollRole();
+
   const floor = options.ratingFloor ?? 45;
-  const ceiling = Math.max(floor + 1, options.ratingCeiling ?? 99);
+  // Flex players are deliberately generated weak: an 80-rated flex would
+  // be strictly better than an 80-rated specialist everywhere, so flex is
+  // a development project rather than a jackpot.
+  const requested = options.ratingCeiling ?? 99;
+  const ceiling = primaryRole === FLEX
+    ? Math.max(floor + 1, Math.min(requested, FLEX_RATING_CEILING))
+    : Math.max(floor + 1, requested);
+
   const ratings = {
     aim:         randRating(floor, ceiling),
     positioning: randRating(floor, ceiling),
@@ -222,12 +242,16 @@ export function generatePlayer(options = {}) {
     clutch:      randRating(floor, ceiling),
   };
 
+  // Game sense skews by role — initiators call most, duelists least.
+  const iqBias = ROLE_IQ_BIAS[primaryRole] || 0;
+  ratings.gamesense = Math.max(1, Math.min(99, ratings.gamesense + iqBias));
+
   const age = options.ageOverride ?? randAge();
 
   return new Player(
     `${firstName} ${lastName}`,
     tag,
     ratings,
-    { age, nationality },
+    { age, nationality, primaryRole, secondaryRole },
   );
 }

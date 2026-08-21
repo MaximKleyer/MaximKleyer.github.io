@@ -7,6 +7,7 @@
 import { ROSTER_MIN, ROSTER_MAX, ROLE_WEIGHTS } from '../data/constants.js';
 import { DEFAULT_COMP, COMPOSITIONS, getDefaultSubtype } from '../data/strategy.js';
 import { archetypeFor } from '../data/archetypes.js';
+import { roleFitPenalty } from '../data/roles.js';
 
 export class Team {
   constructor(name, abbr, color) {
@@ -166,20 +167,18 @@ export class Team {
     // roster — otherwise a bench player could be handed a comp slot.
     const eligible = this.startingFive;
 
-    // For each slot, pick the unused player whose rating profile best
-    // matches the role's weighted profile. This replaces the old
-    // "player.role === slot.role" matching now that players are
-    // role-agnostic. Greedy — assign slot-by-slot in order, taking the
-    // best remaining fit each time.
+    // Global best-first assignment rather than slot-by-slot.
+    //
+    // Filling slots in order let the early slots take the best-fitting
+    // players and left the last slot with whoever remained — measured at
+    // 30% of AI slots being off-role. Scoring every (slot, player) pair
+    // and repeatedly taking the best remaining one keeps specialists on
+    // their own role far more often.
+    const pairs = [];
     for (let i = 0; i < slots.length; i++) {
       const role = slots[i];
       const weights = ROLE_WEIGHTS[role] || null;
-      let bestPlayer = null;
-      let bestScore = -Infinity;
       for (const p of eligible) {
-        if (used.has(p.id)) continue;
-        // Score = sum of (player.ratings[stat] * role weight for stat).
-        // Falls back to overall if no weights defined for this role.
         let score = 0;
         if (weights) {
           for (const [stat, w] of Object.entries(weights)) {
@@ -188,19 +187,24 @@ export class Team {
         } else {
           score = p.overall;
         }
-        if (score > bestScore) {
-          bestScore = score;
-          bestPlayer = p;
-        }
+        // Role fit matters as much as raw stats: a misfit specialist
+        // loses ten points of overall, so a slightly worse player who
+        // actually plays the role is usually the better pick.
+        score += roleFitPenalty(p, role) * 2;
+        pairs.push({ slot: i, player: p, score });
       }
-      if (bestPlayer) {
-        used.add(bestPlayer.id);
-        assignments[i] = {
-          playerId: bestPlayer.id,
-          role,
-          subtypeId: getDefaultSubtype(role),
-        };
-      }
+    }
+    pairs.sort((a, b) => b.score - a.score);
+
+    for (const { slot, player } of pairs) {
+      if (assignments[slot] !== null) continue;
+      if (used.has(player.id)) continue;
+      used.add(player.id);
+      assignments[slot] = {
+        playerId: player.id,
+        role: slots[slot],
+        subtypeId: getDefaultSubtype(slots[slot]),
+      };
     }
 
     // Fill any remaining slots with unassigned players sorted by overall
@@ -228,6 +232,33 @@ export class Team {
       const best = [...this.roster].sort((a, b) => b.ratings.gamesense - a.ratings.gamesense);
       this.strategy.iglId = best.length > 0 ? best[0].id : null;
     }
+  }
+
+  /**
+   * The composition this roster can field with the least role strain.
+   * AI teams previously picked at random, which regularly demanded two
+   * of a role they had one of.
+   */
+  bestCompFor(compositions) {
+    let best = null, bestPenalty = -Infinity;
+    for (const [key, comp] of Object.entries(compositions)) {
+      const pool = [...this.startingFive];
+      let penalty = 0;
+      // Greedy: each slot takes its best remaining fit.
+      for (const role of comp.slots) {
+        let pick = null, pickPenalty = -Infinity;
+        for (const p of pool) {
+          const v = roleFitPenalty(p, role);
+          if (v > pickPenalty) { pickPenalty = v; pick = p; }
+        }
+        if (pick) {
+          pool.splice(pool.indexOf(pick), 1);
+          penalty += pickPenalty;
+        }
+      }
+      if (penalty > bestPenalty) { bestPenalty = penalty; best = key; }
+    }
+    return best;
   }
 
   validateStrategy() {

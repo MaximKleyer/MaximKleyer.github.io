@@ -26,6 +26,7 @@ import { Team } from '../classes/Team.js';
 import { generatePlayer } from '../classes/Player.js';
 import { getTier2TeamDefs, TIER2_TEAM_COUNT } from '../data/tier2Teams.js';
 import { generateMapRatings } from '../data/maps.js';
+import { assignRosterRoles } from '../data/roles.js';
 import { calculateBaseSalary, adjustMorale } from '../data/salary.js';
 import { expectedAcs } from './poaching.js';
 import { simulateSeries } from '../classes/Match.js';
@@ -89,11 +90,14 @@ function assignBands(count) {
 function buildRoster(regionKey, band, academy) {
   const roster = [];
   const hasStandout = Math.random() < STANDOUT_CHANCE;
+  // Same guarantee as tier 1: one of each role plus a duplicate.
+  const roles = assignRosterRoles(TIER2_ROSTER_SIZE);
 
   for (let i = 0; i < TIER2_ROSTER_SIZE; i++) {
     const standout = hasStandout && i === 0;
     roster.push(generatePlayer({
       regionKey,
+      ...roles[i],
       ageOverride: tier2Age(academy),
       ratingFloor:   standout ? STANDOUT_FLOOR   : band.floor + (academy ? 3 : 0),
       ratingCeiling: standout ? STANDOUT_CEILING : band.ceiling + (academy ? 3 : 0),
