@@ -147,32 +147,44 @@ describe('roster spread', () => {
 });
 
 describe('effect on the simulation', () => {
-  test('an all-off-role lineup loses to an all-primary one', () => {
+  test('being on-role beats being off-role, controlling for roster quality', () => {
+    // Comparing one team on-role against another off-role conflates the
+    // role effect with whatever random rating gap the two rosters happen
+    // to have — measured flaky at roughly 1 run in 5. So run the SAME
+    // matchup twice with the roles reversed: the swing between the two
+    // isolates the role effect and cancels the quality difference.
     const gs = newGame();
     const A = humanTeam(gs), B = aiTeam(gs);
+    const slots = ['duelist', 'initiator', 'controller', 'sentinel', 'initiator'];
 
-    // Give both sides identical strategy slots, then make A fit and B misfit.
-    const roles = ['duelist', 'initiator', 'controller', 'sentinel', 'initiator'];
-    const assign = (team, fit) => {
+    const setFit = (team, onRole) => {
       team.strategy.assignments = team.startingFive.map((p, i) => {
-        if (fit) p.primaryRole = roles[i];
-        else {
-          // any role that is neither primary nor secondary
-          p.primaryRole = roles[i] === 'duelist' ? 'sentinel' : 'duelist';
+        if (onRole) {
+          p.primaryRole = slots[i];
+        } else {
+          p.primaryRole = slots[i] === 'duelist' ? 'sentinel' : 'duelist';
           p.secondaryRole = null;
         }
-        return { playerId: p.id, role: roles[i], subtypeId: null };
+        return { playerId: p.id, role: slots[i], subtypeId: null };
       });
     };
-    assign(A, true);
-    assign(B, false);
 
-    let aWins = 0;
-    for (let i = 0; i < 200; i++) {
-      if (simulateMap(A, B, { mapId: 'ascent', firstHalfAttacker: 'A' }).winner === A) aWins++;
-    }
-    assert.ok(aWins > 130,
-      `the on-role side only won ${aWins}/200 — the off-role penalty is not reaching the sim`);
+    const rateA = (n = 300) => {
+      let w = 0;
+      for (let i = 0; i < n; i++) {
+        if (simulateMap(A, B, { mapId: 'ascent', firstHalfAttacker: 'A' }).winner === A) w++;
+      }
+      return w / n;
+    };
+
+    setFit(A, true); setFit(B, false);
+    const aFavoured = rateA();
+
+    setFit(A, false); setFit(B, true);
+    const aHandicapped = rateA();
+
+    assert.ok(aFavoured > aHandicapped,
+      `role fit did not move the result (A on-role ${aFavoured}, A off-role ${aHandicapped})`);
   });
 
   test('flex is never strictly better than a specialist in that role', () => {

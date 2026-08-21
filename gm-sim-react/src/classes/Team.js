@@ -142,7 +142,14 @@ export class Team {
   }
 
   addPlayer(player) {
+    if (!player) return false;
     if (this.roster.length >= ROSTER_MAX) return false;
+    // Never hold the same player twice. Any double-submit — a rapid
+    // second click before React re-rendered, a retried signing after a
+    // cap change — would otherwise push the same object again, giving
+    // the roster duplicate ids and double-counting the salary against
+    // the cap.
+    if (this.roster.some(p => p === player || p.id === player.id)) return false;
     this.roster.push(player);
     return true;
   }

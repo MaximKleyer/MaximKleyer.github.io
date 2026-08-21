@@ -58,6 +58,7 @@ export default function FreeAgents({
   const [offerSalary, setOfferSalary] = useState(0);    // salary input ($K)
   const [offerYears, setOfferYears] = useState(1);
   const [lastReject, setLastReject] = useState(null);   // {askTier, capExceeded, reason} from previous attempt
+  const [submitting, setSubmitting] = useState(false);  // guards double submits
   const [, forceUpdate] = useState(0);
 
   const sorted = [...freeAgents].sort((a, b) => {
@@ -93,11 +94,26 @@ export default function FreeAgents({
   // call returns a result object (accepted/rejected), we react here.
   function submitOffer() {
     if (!signTarget) return;
+    // A second click before React re-renders would call onSign again with
+    // the same target. The engine now refuses a duplicate outright, but
+    // blocking it here keeps the button from ever looking unresponsive.
+    if (submitting) return;
+    setSubmitting(true);
+
     const offer = {
       salary: offerSalary * 1000,
       years: offerYears,
     };
     const result = onSign(signTarget, offer);
+    setSubmitting(false);
+
+    if (result?.alreadySigned) {
+      // Signed already — most likely a double submit. Close rather than
+      // leaving a panel open for a player who is no longer available.
+      setSignTarget(null);
+      setLastReject(null);
+      return;
+    }
     if (result?.accepted) {
       // Modal closes; signTarget will be removed from the FA list on
       // next render via the parent's state update
@@ -117,6 +133,12 @@ export default function FreeAgents({
       forceUpdate(n => n + 1);
     }
   }
+
+  // Safety net, derived rather than stored: if the player being
+  // negotiated with has left the pool — signed here, or taken elsewhere —
+  // the panel must not linger offering a deal that cannot happen.
+  // Computed instead of calling setState during render, which loops.
+  const activeTarget = signTarget && freeAgents.includes(signTarget) ? signTarget : null;
 
   // Total commitment if the current offer is accepted
   const totalCommit = (offerSalary * 1000) * offerYears;
@@ -258,7 +280,7 @@ export default function FreeAgents({
       </table>
 
       {/* Sign / negotiate modal */}
-      {signTarget && (
+      {activeTarget && (
         <div style={{
           position: 'fixed',
           inset: 0,
@@ -284,22 +306,22 @@ export default function FreeAgents({
               marginBottom: 6,
             }}>
               <h3 style={{ margin: 0, color: '#fff' }}>
-                Sign {signTarget.tag}
+                Sign {activeTarget.tag}
               </h3>
               <span style={{
                 fontSize: '0.78rem',
                 color: '#8a98b1',
               }}>
-                OVR {signTarget.overall} · Age {signTarget.age}
+                OVR {activeTarget.overall} · Age {activeTarget.age}
               </span>
             </div>
             <p style={{
-              color: moraleColor(signTarget.morale),
+              color: moraleColor(activeTarget.morale),
               fontSize: '0.85rem',
               marginTop: 0,
               marginBottom: 18,
             }}>
-              Morale: {signTarget.morale ?? 65}
+              Morale: {activeTarget.morale ?? 65}
             </p>
 
             {/* Salary input */}
@@ -470,7 +492,7 @@ export default function FreeAgents({
                   fontWeight: 600,
                 }}
               >
-                Submit Offer
+                {submitting ? 'Signing…' : 'Submit Offer'}
               </button>
             </div>
           </div>

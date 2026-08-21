@@ -291,6 +291,62 @@ describe('sim-series progress snapshot', () => {
   });
 });
 
+/* ─────────────── Roster integrity ─────────────── */
+
+describe('roster integrity', () => {
+  // A double submit — a second click before React re-rendered, or a
+  // retried signing after raising the cap — used to push the same player
+  // object onto the roster twice, giving duplicate ids and counting the
+  // salary against the cap twice.
+  test('the same player cannot be added twice', async () => {
+    const { humanTeam: ht } = await import('./helpers.mjs');
+    const gs = newGame();
+    const team = ht(gs);
+    const fa = gs.regions.americas.freeAgents[0];
+
+    assert.equal(team.addPlayer(fa), true, 'first add should succeed');
+    const size = team.roster.length;
+    assert.equal(team.addPlayer(fa), false, 'second add must be refused');
+    assert.equal(team.roster.length, size, 'roster grew on a duplicate add');
+    assert.equal(team.roster.filter(p => p === fa).length, 1);
+  });
+
+  test('a player with a duplicate id is refused even if it is a different object', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    const existing = team.roster[0];
+    const clone = { ...existing };          // same id, different object
+    assert.equal(team.addPlayer(clone), false,
+      'an id already on the roster must not be added again');
+  });
+
+  test('no roster in a fresh league holds a duplicate', () => {
+    const gs = newGame();
+    for (const rk of Object.keys(gs.regions)) {
+      const all = [...gs.regions[rk].teams, ...gs.regions[rk].tier2.teams];
+      for (const t of all) {
+        const ids = t.roster.map(p => p.id);
+        assert.equal(new Set(ids).size, ids.length, `${rk} ${t.abbr} has a duplicate player`);
+      }
+    }
+  });
+
+  test('poaching a player already on the roster is refused', async () => {
+    const { executePoach } = await import('../src/engine/poaching.js');
+    const gs = newGame();
+    const club = humanTeam(gs);
+    const target = gs.regions.americas.tier2.teams[0].roster[0];
+
+    const first = executePoach(gs, club, target, { force: true });
+    assert.ok(first.ok, first.message);
+    const size = club.roster.length;
+
+    const second = executePoach(gs, club, target, { force: true });
+    assert.equal(second.ok, false, 'a second poach of the same player must fail');
+    assert.equal(club.roster.length, size, 'roster grew on a duplicate poach');
+  });
+});
+
 /* ─────────────── Depth chart ─────────────── */
 
 describe('depth chart', () => {
