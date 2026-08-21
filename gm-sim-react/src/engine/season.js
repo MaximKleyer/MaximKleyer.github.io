@@ -1693,8 +1693,12 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
           yearsRemaining: newLength,
           signedYear: gameState.seasonNumber || 2025,
         };
-        team.roster.push(signed);
-        offseasonSummary.aiSigningsCount++;
+        if (team.addPlayer(signed)) {
+          offseasonSummary.aiSigningsCount++;
+        } else {
+          // Refused — return them to the pool instead of losing them.
+          region.freeAgents.push(signed);
+        }
       }
       team.validateStrategy();
     }
