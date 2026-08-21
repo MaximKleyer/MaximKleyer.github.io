@@ -10,7 +10,8 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { installLocalStorage, newGame, roundTrip, humanTeam } from './helpers.mjs';
-import { runTier2Stage, initTier2Bracket, applyTier2Morale } from '../src/engine/tier2.js';
+import { runTier2Stage, initTier2Bracket, applyTier2Morale, runTier2AISignings, TIER2_SIGNING_CEILING
+} from '../src/engine/tier2.js';
 import {
   evaluatePoach, executePoach, refusalChance, scoutTier2,
   findTier2Team, backfillTier2Team, REFUSAL_MORALE, POACH_RESET_MORALE,
@@ -18,6 +19,7 @@ import {
 import { getSwissStandings, getQualifiedSeeds } from '../src/engine/swissFormat.js';
 import { getSalaryCap, computeTeamSalary } from '../src/data/salary.js';
 import { ROSTER_MIN } from '../src/data/constants.js';
+import { ROLES, FLEX } from '../src/data/roles.js';
 
 before(() => { installLocalStorage(); });
 
@@ -296,4 +298,70 @@ describe('scouting', () => {
     assert.ok(board.every(r => typeof r.form === 'number'), 'form not computed');
     assert.ok(board.some(r => r.acs > 0), 'no player recorded any combat score');
   });
+});
+
+/* ─────────────── Tier-2 free agency ─────────────── */
+
+test('tier-2 clubs sign free agents, and only ones tier 1 passed over', () => {
+  const gs = newGame();
+  const rk = gs.humanRegion;
+  const before = gs.regions[rk].tier2.teams.map(t => t.overallRating);
+  const poolBefore = gs.regions[rk].freeAgents.length;
+
+  let signings = 0;
+  for (let i = 0; i < 6; i++) signings += runTier2AISignings(gs, rk);
+
+  assert.ok(signings > 0, 'tier-2 clubs should sign somebody across six windows');
+
+  // Pool size is conserved — every signing swaps a player back in.
+  assert.equal(gs.regions[rk].freeAgents.length, poolBefore,
+    'a signing must release a player back to the pool, not conjure one');
+
+  const after = gs.regions[rk].tier2.teams.map(t => t.overallRating);
+  const improved = after.filter((v, i) => v > before[i]).length;
+  const worse = after.filter((v, i) => v < before[i]).length;
+  assert.ok(improved > 0, 'signings should make some clubs better');
+  assert.equal(worse, 0, 'a club should never sign itself weaker');
+});
+
+test('tier-2 signings respect the quality ceiling', () => {
+  const gs = newGame();
+  const rk = gs.humanRegion;
+  const idsBefore = new Set(gs.regions[rk].tier2.teams.flatMap(t => t.roster.map(p => p.id)));
+
+  for (let i = 0; i < 8; i++) runTier2AISignings(gs, rk);
+
+  const arrivals = gs.regions[rk].tier2.teams
+    .flatMap(t => t.roster)
+    .filter(p => !idsBefore.has(p.id));
+
+  for (const p of arrivals) {
+    assert.ok(p.overall <= TIER2_SIGNING_CEILING,
+      `${p.tag} (${p.overall}) is above the tier-2 ceiling — should hold out for tier 1`);
+    assert.ok(p.contract, `${p.tag} arrived without a contract`);
+  }
+});
+
+test('tier-2 signings keep every squad able to field all four roles', () => {
+  const gs = newGame();
+  const rk = gs.humanRegion;
+  for (let i = 0; i < 8; i++) runTier2AISignings(gs, rk);
+
+  for (const team of gs.regions[rk].tier2.teams) {
+    const flexes = team.roster.filter(p => p.primaryRole === FLEX).length;
+    const covered = new Set(team.roster.filter(p => p.primaryRole !== FLEX).map(p => p.primaryRole));
+    assert.ok(covered.size + flexes >= ROLES.length,
+      `${team.abbr} lost role coverage after signing`);
+  }
+});
+
+test('arrivals from free agency are poachable like anyone else', () => {
+  const gs = newGame();
+  const rk = gs.humanRegion;
+  const idsBefore = new Set(gs.regions[rk].tier2.teams.flatMap(t => t.roster.map(p => p.id)));
+  for (let i = 0; i < 8; i++) runTier2AISignings(gs, rk);
+
+  const scouted = scoutTier2(gs, rk);
+  const arrivals = scouted.filter(e => !idsBefore.has(e.player.id));
+  assert.ok(arrivals.length > 0, 'newly signed tier-2 players should appear on the scouting board');
 });

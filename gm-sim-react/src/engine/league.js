@@ -16,7 +16,7 @@ import { COMPOSITIONS } from '../data/strategy.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
-import { assignRosterRoles } from '../data/roles.js';
+import { assignRosterRoles, swapKeepsSpread } from '../data/roles.js';
 
 /**
  * Initialize the full game — all 4 regions.
@@ -104,6 +104,19 @@ export function initGame(humanRegion, humanTeamIndex) {
       // promotion for now. Poaching targets live here.
       tier2: initTier2Region(regionKey),
     };
+  }
+
+  // Bring every tier-1 side up to a professional standard before the
+  // save starts, using the free agents already generated.
+  upgradeTeamsToFloor(regions, REGION_KEYS);
+
+  // Re-fit strategy after any roster churn from the upgrade pass.
+  for (const regionKey of REGION_KEYS) {
+    for (const team of regions[regionKey].teams) {
+      if (team.isHuman) continue;
+      team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
+      team.autoAssignStrategy();
+    }
   }
 
   // Mirror the pool for the batch sim paths (see maps.js).
@@ -255,4 +268,52 @@ export function generateSchedule(teams) {
   }
   schedule.sort((a, b) => a.week - b.week);
   return schedule;
+}
+
+/* ─────────────── Squad quality floor ─────────────── */
+
+/**
+ * Every tier-1 side should look like a professional roster on a new save.
+ *
+ * Generation alone left roughly a fifth of teams below 70 overall — as
+ * low as 63 — while dozens of 70+ free agents sat unsigned, which reads
+ * as a league that has not done its business rather than as a weak team.
+ *
+ * So each team below the floor upgrades from free agency: its weakest
+ * player is swapped for the best available free agent who improves them.
+ * Swaps that would cost the squad its role coverage are skipped, and the
+ * player who makes way returns to the pool, so nobody is invented or
+ * lost. Teams already at the floor are left alone — the league should
+ * still have a spread, just not a broken bottom end.
+ */
+export const TIER1_MIN_TEAM_OVR = 70;
+
+export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_OVR) {
+  for (const regionKey of regionKeys) {
+    const region = regions[regionKey];
+    if (!region) continue;
+
+    for (const team of region.teams) {
+      let guard = 0;
+      while (team.overallRating < floor && guard++ < 10) {
+        const weakest = [...team.roster].sort((a, b) => a.overall - b.overall)[0];
+        if (!weakest) break;
+
+        // Best free agent who is an upgrade AND keeps role coverage.
+        const candidates = region.freeAgents
+          .filter(fa => fa.overall > weakest.overall)
+          .filter(fa => swapKeepsSpread(team.roster, weakest, fa))
+          .sort((a, b) => b.overall - a.overall);
+
+        const incoming = candidates[0];
+        if (!incoming) break;   // nothing available that helps
+
+        team.removePlayer(weakest);
+        region.freeAgents.push(weakest);
+        region.freeAgents.splice(region.freeAgents.indexOf(incoming), 1);
+        team.addPlayer(incoming);
+      }
+      team.validateStrategy();
+    }
+  }
 }

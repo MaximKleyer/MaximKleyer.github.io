@@ -258,14 +258,16 @@ export default function Tier2({
           background: 'rgba(255,70,85,0.08)', border: '1px solid rgba(255,70,85,0.3)',
         }}>
           <strong>Signing window open.</strong>{' '}
-          {movesRemaining} signing{movesRemaining === 1 ? '' : 's'} left this season — a tier-2
-          poach spends one, the same as a free agent. Players marked{' '}
+          {movesRemaining == null
+            ? 'Offseason — sign as many as your cap and roster allow.'
+            : `${movesRemaining} signing${movesRemaining === 1 ? '' : 's'} left this season — a tier-2 poach spends one, the same as a free agent.`}
+          {' '}Players marked{' '}
           <span style={{ color: '#fb923c', fontWeight: 700 }}>★</span> are happy where they are and
           may turn you down.
         </p>
       ) : (
         <p style={{ margin: '0 0 14px', fontSize: '0.8em', opacity: 0.5 }}>
-          Poaching opens during the mid-season window between stages.
+          Poaching opens during the mid-season window between stages, and again in the offseason.
         </p>
       )}
 

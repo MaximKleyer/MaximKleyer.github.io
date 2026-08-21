@@ -399,9 +399,13 @@ export default function App() {
   // A tier-2 signing spends one of the same two mid-season moves as a
   // free-agent signing, so the budget cannot be dodged by raiding tier 2.
   function handlePoach(player) {
-    if (!midseasonActive) return;
+    // Open in the mid-season window AND the offseason. Free agency is
+    // open in both, and tier 2 is the same market.
+    if (!midseasonActive && !offseasonActive) return;
     const club = getHumanTeam(gameState);
-    const remaining = midseasonMovesRemaining(club);
+    // Only the mid-season window is capped at two signings; offseason
+    // business is unlimited, exactly like signing a free agent.
+    const remaining = midseasonActive ? midseasonMovesRemaining(club) : null;
     const evaluation = evaluatePoach(gameState, club, player, { movesRemaining: remaining });
     if (!evaluation.allowed) {
       setToast({ message: evaluation.reason, type: 'loss', mapScores: null });
@@ -420,7 +424,9 @@ export default function App() {
       return;
     }
 
-    club._midseasonMoves = (club._midseasonMoves || 0) + 1;
+    if (midseasonActive) {
+      club._midseasonMoves = (club._midseasonMoves || 0) + 1;
+    }
     setToast({
       message: result.message,
       type: result.requiresRelease ? 'loss' : 'win',
@@ -1652,8 +1658,8 @@ export default function App() {
           viewRegion={viewRegion}
           onChangeRegion={setViewRegion}
           humanTeam={humanTeam}
-          canPoach={midseasonActive}
-          movesRemaining={midseasonMovesRemaining(humanTeam)}
+          canPoach={midseasonActive || offseasonActive}
+          movesRemaining={midseasonActive ? midseasonMovesRemaining(humanTeam) : null}
           onPoach={handlePoach}
         />;
       case 'standings':

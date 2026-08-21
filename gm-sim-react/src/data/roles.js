@@ -201,3 +201,15 @@ export function roleLabel(role) {
   if (!role) return '—';
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
+
+/**
+ * Does swapping `out` for `incoming` keep a roster able to field every
+ * role? Used when topping teams up from free agency so an upgrade never
+ * costs the squad its role coverage.
+ */
+export function swapKeepsSpread(roster, out, incoming) {
+  const after = roster.filter(p => p !== out).concat(incoming);
+  const flexes = after.filter(p => p.primaryRole === FLEX).length;
+  const covered = new Set(after.filter(p => p.primaryRole !== FLEX).map(p => p.primaryRole));
+  return covered.size + flexes >= ROLES.length;
+}

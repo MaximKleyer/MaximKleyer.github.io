@@ -29,6 +29,7 @@ import { generatePlayer } from '../classes/Player.js';
 import { computeFinalStagePlacements } from './placements.js';
 import { runOffseasonAISignings } from './offseason.js';
 import { runMidseasonAISignings } from './midseason.js';
+import { runAllTier2AISignings } from './tier2.js';
 import {
   initInternational,
   computeInternationalResults,
@@ -596,6 +597,9 @@ export function beginNextSlot(gameState) {
         // is enforced inside runMidseasonAISignings — teams already at
         // the season cap from a prior window skip entirely.
         runMidseasonAISignings(gameState);
+        // Tier 2 does its business only after tier 1 has picked, so the
+        // second division genuinely signs from what is left over.
+        runAllTier2AISignings(gameState, REGION_KEYS);
         s.status = 'mid-season-fa';
       } else {
         s.status = 'active';
@@ -1792,6 +1796,10 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
   // The user's subsequent releases can trigger additional reactive AI
   // moves via runReactiveAISignings() called from App.jsx.
   runOffseasonAISignings(gameState);
+
+  // Tier 2 signs last, from whoever tier 1 passed over. These players are
+  // then poachable during the following season like any other tier-2 name.
+  runAllTier2AISignings(gameState, REGION_KEYS);
 }
 
 

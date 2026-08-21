@@ -26,7 +26,7 @@ import { Team } from '../classes/Team.js';
 import { generatePlayer } from '../classes/Player.js';
 import { getTier2TeamDefs, TIER2_TEAM_COUNT } from '../data/tier2Teams.js';
 import { generateMapRatings } from '../data/maps.js';
-import { assignRosterRoles } from '../data/roles.js';
+import { assignRosterRoles, swapKeepsSpread } from '../data/roles.js';
 import { calculateBaseSalary, adjustMorale } from '../data/salary.js';
 import { expectedAcs } from './poaching.js';
 import { simulateSeries } from '../classes/Match.js';
@@ -411,4 +411,94 @@ export function applyTier2Morale(gameState, regionKey) {
     }
   }
   return counts;
+}
+
+/* ─────────────── Tier-2 free agency ─────────────── */
+
+/**
+ * Tier-2 clubs sign free agents too, between stages and in the offseason.
+ *
+ * Without this the second division was frozen: the only movement was
+ * players being poached OUT of it, so it decayed across a season and the
+ * same teams stayed weak forever. Now they improve themselves, which
+ * keeps the scouting board worth checking more than once.
+ *
+ * Two things keep tier 2 in its place without needing a hard "tier 1
+ * gets priority" rule:
+ *
+ *   Tier 1 picks first. These passes run AFTER the tier-1 signing
+ *   windows, so tier 2 is choosing from what is left.
+ *
+ *   Two ceilings. A genuinely good free agent holds out for a tier-1 seat
+ *   rather than dropping down, so nobody above TIER2_SIGNING_CEILING joins
+ *   the division at all. On top of that a club can only reach so far above
+ *   its own standard — a decent player will not sign for the worst side in
+ *   the league. Without that second, relative ceiling every club simply
+ *   climbed to the global one and the division flattened into sixteen
+ *   identical teams within a few seasons.
+ */
+export const TIER2_SIGNING_CEILING = 71;
+
+/** How far above its own rating a club can realistically recruit. */
+export const TIER2_REACH = 4;
+
+/** How many teams act in a given window, and how many moves each makes. */
+const TIER2_ACTIVE_SHARE = 0.4;
+const TIER2_MAX_MOVES = 1;
+
+/** Ignore marginal upgrades — a club does not churn its roster for +1. */
+const TIER2_MIN_GAIN = 2;
+
+/**
+ * One signing pass for a region's tier-2 clubs. Each acting team swaps
+ * its weakest player for the best available free agent who improves it
+ * and keeps the squad able to field every role.
+ *
+ * Returns the number of signings made.
+ */
+export function runTier2AISignings(gameState, regionKey) {
+  const region = gameState.regions?.[regionKey];
+  const tier2 = region?.tier2;
+  if (!tier2?.teams?.length) return 0;
+
+  // Weakest clubs are the keenest to act, but not exclusively — a bit of
+  // randomness stops the same sides shuffling every single window.
+  const acting = [...tier2.teams]
+    .sort((a, b) => a.overallRating - b.overallRating)
+    .filter(() => Math.random() < TIER2_ACTIVE_SHARE + 0.2);
+
+  let signings = 0;
+  for (const team of acting) {
+    for (let move = 0; move < TIER2_MAX_MOVES; move++) {
+      const weakest = [...team.roster].sort((a, b) => a.overall - b.overall)[0];
+      if (!weakest) break;
+
+      const reach = Math.min(TIER2_SIGNING_CEILING, team.overallRating + TIER2_REACH);
+
+      const target = region.freeAgents
+        .filter(fa => fa.overall <= reach)
+        .filter(fa => fa.overall >= weakest.overall + TIER2_MIN_GAIN)
+        .filter(fa => swapKeepsSpread(team.roster, weakest, fa))
+        .sort((a, b) => b.overall - a.overall)[0];
+
+      if (!target) break;
+
+      team.removePlayer(weakest);
+      region.freeAgents.push(weakest);
+      region.freeAgents.splice(region.freeAgents.indexOf(target), 1);
+      giveContract(target, gameState.seasonNumber || 2025);
+      target.morale = 65;
+      team.addPlayer(target);
+      team.validateStrategy();
+      signings++;
+    }
+  }
+  return signings;
+}
+
+/** Run the tier-2 signing pass for every region. */
+export function runAllTier2AISignings(gameState, regionKeys) {
+  let total = 0;
+  for (const rk of regionKeys) total += runTier2AISignings(gameState, rk);
+  return total;
 }
