@@ -1386,6 +1386,15 @@ export default function App() {
   function signPlayer(player, offer = null) {
     if (humanTeam.rosterFull) return { rosterFull: true };
 
+    // Already signed? A second submit for the same player — from a rapid
+    // double click, or a retry after raising the cap — must not go
+    // through again. Checked against the pool rather than the roster so
+    // it also catches a player another team took.
+    const humanRegion = gameState.regions[gameState.humanRegion];
+    if (!humanRegion.freeAgents.includes(player)) {
+      return { accepted: false, alreadySigned: true, reason: 'no_longer_available' };
+    }
+
     // Phase 6f mid-season cap check: still applies on top of the new
     // salary cap.
     if (midseasonActive) {
@@ -1420,7 +1429,10 @@ export default function App() {
 
     // Accepted — apply the contract and roster move
     player.contract = result.contract;
-    humanTeam.addPlayer(player);
+    if (!humanTeam.addPlayer(player)) {
+      // Roster full or already present — leave the pool untouched.
+      return { accepted: false, alreadySigned: true, reason: 'roster_rejected' };
+    }
     humanTeam.validateStrategy();
     const region = gameState.regions[gameState.humanRegion];
     region.freeAgents = region.freeAgents.filter(p => p !== player);
