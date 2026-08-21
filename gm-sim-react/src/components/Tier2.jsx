@@ -16,6 +16,7 @@ import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import { evaluatePoach, refusalChance, REFUSAL_MORALE, expectedAcs } from '../engine/poaching.js';
 import { getSwissStandings } from '../engine/swissFormat.js';
+import { RoleTag } from './RoleTag.jsx';
 
 // A tier-2 player at or above this is worth a tier-1 team's attention.
 const NOTABLE_OVR = 72;
@@ -59,6 +60,7 @@ function RosterRow({ player, scouting }) {
       </td>
       <td>{player.age}</td>
       <td style={{ fontWeight: 700, color: ovrColor(player.overall) }}>{player.overall}</td>
+      <td><RoleTag player={player} /></td>
       <td>{player.ratings.aim}</td>
       <td>{player.ratings.positioning}</td>
       <td>{player.ratings.utility}</td>
@@ -110,7 +112,10 @@ function TeamCard({ team, rank, expanded, onToggle, scoutFor, standing }) {
 
   return (
     <div style={{
-      border: '1px solid rgba(255,255,255,0.08)',
+      // Longhand sides — see the note in Strategy.jsx.
+      borderTop: '1px solid rgba(255,255,255,0.08)',
+      borderRight: '1px solid rgba(255,255,255,0.08)',
+      borderBottom: '1px solid rgba(255,255,255,0.08)',
       borderLeft: `3px solid ${team.color}`,
       borderRadius: 6, marginBottom: 8, overflow: 'hidden',
     }}>
@@ -163,6 +168,7 @@ function TeamCard({ team, rank, expanded, onToggle, scoutFor, standing }) {
                 <th style={{ textAlign: 'left' }}>Tag</th>
                 <th style={{ textAlign: 'left' }}>Name</th>
                 <th>Nat</th><th>Age</th><th>OVR</th>
+                <th title="Primary role, and secondary if they have one">Role</th>
                 <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
                 <th>Salary</th><th>Yrs</th>
                 <th title="Average combat score this stage" style={{ textAlign: 'right' }}>ACS</th>

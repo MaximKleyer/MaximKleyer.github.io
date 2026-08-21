@@ -22,6 +22,7 @@ import { flagClass, nationalityName } from '../data/nationalities.js';
 import {
   calculateBaseSalary,
 } from '../data/salary.js';
+import { RoleTag } from './RoleTag.jsx';
 
 function formatSalary(n) {
   if (n == null) return '—';
@@ -177,6 +178,7 @@ export default function FreeAgents({
         <thead>
           <tr>
             <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Morale</th>
             <th></th>
@@ -211,6 +213,7 @@ export default function FreeAgents({
                   onCommit={v => onEditPlayer(player, 'age', v)} />
               </td>
               <td>{player.overall}<DeltaIndicator delta={d?.overall} /></td>
+              <td><RoleTag player={player} /></td>
               <td>
                 <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
                 <DeltaIndicator delta={d?.aim} size="small" />
