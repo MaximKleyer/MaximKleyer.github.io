@@ -10,6 +10,8 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { installLocalStorage, newGame, humanTeam, aiTeam } from './helpers.mjs';
+import { TIER1_MIN_TEAM_OVR } from '../src/engine/league.js';
+import { ROLES, FLEX } from '../src/data/roles.js';
 import { simulateMap, simulateSeries, isTeamAAttacking } from '../src/classes/Match.js';
 import { generatePlayer } from '../src/classes/Player.js';
 import {
@@ -457,4 +459,36 @@ describe('map training', () => {
     assert.ok(bal.attack > 0 && bal.defense > 0);
     assert.ok(foc.attack >= bal.attack, 'focused should beat balanced on its axis');
   });
+});
+
+test('no tier-1 team starts below the quality floor', () => {
+  for (let run = 0; run < 3; run++) {
+    const gs = newGame();
+    for (const rk of Object.keys(gs.regions)) {
+      for (const team of gs.regions[rk].teams) {
+        assert.ok(team.overallRating >= TIER1_MIN_TEAM_OVR,
+          `${team.abbr} generated at ${team.overallRating}, below the ${TIER1_MIN_TEAM_OVR} floor`);
+        assert.equal(team.roster.length, 5, `${team.abbr} roster size after the upgrade pass`);
+        const ids = new Set(team.roster.map(p => p.id));
+        assert.equal(ids.size, 5, `${team.abbr} has a duplicated player after the upgrade pass`);
+      }
+      // Players displaced by upgrades go back to the pool, never vanish.
+      const rostered = gs.regions[rk].teams.flatMap(t => t.roster.map(p => p.id));
+      const fas = gs.regions[rk].freeAgents.map(p => p.id);
+      assert.equal(new Set([...rostered, ...fas]).size, rostered.length + fas.length,
+        `${rk}: a player is both rostered and a free agent`);
+    }
+  }
+});
+
+test('the upgrade pass leaves every tier-1 squad able to field all four roles', () => {
+  const gs = newGame();
+  for (const rk of Object.keys(gs.regions)) {
+    for (const team of gs.regions[rk].teams) {
+      const flexes = team.roster.filter(p => p.primaryRole === FLEX).length;
+      const covered = new Set(team.roster.filter(p => p.primaryRole !== FLEX).map(p => p.primaryRole));
+      assert.ok(covered.size + flexes >= ROLES.length,
+        `${team.abbr} cannot field all four roles after the upgrade pass`);
+    }
+  }
 });
