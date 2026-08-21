@@ -19,6 +19,7 @@ import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import { mapName, getActivePool } from '../data/maps.js';
+import { FLEX, roleLabel } from '../data/roles.js';
 import { ROSTER_MIN } from '../data/constants.js';
 import {
   computeTeamSalary, computeCapRemaining, calculateBuyout,
@@ -193,6 +194,7 @@ export default function Roster({
           <tr>
             <th style={{ width: 24 }}></th>
             <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Salary</th><th>Yrs</th><th>Morale</th>
             <th>K/D</th><th>ACS</th>
@@ -208,7 +210,7 @@ export default function Roster({
             <Fragment key={player.id}>
             {idx === STARTER_COUNT && (
               <tr className="starter-divider">
-                <td colSpan={17} style={{
+                <td colSpan={18} style={{
                   padding: 0, height: 0, borderTop: '2px solid #ff4655',
                   position: 'relative',
                 }}>
@@ -279,6 +281,9 @@ export default function Roster({
               <td>
                 {player.overall}
                 <DeltaIndicator delta={d?.overall} />
+              </td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <RoleTag player={player} />
               </td>
               <td>
                 <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
@@ -592,5 +597,56 @@ function MapStrengths({ team, pool, onTrain = null, trainingUsed = false }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * RoleTag — a player's primary role, plus their secondary if they have
+ * one. Playing off-role costs roughly ten points of overall, so this is
+ * the column that explains why a lineup underperforms its ratings.
+ */
+const ROLE_COLORS = {
+  duelist:    '#ff5460',
+  initiator:  '#4ade80',
+  controller: '#a78bfa',
+  sentinel:   '#38bdf8',
+  flex:       '#facc15',
+};
+
+function RoleTag({ player }) {
+  const primary = player?.primaryRole;
+  const secondary = player?.secondaryRole;
+  if (!primary) return <span style={{ opacity: 0.35 }}>—</span>;
+
+  if (primary === FLEX) {
+    return (
+      <span
+        title="Flex — plays any role at a small penalty. Rare, and starts weak."
+        style={{
+          fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em',
+          padding: '1px 6px', borderRadius: 3,
+          color: ROLE_COLORS.flex, border: `1px solid ${ROLE_COLORS.flex}`,
+        }}
+      >FLEX</span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <span
+        title={`Primary: ${roleLabel(primary)} — full rating in this role`}
+        style={{ color: ROLE_COLORS[primary], fontWeight: 700, fontSize: '0.78em' }}
+      >
+        {roleLabel(primary)}
+      </span>
+      {secondary && (
+        <span
+          title={`Secondary: ${roleLabel(secondary)} — about 3 overall below their best`}
+          style={{ color: ROLE_COLORS[secondary], opacity: 0.55, fontSize: '0.7em' }}
+        >
+          / {roleLabel(secondary)}
+        </span>
+      )}
+    </span>
   );
 }
