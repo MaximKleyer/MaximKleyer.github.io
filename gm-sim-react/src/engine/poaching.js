@@ -190,9 +190,12 @@ export function executePoach(gameState, team, player, { force = false } = {}) {
   const evaluation = evaluatePoach(gameState, team, player);
 
   // Move the player.
+  if (team.roster.some(p => p === player || p.id === player.id)) {
+    return { ok: false, refused: false, player, message: `${player.tag} is already on your roster.` };
+  }
   source.team.roster.splice(source.team.roster.indexOf(player), 1);
   source.team.validateStrategy();
-  team.roster.push(player);          // arrives as a sub; promote deliberately
+  team.addPlayer(player);            // arrives as a sub; promote deliberately
   team.validateStrategy();
 
   // New room, new expectations.
