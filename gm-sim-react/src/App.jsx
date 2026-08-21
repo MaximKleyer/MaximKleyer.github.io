@@ -1140,10 +1140,10 @@ export default function App() {
           while (team.roster.length < 5) {
             const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
             if (bestFA) {
-              team.roster.push(bestFA);
+              team.addPlayer(bestFA);
               region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
             } else {
-              team.roster.push(generatePlayer({ regionKey }));
+              team.addPlayer(generatePlayer({ regionKey }));
             }
           }
           team.validateStrategy();

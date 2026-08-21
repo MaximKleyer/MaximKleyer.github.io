@@ -364,7 +364,7 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
   const sIdx = region.freeAgents.indexOf(signPlayer);
   if (sIdx === -1) {
     // Rollback the release — shouldn't happen but defensive
-    team.roster.push(releasePlayer);
+    team.addPlayer(releasePlayer);
     region.freeAgents.pop();
     if (buyout > 0 && team.deadCapHits.length > 0) {
       team.deadCapHits.pop(); // unwind the dead cap entry too
@@ -377,7 +377,12 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
     yearsRemaining: newLength,
     signedYear: gameState.seasonNumber || 2025,
   };
-  team.roster.push(signPlayer);
+  if (!team.addPlayer(signPlayer)) {
+    // Refused (already present, or full). Put them back rather than
+    // letting the player vanish from both the pool and the roster.
+    region.freeAgents.splice(sIdx, 0, signPlayer);
+    return false;
+  }
 
   // Clean up any stale strategy assignment for the released player
   team.validateStrategy();
