@@ -250,6 +250,47 @@ describe('veto / series ordering', () => {
   });
 });
 
+/* ─────────────── Fast-forward progress detection ─────────────── */
+
+describe('sim-series progress snapshot', () => {
+  // handleSimSeries loops until "nothing changed", comparing a snapshot
+  // of season status / active-series count / week / bracket stage. None
+  // of those move while a series is mid-flight, so playing map 2 of a
+  // Bo5 looked identical to a stalled game and the loop bailed. Bo5s and
+  // 2-1 Bo3s stopped early; 2-0 sweeps happened to work because the
+  // series drained and the count hit 0.
+  //
+  // The snapshot now includes maps played across in-flight series. This
+  // asserts that term actually distinguishes mid-series progress.
+  function snapshotTerm(activeSeries) {
+    return activeSeries.reduce((n, e) => n + (e.series?.maps?.length || 0), 0);
+  }
+
+  test('a series advancing one map changes the snapshot term', () => {
+    const series = { bestOf: 5, maps: [], winsA: 0, winsB: 0, winner: null };
+    const active = [{ series }];
+    const before = snapshotTerm(active);
+
+    series.maps.push({ mapId: 'ascent' });   // map 1 played, series unfinished
+    const after = snapshotTerm(active);
+
+    assert.notEqual(after, before,
+      'mid-series progress is invisible to the snapshot — Sim Series will bail early');
+  });
+
+  test('every map of a Bo5 is distinguishable', () => {
+    const series = { bestOf: 5, maps: [], winsA: 0, winsB: 0, winner: null };
+    const active = [{ series }];
+    const seen = new Set();
+    for (let i = 0; i < 5; i++) {
+      series.maps.push({ mapId: `m${i}` });
+      seen.add(snapshotTerm(active));
+    }
+    assert.equal(seen.size, 5,
+      'two different points in a Bo5 produce the same snapshot term');
+  });
+});
+
 /* ─────────────── Depth chart ─────────────── */
 
 describe('depth chart', () => {

@@ -980,6 +980,16 @@ export default function App() {
       return [
         gameState.season?.status,
         gameState.season?.activeSeries?.length || 0,
+        // Maps played across every in-flight series.
+        //
+        // Without this the snapshot cannot see progress WITHIN a series:
+        // playing map 2 of a Bo5 changes no status, no week, no bracket
+        // stage and no series count, so the "nothing changed" guard below
+        // fired and Sim Series bailed mid-series. Most visible on Bo5s and
+        // on 2-1 Bo3s; a 2-0 sweep happened to work because the series
+        // drained and activeSeries.length hit 0.
+        (gameState.season?.activeSeries || [])
+          .reduce((n, e) => n + (e.series?.maps?.length || 0), 0),
         ...REGION_KEYS.map(k => gameState.regions[k].currentWeek),
         ...REGION_KEYS.map(k => gameState.regions[k].phase),
         ...REGION_KEYS.map(k => gameState.regions[k].bracket?.stage ?? -1),
