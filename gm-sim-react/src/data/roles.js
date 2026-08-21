@@ -29,6 +29,7 @@ export const ALL_ROLES = [...ROLES, FLEX];
 
 /** Rating penalty, in points of overall, for playing a given fit. */
 export const ROLE_FIT_PENALTY = {
+  none: 0,        // unassigned — no plan, but no punishment either
   primary: 0,
   flex: -2,
   secondary: -3,
@@ -62,10 +63,18 @@ export const ROLE_IQ_BIAS = {
 };
 
 /**
- * How a player fits a role: 'primary' | 'secondary' | 'flex' | 'off'.
+ * How a player fits a role: 'primary' | 'secondary' | 'flex' | 'off',
+ * or 'none' when no role has been assigned at all.
+ *
+ * 'none' is NOT the same as 'off'. An unassigned player is playing
+ * without a plan, not playing the wrong one, so they take no penalty —
+ * they simply miss the subtype weighting an assignment would give them.
+ * Treating the two the same would have quietly docked ten overall from
+ * every player on a team the manager had not filled in yet.
  */
 export function roleFit(player, role) {
-  if (!player || !role) return 'off';
+  if (!player) return 'off';
+  if (!role) return 'none';
   if (player.primaryRole === FLEX) return 'flex';
   if (player.primaryRole === role) return 'primary';
   if (player.secondaryRole === role) return 'secondary';

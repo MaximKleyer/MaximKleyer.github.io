@@ -58,8 +58,12 @@ export function initGame(humanRegion, humanTeamIndex) {
         // at random regularly demanded two of a role the team had one of,
         // leaving AI sides permanently off-role.
         team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
+        team.autoAssignStrategy();
       }
-      team.autoAssignStrategy();
+      // The human team is deliberately left UNASSIGNED. Picking the five
+      // is the decision the Strategy panel exists to make, and filling it
+      // in automatically meant most managers never engaged with it.
+      // Unassigned players take no penalty — see roleFit's 'none'.
     }
 
     // Per-map Attack/Defense strengths. Generated here (not in the Team

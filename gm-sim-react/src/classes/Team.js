@@ -266,7 +266,10 @@ export class Team {
     this.strategy.assignments = this.strategy.assignments.filter(a => rosterIds.has(a.playerId));
     if (this.strategy.iglId && !rosterIds.has(this.strategy.iglId)) this.strategy.iglId = null;
     const comp = COMPOSITIONS[this.strategy.comp];
-    if (comp && this.strategy.assignments.length < comp.slots.length) {
+    if (comp && this.strategy.assignments.length < comp.slots.length && !this.isHuman) {
+      // Only AI teams refill themselves. Re-filling the human's slots
+      // after a roster change would quietly overwrite the choices the
+      // Strategy panel exists to let them make.
       this.autoAssignStrategy();
     }
   }
