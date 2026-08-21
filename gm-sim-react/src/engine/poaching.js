@@ -144,7 +144,7 @@ export function backfillTier2Team(gameState, regionKey, team, departed) {
       signedYear: gameState.seasonNumber || 2025,
     };
     best.morale = POACH_RESET_MORALE;
-    team.roster.push(best);
+    team.addPlayer(best);
     team.validateStrategy();
     return { player: best, generated: false };
   }
@@ -161,7 +161,7 @@ export function backfillTier2Team(gameState, regionKey, team, departed) {
     yearsRemaining: 1,
     signedYear: gameState.seasonNumber || 2025,
   };
-  team.roster.push(replacement);
+  team.addPlayer(replacement);
   team.validateStrategy();
   return { player: replacement, generated: true };
 }

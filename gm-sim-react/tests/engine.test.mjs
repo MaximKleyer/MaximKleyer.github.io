@@ -331,6 +331,47 @@ describe('roster integrity', () => {
     }
   });
 
+  test('a full season of AI signings never duplicates a player', async () => {
+    const { runOffseasonAISignings } = await import('../src/engine/offseason.js');
+    const { runMidseasonAISignings } = await import('../src/engine/midseason.js');
+    const gs = newGame();
+
+    // Exercise every AI path that moves a player from the pool onto a
+    // roster. All of them now go through the guarded addPlayer.
+    for (let i = 0; i < 3; i++) {
+      runMidseasonAISignings(gs);
+      runOffseasonAISignings(gs);
+    }
+
+    for (const rk of Object.keys(gs.regions)) {
+      const all = [...gs.regions[rk].teams, ...gs.regions[rk].tier2.teams];
+      for (const t of all) {
+        const ids = t.roster.map(p => p.id);
+        assert.equal(new Set(ids).size, ids.length,
+          `${rk} ${t.abbr} ended with a duplicate player after AI signings`);
+      }
+    }
+  });
+
+  test('a player is never on two rosters at once', () => {
+    const gs = newGame();
+    const seen = new Map();
+    for (const rk of Object.keys(gs.regions)) {
+      const all = [...gs.regions[rk].teams, ...gs.regions[rk].tier2.teams];
+      for (const t of all) {
+        for (const p of t.roster) {
+          assert.ok(!seen.has(p.id),
+            `${p.tag} is on both ${seen.get(p.id)} and ${t.abbr}`);
+          seen.set(p.id, t.abbr);
+        }
+      }
+      for (const p of gs.regions[rk].freeAgents) {
+        assert.ok(!seen.has(p.id),
+          `${p.tag} is a free agent AND on ${seen.get(p.id)}`);
+      }
+    }
+  });
+
   test('poaching a player already on the roster is refused', async () => {
     const { executePoach } = await import('../src/engine/poaching.js');
     const gs = newGame();
