@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from 'react';
 // without each one needing its own stylesheet import.
 import 'flag-icons/css/flag-icons.min.css';
 
-import { initGame, getHumanTeam, ensureContracts } from './engine/league.js';
+import { initGame, getHumanTeam, ensureContracts, clearFreeAgentMarket } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import MapVeto from './components/MapVeto.jsx';
 import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
@@ -225,6 +225,12 @@ export default function App() {
     // the game starts; cap math depends on it. Run AFTER initSeason
     // since ensureContracts reads seasonNumber for backdating.
     ensureContracts(gs);
+    // The preseason transfer window already happened before you took
+    // over: clubs sign the good free agents who are left, so the board
+    // does not open with unsigned players better than half the league.
+    // Runs after ensureContracts because it is the first point where
+    // salaries exist and the cap can be enforced.
+    clearFreeAgentMarket(gs);
     setGameState(gs);
     setViewRegion(regionKey);
     setStarted(true);
