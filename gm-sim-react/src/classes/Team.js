@@ -4,10 +4,10 @@
  * ADDED: record.roundWins, record.roundLosses
  */
 
-import { ROSTER_MIN, ROSTER_MAX, ROLE_WEIGHTS } from '../data/constants.js';
+import { ROSTER_MIN, ROSTER_MAX } from '../data/constants.js';
 import { DEFAULT_COMP, COMPOSITIONS, getDefaultSubtype } from '../data/strategy.js';
 import { archetypeFor } from '../data/archetypes.js';
-import { roleFitPenalty } from '../data/roles.js';
+import { roleFitPenalty, effectiveOverall } from '../data/roles.js';
 
 export class Team {
   constructor(name, abbr, color) {
@@ -184,21 +184,13 @@ export class Team {
     const pairs = [];
     for (let i = 0; i < slots.length; i++) {
       const role = slots[i];
-      const weights = ROLE_WEIGHTS[role] || null;
       for (const p of eligible) {
-        let score = 0;
-        if (weights) {
-          for (const [stat, w] of Object.entries(weights)) {
-            score += (p.ratings[stat] || 0) * w;
-          }
-        } else {
-          score = p.overall;
-        }
-        // Role fit matters as much as raw stats: a misfit specialist
-        // loses ten points of overall, so a slightly worse player who
-        // actually plays the role is usually the better pick.
-        score += roleFitPenalty(p, role) * 2;
-        pairs.push({ slot: i, player: p, score });
+        // Rated on what they would actually play at in this slot: their
+        // overall, less the penalty for being out of position. Scoring on
+        // per-role stat weights instead made the panel claim a duelist
+        // slot wanted aim and clutch specifically, which is not how the
+        // match sim reads a lineup — it only ever sees role fit.
+        pairs.push({ slot: i, player: p, score: effectiveOverall(p, role) });
       }
     }
     pairs.sort((a, b) => b.score - a.score);

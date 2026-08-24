@@ -14,7 +14,7 @@ import { runTier2Stage, initTier2Bracket, applyTier2Morale, runTier2AISignings, 
 } from '../src/engine/tier2.js';
 import {
   evaluatePoach, executePoach, refusalChance, scoutTier2,
-  findTier2Team, backfillTier2Team, REFUSAL_MORALE, POACH_RESET_MORALE,
+  findTier2Team, backfillTier2Team, REFUSAL_MORALE, POACH_RESET_MORALE, BACKFILL_CEILING,
 } from '../src/engine/poaching.js';
 import { getSwissStandings, getQualifiedSeeds } from '../src/engine/swissFormat.js';
 import { getSalaryCap, computeTeamSalary } from '../src/data/salary.js';
@@ -252,19 +252,29 @@ describe('poaching rules', () => {
     assert.equal(target.morale, POACH_RESET_MORALE);
   });
 
-  test('backfill generates a weaker player when the FA pool is empty', () => {
+  test('backfill always generates, and never hands the club an equal player', () => {
     const { gs } = setup();
     const region = gs.regions.americas;
-    region.freeAgents.length = 0;
+    const poolBefore = region.freeAgents.length;
     const club = region.tier2.teams[0];
-    const departed = club.roster[0];
-    club.roster.splice(0, 1);
 
-    const { player, generated } = backfillTier2Team(gs, 'americas', club, departed);
-    assert.ok(generated, 'should have generated a replacement');
-    assert.ok(player.overall < departed.overall,
-      `replacement (${player.overall}) should be weaker than the departed player (${departed.overall})`);
-    assert.ok(player.contract, 'replacement has no contract');
+    // Run it many times: the old version pulled the best free agent, so a
+    // club could lose its standout and get someone just as good back.
+    for (let i = 0; i < 40; i++) {
+      const departed = club.roster[0];
+      club.roster.splice(0, 1);
+      const { player, generated } = backfillTier2Team(gs, 'americas', club, departed);
+
+      assert.ok(generated, 'replacement should be generated, not signed from the pool');
+      assert.ok(player.overall < departed.overall,
+        `replacement (${player.overall}) must be worse than the departed player (${departed.overall})`);
+      assert.ok(player.overall <= BACKFILL_CEILING,
+        `replacement (${player.overall}) is above the backfill band`);
+      assert.ok(player.contract, 'replacement has no contract');
+    }
+
+    assert.equal(region.freeAgents.length, poolBefore,
+      'backfill must not touch the free agent pool — tier 1 gets first refusal');
   });
 
   test('only a 90+ player can refuse', () => {
@@ -364,4 +374,22 @@ test('arrivals from free agency are poachable like anyone else', () => {
   const scouted = scoutTier2(gs, rk);
   const arrivals = scouted.filter(e => !idsBefore.has(e.player.id));
   assert.ok(arrivals.length > 0, 'newly signed tier-2 players should appear on the scouting board');
+});
+
+test('no tier-2 club generates as unwatchable filler', () => {
+  // The bottom of the division was landing in the mid-40s, which is not a
+  // team anybody would scout. The top should still stay clear of tier 1.
+  const seen = [];
+  for (let run = 0; run < 3; run++) {
+    const gs = newGame();
+    for (const rk of Object.keys(gs.regions)) {
+      for (const team of gs.regions[rk].tier2.teams) {
+        seen.push(team.overallRating);
+        assert.ok(team.overallRating > 55,
+          `${team.abbr} generated at ${team.overallRating} — below the tier-2 floor`);
+      }
+    }
+  }
+  const max = Math.max(...seen);
+  assert.ok(max <= 72, `a tier-2 club reached ${max}, which encroaches on tier 1`);
 });

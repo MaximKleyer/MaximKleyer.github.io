@@ -18,12 +18,7 @@
 
 import { useState } from 'react';
 import { COMPOSITIONS, SUBTYPES, getDefaultSubtype } from '../data/strategy.js';
-import { ROLE_WEIGHTS } from '../data/constants.js';
 import { roleFit, roleFitPenalty, effectiveOverall, roleLabel, FLEX } from '../data/roles.js';
-
-const STAT_ABBRS = {
-  aim: 'AIM', positioning: 'POS', utility: 'UTL', gamesense: 'IQ', clutch: 'CLT',
-};
 
 const ROLE_COLORS = {
   duelist: '#ff5460', initiator: '#4ade80', controller: '#a78bfa',
@@ -39,18 +34,6 @@ const FIT_STYLE = {
   none:      { label: '',          color: 'inherit' },
 };
 
-/**
- * The two stats a role weighs most. Derived from ROLE_WEIGHTS rather than
- * hardcoded, so retuning the weights updates the UI automatically.
- */
-function keyStatsFor(role) {
-  const weights = ROLE_WEIGHTS[role] || {};
-  return Object.entries(weights)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 2)
-    .map(([stat]) => stat);
-}
-
 function RoleChip({ role, dim = false }) {
   if (!role) return null;
   return (
@@ -64,7 +47,7 @@ function RoleChip({ role, dim = false }) {
 }
 
 /** One candidate row inside a slot. */
-function Candidate({ player, role, keyStats, taken, selected, onPick }) {
+function Candidate({ player, role, taken, selected, onPick }) {
   const fit = roleFit(player, role);
   const style = FIT_STYLE[fit] || FIT_STYLE.off;
   const penalty = roleFitPenalty(player, role);
@@ -77,7 +60,7 @@ function Candidate({ player, role, keyStats, taken, selected, onPick }) {
       title={taken && !selected ? 'Already assigned to another slot' : undefined}
       style={{
         display: 'grid',
-        gridTemplateColumns: '1fr auto auto auto',
+        gridTemplateColumns: '1fr auto auto',
         alignItems: 'center',
         gap: 8,
         width: '100%',
@@ -98,16 +81,6 @@ function Candidate({ player, role, keyStats, taken, selected, onPick }) {
         <strong>{player.tag}</strong>
         <RoleChip role={player.primaryRole} />
         {player.secondaryRole && <RoleChip role={player.secondaryRole} dim />}
-      </span>
-
-      {/* The two stats this role actually weighs */}
-      <span style={{ display: 'flex', gap: 8, fontFamily: "'JetBrains Mono', monospace" }}>
-        {keyStats.map(stat => (
-          <span key={stat} style={{ opacity: 0.85 }}>
-            <span style={{ opacity: 0.5, fontSize: '0.82em' }}>{STAT_ABBRS[stat]} </span>
-            <strong>{player.ratings[stat]}</strong>
-          </span>
-        ))}
       </span>
 
       {style.label && (
@@ -206,7 +179,7 @@ export default function Strategy({ team, onUpdate }) {
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0 }}>Team Strategy</h3>
         <span style={{ fontSize: '0.75em', opacity: 0.6 }}>
-          each slot shows the two stats that role weighs
+          players are rated on what they would play at in each slot
         </span>
       </div>
 
@@ -267,7 +240,6 @@ export default function Strategy({ team, onUpdate }) {
         {slots.map((role, i) => {
           const assignment = assignments[i];
           const player = assignment ? getPlayer(assignment.playerId) : null;
-          const keyStats = keyStatsFor(role);
           const isOpen = openSlot === i;
           const fit = player ? roleFit(player, role) : 'none';
           const style = FIT_STYLE[fit] || FIT_STYLE.off;
@@ -288,10 +260,6 @@ export default function Strategy({ team, onUpdate }) {
                 <strong style={{ color: ROLE_COLORS[role], minWidth: 86, fontSize: '0.85rem' }}>
                   {roleLabel(role)}
                 </strong>
-                <span style={{ fontSize: '0.68rem', opacity: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
-                  {keyStats.map(s => STAT_ABBRS[s]).join(' + ')}
-                </span>
-
                 <span style={{ flex: 1 }} />
 
                 {player ? (
@@ -342,7 +310,6 @@ export default function Strategy({ team, onUpdate }) {
                         key={p.id}
                         player={p}
                         role={role}
-                        keyStats={keyStats}
                         taken={assignedIds.has(p.id)}
                         selected={assignment?.playerId === p.id}
                         onPick={pl => assign(i, pl)}

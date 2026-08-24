@@ -25,9 +25,12 @@
  * it does happen.
  *
  * ── Compensation ──
- * The tier-2 club replaces the player: first from the region's free
- * agents, and if nobody is available a replacement is generated at a
- * slightly lower standard so the club is weakened but not crippled.
+ * The tier-2 club gets a generated replacement from the standard
+ * development pool — a journeyman in the 60s, never a like-for-like
+ * swap. Pulling the best free agent instead meant a club could lose its
+ * standout and get someone just as good back, so poaching cost them
+ * nothing and the scouting board never changed. The replacement is also
+ * held below the departed player, so losing someone is always a loss.
  * The poached player's morale resets to neutral — a new room, new
  * expectations.
  */
@@ -51,6 +54,10 @@ import { REGION_KEYS } from '../data/regions.js';
 export function expectedAcs(overall) {
   return -92 + 5.26 * (overall || 0);
 }
+
+/** The band a generated tier-2 replacement lands in. */
+export const BACKFILL_FLOOR = 60;
+export const BACKFILL_CEILING = 69;
 
 /** Morale at or above which a player may refuse to move. */
 export const REFUSAL_MORALE = 90;
@@ -132,35 +139,23 @@ export function evaluatePoach(gameState, team, player, { movesRemaining = null }
  * is meaningfully weaker without collapsing.
  */
 export function backfillTier2Team(gameState, regionKey, team, departed) {
-  const region = gameState.regions[regionKey];
-  const pool = region?.freeAgents || [];
+  // Held below whoever left: a club that loses a player must end up
+  // worse, otherwise poaching is free for everyone involved.
+  const ceiling = Math.min(BACKFILL_CEILING, (departed.overall || 65) - 1);
+  const floor = Math.min(BACKFILL_FLOOR, ceiling - 4);
 
-  if (pool.length > 0) {
-    const best = pool.reduce((a, b) => (b.overall > a.overall ? b : a));
-    pool.splice(pool.indexOf(best), 1);
-    best.contract = {
-      salary: Math.max(50000, Math.round((departed.contract?.salary || 80000) * 0.9 / 5000) * 5000),
-      yearsRemaining: 1,
-      signedYear: gameState.seasonNumber || 2025,
-    };
-    best.morale = POACH_RESET_MORALE;
-    team.addPlayer(best);
-    team.validateStrategy();
-    return { player: best, generated: false };
-  }
-
-  const target = Math.max(35, (departed.overall || 60) - 6);
   const replacement = generatePlayer({
     regionKey,
-    ageOverride: 17 + Math.floor(Math.random() * 4),
-    ratingFloor: Math.max(35, target - 8),
-    ratingCeiling: target + 4,
+    ageOverride: 17 + Math.floor(Math.random() * 6),
+    ratingFloor: Math.max(35, floor),
+    ratingCeiling: Math.max(38, ceiling),
   });
   replacement.contract = {
     salary: Math.max(50000, Math.round((departed.contract?.salary || 80000) * 0.75 / 5000) * 5000),
     yearsRemaining: 1,
     signedYear: gameState.seasonNumber || 2025,
   };
+  replacement.morale = POACH_RESET_MORALE;
   team.addPlayer(replacement);
   team.validateStrategy();
   return { player: replacement, generated: true };
