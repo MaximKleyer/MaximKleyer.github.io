@@ -7,17 +7,6 @@
  * always separate your game logic from your display logic.
  */
 
-// ── Role stat weights (how much each stat matters per role) ──
-// These add up to 1.0 for each role.
-// A duelist's overall is 35% aim, while a controller's is only 15% aim.
-export const ROLE_WEIGHTS = {
-  duelist:    { aim: 0.35, positioning: 0.15, utility: 0.15, gamesense: 0.20, clutch: 0.15 },
-  initiator:  { aim: 0.20, positioning: 0.20, utility: 0.30, gamesense: 0.20, clutch: 0.10 },
-  controller: { aim: 0.15, positioning: 0.25, utility: 0.30, gamesense: 0.25, clutch: 0.05 },
-  sentinel:   { aim: 0.20, positioning: 0.30, utility: 0.25, gamesense: 0.20, clutch: 0.05 },
-  flex:       { aim: 0.25, positioning: 0.20, utility: 0.20, gamesense: 0.20, clutch: 0.15 },
-};
-
 // ── Role-based stat floors ──
 // Role specialists get higher minimums in their key stats.
 // A controller will never generate with <65 utility, for example.

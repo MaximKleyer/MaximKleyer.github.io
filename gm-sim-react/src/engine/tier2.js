@@ -45,18 +45,24 @@ export const TIER2_ROSTER_SIZE = 5;
  * Strength bands. `weight` is how many of the 16 teams land in each band;
  * floor/ceiling bound player ratings. Tier 1 generates on 45-99, so even
  * the strongest tier-2 band tops out below a good tier-1 starter.
+ *
+ * The floors sit well above where you might expect because the bottom of
+ * the division was landing in the mid-40s — a team that bad is not a
+ * professional side anybody would scout, it is just filler. Raising the
+ * floors lifts the weakest clubs into the high 50s while leaving the top
+ * of the division where it was, in the mid-to-high 60s.
  */
 const STRENGTH_BANDS = [
-  { key: 'contender',  weight: 3, floor: 48, ceiling: 78 },
-  { key: 'solid',      weight: 5, floor: 42, ceiling: 71 },
-  { key: 'mid',        weight: 5, floor: 38, ceiling: 65 },
-  { key: 'struggling', weight: 3, floor: 35, ceiling: 58 },
+  { key: 'contender',  weight: 3, floor: 58, ceiling: 70 },
+  { key: 'solid',      weight: 5, floor: 55, ceiling: 67 },
+  { key: 'mid',        weight: 5, floor: 54, ceiling: 64 },
+  { key: 'struggling', weight: 3, floor: 53, ceiling: 61 },
 ];
 
 // Chance a team carries one clearly-better player.
 const STANDOUT_CHANCE = 0.35;
 const STANDOUT_FLOOR = 62;
-const STANDOUT_CEILING = 88;
+const STANDOUT_CEILING = 80;
 
 /** Tier-2 age curve: mostly 17-21, a tail of older players who stalled. */
 function tier2Age(academy) {

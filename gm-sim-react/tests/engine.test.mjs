@@ -10,8 +10,9 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { installLocalStorage, newGame, humanTeam, aiTeam } from './helpers.mjs';
-import { TIER1_MIN_TEAM_OVR } from '../src/engine/league.js';
+import { TIER1_MIN_TEAM_OVR, MARKET_UPGRADE_MARGIN, clearFreeAgentMarket, ensureContracts } from '../src/engine/league.js';
 import { ROLES, FLEX } from '../src/data/roles.js';
+import { computeTeamSalary, getSalaryCap } from '../src/data/salary.js';
 import { simulateMap, simulateSeries, isTeamAAttacking } from '../src/classes/Match.js';
 import { generatePlayer } from '../src/classes/Player.js';
 import {
@@ -490,5 +491,47 @@ test('the upgrade pass leaves every tier-1 squad able to field all four roles', 
       assert.ok(covered.size + flexes >= ROLES.length,
         `${team.abbr} cannot field all four roles after the upgrade pass`);
     }
+  }
+});
+
+test('the preseason market leaves no free agent better than the league', () => {
+  const gs = newGame();
+  ensureContracts(gs);
+  clearFreeAgentMarket(gs);
+
+  for (const rk of Object.keys(gs.regions)) {
+    const region = gs.regions[rk];
+    const bestFa = Math.max(...region.freeAgents.map(p => p.overall));
+    const starters = region.teams
+      .flatMap(t => t.startingFive.map(p => p.overall))
+      .sort((a, b) => a - b);
+    const median = starters[Math.floor(starters.length / 2)];
+
+    // The complaint this pass answers was a board showing several 75+
+    // players unsigned while half the league started worse. The best
+    // name left should sit below a typical starter, not above one.
+    assert.ok(bestFa < median,
+      `${rk}: best free agent is ${bestFa}, at or above the median starter ${median}`);
+    assert.ok(bestFa < 75,
+      `${rk}: a ${bestFa} is still unsigned — somebody would have taken them`);
+  }
+});
+
+test('the preseason market never puts a club over the cap', () => {
+  const gs = newGame();
+  ensureContracts(gs);
+  clearFreeAgentMarket(gs);
+  const cap = getSalaryCap();
+
+  for (const rk of Object.keys(gs.regions)) {
+    for (const team of gs.regions[rk].teams) {
+      assert.ok(computeTeamSalary(team) <= cap,
+        `${team.abbr} is over the cap before a ball is thrown`);
+      assert.equal(team.roster.length, 5, `${team.abbr} roster size changed`);
+      assert.ok(team.roster.every(p => p.contract), `${team.abbr} has an unsigned player`);
+    }
+    // Released players go back on the market unsigned.
+    assert.ok(gs.regions[rk].freeAgents.every(p => !p.contract),
+      `${rk}: a free agent is still under contract`);
   }
 });

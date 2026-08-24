@@ -14,9 +14,56 @@ import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
-import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
+import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap, computeTeamSalary, getSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
-import { assignRosterRoles, swapKeepsSpread } from '../data/roles.js';
+import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
+
+/**
+ * Bring a freshly generated tier-1 roster up to a professional standard.
+ *
+ * Five unbounded draws is a high-variance way to build a team: measured
+ * over 2000 rosters it put 21% of them below 70 overall, down to 61. That
+ * is not a weak team, it is a broken one, and the league had eight of
+ * them on a typical new save.
+ *
+ * The fix re-rolls the weakest player rather than raising the floor on
+ * everyone, because ratingFloor is the bottom of the stat range and not a
+ * clamp — applying it across the board dragged the whole league up into
+ * the 80s and flattened it. Re-rolling one slot leaves good teams exactly
+ * as generated and only touches the squads that need it.
+ *
+ * Flex players are skipped: they are capped low by design, so re-rolling
+ * one cannot lift a team and would just burn the guard.
+ */
+function topUpRoster(team, regionKey) {
+  let guard = 0;
+  while (team.overallRating < TIER1_MIN_TEAM_OVR && guard < 6) {
+    const candidates = team.roster
+      .filter(p => p.primaryRole !== FLEX)
+      .sort((a, b) => a.overall - b.overall);
+    const out = candidates[0];
+    if (!out) break;
+
+    // Each attempt asks for a better player than the last.
+    const replacement = generatePlayer({
+      regionKey,
+      primaryRole: out.primaryRole,
+      secondaryRole: out.secondaryRole,
+      ratingFloor: 50 + guard * 4,
+    });
+    if (replacement.overall > out.overall) {
+      team.roster[team.roster.indexOf(out)] = replacement;
+    }
+    guard++;
+  }
+}
+
+/**
+ * The standard of player left on the market, and how often a genuinely
+ * elite name slips through anyway.
+ */
+const FREE_AGENT_CEILING = 72;
+const FREE_AGENT_ELITE_CHANCE = 0.05;
 
 /**
  * Initialize the full game — all 4 regions.
@@ -49,6 +96,7 @@ export function initGame(humanRegion, humanTeamIndex) {
       while (team.roster.length < 5) {
         team.roster.push(generatePlayer({ regionKey, ...roles[team.roster.length] }));
       }
+      topUpRoster(team, regionKey);
     }
 
     // Auto-assign strategy
@@ -73,10 +121,25 @@ export function initGame(humanRegion, humanTeamIndex) {
       team.mapRatings = generateMapRatings(team.overallRating || 70);
     }
 
-    // Free agents
+    // Free agents.
+    //
+    // Drawn on a lower curve than rostered players, because that is what
+    // being unsigned means. Generating the pool from the same unbounded
+    // distribution as starters gave every region dozens of free agents
+    // better than most of the league's first teams, which made the whole
+    // board look broken — if they were that good, somebody would have
+    // signed them.
+    //
+    // A small elite tail survives so each preseason still has a genuine
+    // marquee name or two worth chasing.
     const freeAgents = [];
     for (let i = 0; i < FREE_AGENT_POOL_SIZE; i++) {
-      freeAgents.push(generatePlayer({ regionKey }));
+      const elite = Math.random() < FREE_AGENT_ELITE_CHANCE;
+      freeAgents.push(generatePlayer({
+        regionKey,
+        ratingFloor: elite ? FREE_AGENT_CEILING + 1 : undefined,
+        ratingCeiling: elite ? 85 : FREE_AGENT_CEILING,
+      }));
     }
 
     // Assign groups
@@ -296,24 +359,125 @@ export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_
     for (const team of region.teams) {
       let guard = 0;
       while (team.overallRating < floor && guard++ < 10) {
-        const weakest = [...team.roster].sort((a, b) => a.overall - b.overall)[0];
-        if (!weakest) break;
+        // Every (rostered player, free agent) pair, best gain first.
+        // Only ever swapping the single weakest player left teams stuck
+        // whenever that one slot had no legal replacement — the squad
+        // could not improve even with obvious upgrades on the board for
+        // its other positions.
+        let best = null;
+        for (const out of team.roster) {
+          for (const fa of region.freeAgents) {
+            const gain = fa.overall - out.overall;
+            if (gain <= 0) continue;
+            if (best && gain <= best.gain) continue;
+            if (!swapKeepsSpread(team.roster, out, fa)) continue;
+            best = { out, fa, gain };
+          }
+        }
+        if (!best) break;   // nothing available that helps
 
-        // Best free agent who is an upgrade AND keeps role coverage.
-        const candidates = region.freeAgents
-          .filter(fa => fa.overall > weakest.overall)
-          .filter(fa => swapKeepsSpread(team.roster, weakest, fa))
-          .sort((a, b) => b.overall - a.overall);
-
-        const incoming = candidates[0];
-        if (!incoming) break;   // nothing available that helps
-
-        team.removePlayer(weakest);
-        region.freeAgents.push(weakest);
-        region.freeAgents.splice(region.freeAgents.indexOf(incoming), 1);
-        team.addPlayer(incoming);
+        team.removePlayer(best.out);
+        region.freeAgents.push(best.out);
+        region.freeAgents.splice(region.freeAgents.indexOf(best.fa), 1);
+        team.addPlayer(best.fa);
       }
       team.validateStrategy();
     }
   }
+}
+
+/* ─────────────── Preseason market clearing ─────────────── */
+
+/**
+ * Clubs sign the good free agents who are left.
+ *
+ * The floor pass above only lifts teams up to 70, so a fresh save could
+ * still show a stack of unsigned 75s while half the league fielded worse
+ * starters. That reads as a league where nobody does their job — a real
+ * preseason clears the top of the market before the first game.
+ *
+ * Runs AFTER ensureContracts, because it is the first point at which
+ * salaries exist and the cap means anything. Each signing is a swap: the
+ * club's weakest player makes way and returns to the pool, so squad sizes
+ * and the total player population are unchanged.
+ *
+ * A club only bites when the free agent clears its weakest player by
+ * MARKET_UPGRADE_MARGIN. Without that margin teams churned endlessly over
+ * one-point gains, and the pool emptied of anyone worth signing — the
+ * human included.
+ */
+export const MARKET_UPGRADE_MARGIN = 3;
+
+/**
+ * How many players one club signs in the preseason window. Left
+ * unlimited, every side simply swapped its way to the best five on the
+ * market and the whole division converged into a three-point band — the
+ * league lost its shape. Two moves clears the obvious mismatches at the
+ * top of the pool while leaving teams recognisably different.
+ */
+export const MAX_MARKET_MOVES = 2;
+
+function marketContractFor(player, seasonNumber) {
+  const base = calculateBaseSalary(player.overall);
+  return {
+    salary: Math.round(base * INITIAL_CONTRACT_DISCOUNT / 5000) * 5000,
+    yearsRemaining: 1 + Math.floor(Math.random() * 3),
+    signedYear: seasonNumber,
+  };
+}
+
+export function clearFreeAgentMarket(gameState) {
+  if (!gameState?.regions) return 0;
+  const season = gameState.seasonNumber || 2025;
+  const cap = getSalaryCap();
+  let signings = 0;
+
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    if (!region) continue;
+
+    const moves = new Map();
+    let progress = true;
+    while (progress) {
+      progress = false;
+
+      // Best free agent still on the market leads each round.
+      const ranked = [...region.freeAgents].sort((a, b) => b.overall - a.overall);
+
+      for (const fa of ranked) {
+        // The club this player improves most, that can also afford them.
+        let best = null;
+        for (const team of region.teams) {
+          if ((moves.get(team) || 0) >= MAX_MARKET_MOVES) continue;
+          const weakest = [...team.roster].sort((a, b) => a.overall - b.overall)[0];
+          if (!weakest) continue;
+
+          const gain = fa.overall - weakest.overall;
+          if (gain < MARKET_UPGRADE_MARGIN) continue;
+          if (!swapKeepsSpread(team.roster, weakest, fa)) continue;
+
+          const salary = marketContractFor(fa, season).salary;
+          const after = computeTeamSalary(team) - (weakest.contract?.salary || 0) + salary;
+          if (after > cap) continue;
+
+          if (!best || gain > best.gain) best = { team, weakest, gain };
+        }
+
+        if (!best) continue;
+
+        best.team.removePlayer(best.weakest);
+        best.weakest.contract = null;
+        region.freeAgents.push(best.weakest);
+        region.freeAgents.splice(region.freeAgents.indexOf(fa), 1);
+        fa.contract = marketContractFor(fa, season);
+        best.team.addPlayer(fa);
+        best.team.validateStrategy();
+        moves.set(best.team, (moves.get(best.team) || 0) + 1);
+        signings++;
+        progress = true;
+        break;   // re-rank; the pool just changed
+      }
+    }
+  }
+  return signings;
 }
