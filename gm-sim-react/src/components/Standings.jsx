@@ -83,7 +83,7 @@ export default function Standings({
                   <thead><tr><th>Player</th><th>Nat</th><th>Age</th><th>Assigned</th><th>Subtype</th><th>OVR</th><th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th><th>Maps</th><th>K</th><th>D</th><th>K/D</th><th>ACS</th></tr></thead>
                   <tbody>
                     {team.roster.map(player => {
-                      const a = team.strategy.assignments.find(a => a.playerId === player.id);
+                      const a = team.strategy.assignments.find(a => a && a.playerId === player.id);
                       const d = player.lastOffseasonDelta;
                       return (
                         <tr key={player.id}>

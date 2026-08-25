@@ -130,7 +130,30 @@ function serialize(gameState) {
     }
   }
 
+  // Match identity map. In-flight series entries hold DIRECT references
+  // to match objects that also live in their canonical containers
+  // (region.schedule, region.bracket, international, worlds). Without
+  // identity, JSON.stringify writes the shared object twice and a reload
+  // resurrects two independent copies — the finished series then writes
+  // its result to the orphan, the canonical match still reads unplayed,
+  // and the stage re-seeds and REPLAYS the series with stats and records
+  // double-counted. Same disease the team __ref markers cure, so same
+  // cure: first visit serializes the body plus a __matchId, every later
+  // visit emits a { __ref:'match' } marker the loader resolves back to
+  // one object.
+  const matchIdMap = new Map();
+  let nextMatchId = 1;
+  for (const entry of gameState.season?.activeSeries || []) {
+    for (const key of ['matchRef', 'bracketMatchRef', 'intlMatchRef']) {
+      const m = entry[key];
+      if (m && typeof m === 'object' && !matchIdMap.has(m)) {
+        matchIdMap.set(m, nextMatchId++);
+      }
+    }
+  }
+
   const seen = new WeakSet();
+  const seenMatches = new WeakSet();
 
   // Force key iteration order: regions FIRST so teams get seen before
   // any reference in season/international/worlds/archive.
@@ -152,6 +175,17 @@ function serialize(gameState) {
   };
 
   return JSON.stringify(ordered, (key, value) => {
+    // Shared match objects — see matchIdMap above.
+    if (value && typeof value === 'object' && matchIdMap.has(value)) {
+      const id = matchIdMap.get(value);
+      if (seenMatches.has(value)) {
+        return { __ref: 'match', id };
+      }
+      seenMatches.add(value);
+      // Shallow copy so the id rides along without mutating live state.
+      return { ...value, __matchId: id };
+    }
+
     // Team detection via the identity map
     if (value && typeof value === 'object' && teamIdMap.has(value)) {
       const ident = teamIdMap.get(value);
@@ -259,7 +293,18 @@ function deserialize(json) {
   // may be reached from outside the canonical roster arrays (e.g. inside
   // schedule match result objects — though currently there shouldn't be
   // any, this is defensive).
+  // Pass 1.5: restore match identity — collect __matchId bodies, then
+  // point every { __ref:'match' } marker back at the one real object.
+  // Must run before the team walk so the shared body's team refs are
+  // resolved exactly once.
+  resolveMatchRefs(data);
+
   walkAndReplace(data, teamMap, new Set());
+
+  // Pass 2.5: saves written before match identity existed already contain
+  // detached copies. Re-link them structurally so an old mid-series save
+  // doesn't replay its bracket games. No-op for new saves.
+  relinkActiveSeriesRefs(data);
 
   // Pass 3: schema migration. Older saves predate Phase 6c's seasonNumber
   // and archive fields; if we don't fill them in here, the first call to
@@ -434,6 +479,100 @@ function walkAndReplace(node, teamMap, visited) {
         walkAndReplace(v, teamMap, visited);
       }
     }
+  }
+}
+
+/**
+ * Restore match identity after JSON.parse. Two walks: collect every
+ * object carrying a __matchId (stripping the marker), then replace every
+ * { __ref:'match', id } with the collected object. See serialize().
+ */
+function resolveMatchRefs(root) {
+  const byId = new Map();
+
+  const collect = (node, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    if (!Array.isArray(node) && typeof node.__matchId === 'number') {
+      byId.set(node.__matchId, node);
+      delete node.__matchId;
+    }
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      collect(node[k], visited);
+    }
+  };
+
+  const replace = (node, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      const v = node[k];
+      if (v && typeof v === 'object' && v.__ref === 'match') {
+        // An unresolvable id keeps the marker replaced by null rather
+        // than a dangling pseudo-match; relink below can still repair it.
+        node[k] = byId.get(v.id) || null;
+      } else {
+        replace(v, visited);
+      }
+    }
+  };
+
+  collect(root, new Set());
+  replace(root, new Set());
+}
+
+/**
+ * Legacy repair: for saves written before match identity, re-point each
+ * active-series entry's match refs at the canonical match object by
+ * structure — the group phase by schedule index, every bracket phase by
+ * its (still canonical, thanks to team __refs) team pair among the
+ * container's unresolved matches. Idempotent on healthy saves.
+ */
+function relinkActiveSeriesRefs(data) {
+  const entries = data.season?.activeSeries || [];
+  if (entries.length === 0) return;
+
+  const collectMatches = (node, out, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (node instanceof Team || node instanceof Player) return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    if (!Array.isArray(node)
+        && 'teamA' in node && 'teamB' in node && 'result' in node) {
+      out.push(node);
+    }
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      collectMatches(node[k], out, visited);
+    }
+  };
+
+  for (const entry of entries) {
+    let canonical = null;
+
+    if (entry.phase === 'group' && typeof entry.scheduleIdx === 'number') {
+      const m = data.regions?.[entry.regionKey]?.schedule?.[entry.scheduleIdx];
+      if (m && m.teamA === entry.teamA && m.teamB === entry.teamB) canonical = m;
+    } else {
+      const container =
+        entry.phase === 'bracket' ? data.regions?.[entry.regionKey]?.bracket
+        : entry.phase?.startsWith('international') ? data.international
+        : entry.phase?.startsWith('worlds') ? data.worlds
+        : null;
+      if (container) {
+        const candidates = [];
+        collectMatches(container, candidates, new Set());
+        canonical = candidates.find(m =>
+          !m.result && m.teamA === entry.teamA && m.teamB === entry.teamB
+        ) || null;
+      }
+    }
+
+    if (!canonical) continue;
+    if ('matchRef' in entry) entry.matchRef = canonical;
+    if ('bracketMatchRef' in entry) entry.bracketMatchRef = canonical;
+    if ('intlMatchRef' in entry) entry.intlMatchRef = canonical;
   }
 }
 

@@ -22,7 +22,6 @@ import { executePoach, evaluatePoach } from './engine/poaching.js';
 import { syncSalaryCap } from './data/salary.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
-import { runCpuMoves } from './engine/ai.js';
 import { runReactiveAISignings } from './engine/offseason.js';
 import {
   resolveOffer, calculateBuyout, computeCapRemaining, computeTeamSalary, fitsCap,
@@ -1151,12 +1150,18 @@ export default function App() {
           if (team.isHuman) continue;
           while (team.roster.length < 5) {
             const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
-            if (bestFA) {
-              team.addPlayer(bestFA);
-              region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
-            } else {
-              team.addPlayer(generatePlayer({ regionKey }));
+            const added = bestFA || generatePlayer({ regionKey });
+            if (bestFA) region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
+            // Every rostered player must carry a contract — cap math and
+            // the re-sign window both key on it.
+            if (!added.contract) {
+              added.contract = {
+                salary: Math.max(50000, Math.round(calculateBaseSalary(added.overall) * 0.9 / 5000) * 5000),
+                yearsRemaining: 1,
+                signedYear: gameState.seasonNumber || 2025,
+              };
             }
+            team.addPlayer(added);
           }
           team.validateStrategy();
         }
@@ -1266,10 +1271,13 @@ export default function App() {
       );
       if (unplayedThisWeek) continue;
 
-      // Week complete for this region — bump to next week + run AI roster moves
+      // Week complete for this region — bump to next week. AI roster
+      // movement happens ONLY in the windowed engines (midseason.js /
+      // offseason.js): the legacy weekly runCpuMoves pass that used to
+      // fire here signed players with no contract, no cap check, and no
+      // budget, silently corrupting payrolls across a reload.
       const remaining = region.schedule.some(m => !m.result);
       if (remaining) {
-        runCpuMoves({ teams: region.teams, freeAgents: region.freeAgents });
         region.currentWeek++;
       }
     }
@@ -1456,12 +1464,14 @@ export default function App() {
   }
 
   function releasePlayer(player) {
-    // During regular season, enforce the 5-player minimum to prevent the
-    // user from accidentally going understrength mid-year. During the
-    // offseason OR a mid-season FA window, allow going below 5 — the user
-    // might want to release then sign, and the Start Preseason / Start
-    // Stage buttons are the safeguard that prevent starting with <5.
-    if (!offseasonActive && !midseasonActive && humanTeam.atMinRoster) return;
+    // The 5-player floor holds everywhere EXCEPT the offseason. It used
+    // to be waived in the mid-season window too ("release then re-sign"),
+    // but signings there are budgeted at 2 per season while releases were
+    // free — with the budget spent and the roster below 5, every way back
+    // up was refused and Start Stage stayed disabled forever: a one-click,
+    // auto-saved soft-lock. Mid-season cap trouble never needs to go
+    // below 5 anyway: an over-cap poach is only legal at 6+ players.
+    if (!offseasonActive && humanTeam.atMinRoster) return;
 
     // Phase 7b: apply buyout cap hit if the player has remaining
     // contract years. The hit goes onto the team's deadCapHits ledger,
@@ -1644,7 +1654,7 @@ export default function App() {
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive || midseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} mapPool={gameState.mapPool?.active} onTrainMap={handleTrainMap} trainingUsed={!!gameState.season?.trainingUsed} />;
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} mapPool={gameState.mapPool?.active} onTrainMap={handleTrainMap} trainingUsed={!!gameState.season?.trainingUsed} />;
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}

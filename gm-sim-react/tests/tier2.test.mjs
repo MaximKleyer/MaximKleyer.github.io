@@ -38,16 +38,22 @@ describe('generation', () => {
   });
 
   test('tier 2 is weaker than tier 1 and skews younger', () => {
+    // Sampled across ALL regions: the true age gap is about one year
+    // (tier-1 mean 21.5, tier-2 20.6), and a single region's 80 players
+    // carry enough sampling noise to flip that sign once in a while —
+    // this flaked at exactly that margin. Four regions gives 320 vs 240
+    // players, where a real regression still fails cleanly.
     const gs = newGame();
-    const t1 = gs.regions.americas.teams;
-    const t2 = gs.regions.americas.tier2.teams;
     const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+    const regions = Object.values(gs.regions);
+    const t1 = regions.flatMap(r => r.teams);
+    const t2 = regions.flatMap(r => r.tier2.teams);
 
     assert.ok(avg(t2.map(t => t.overallRating)) < avg(t1.map(t => t.overallRating)) - 5,
       'tier 2 should be clearly weaker than tier 1');
     assert.ok(avg(t2.flatMap(t => t.roster.map(p => p.age))) <
-              avg(t1.flatMap(t => t.roster.map(p => p.age))),
-      'tier 2 should skew younger');
+              avg(t1.flatMap(t => t.roster.map(p => p.age))) - 0.3,
+      'tier 2 should skew clearly younger');
   });
 
   test('academies link to a real tier-1 parent', () => {

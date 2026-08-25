@@ -535,3 +535,63 @@ test('the preseason market never puts a club over the cap', () => {
       `${rk}: a free agent is still under contract`);
   }
 });
+
+/* ─────────────── Null slots in strategy assignments ─────────────── */
+/*
+ * The Strategy panel's array is positional: index i pairs with the comp's
+ * slot i, and an empty slot is a literal null. Three engine consumers
+ * used to dereference blindly and crash — and removal used to compact
+ * the array, silently shifting every later player onto the wrong role.
+ */
+describe('strategy assignment nulls and positions', () => {
+  test('a null slot never crashes the sim, validation, or removal', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    const opponent = aiTeam(gs);
+
+    team.autoAssignStrategy();
+    team.strategy.assignments[1] = null;   // exactly what clearSlot writes
+
+    assert.doesNotThrow(() => team.validateStrategy(), 'validateStrategy');
+    assert.doesNotThrow(() => simulateSeries(team, opponent, 3), 'simulateSeries');
+    assert.doesNotThrow(() => team.removePlayer(team.roster[4]), 'removePlayer');
+  });
+
+  test('releasing an assigned starter nulls their slot without shifting the rest', () => {
+    const gs = newGame();
+    const team = humanTeam(gs);
+    team.autoAssignStrategy();
+
+    const before = [...team.strategy.assignments];
+    assert.ok(before.every(Boolean), 'precondition: all five slots filled');
+    const victim = team.roster.find(p => p.id === before[1].playerId);
+
+    team.removePlayer(victim);
+    const after = team.strategy.assignments;
+
+    assert.equal(after.length, before.length, 'array keeps its positional length');
+    assert.equal(after[1], null, 'the released slot is nulled in place');
+    for (const i of [0, 2, 3, 4]) {
+      assert.equal(after[i], before[i], `slot ${i} must not shift`);
+    }
+  });
+
+  test('the human sign flow survives a cleared slot end to end', () => {
+    // Regression shape: signing crashed between the roster add and the FA
+    // pool removal, leaving the player on the roster AND in the pool.
+    const gs = newGame();
+    const team = humanTeam(gs);
+    const region = gs.regions[gs.humanRegion];
+    team.autoAssignStrategy();
+    team.strategy.assignments[2] = null;
+
+    const fa = region.freeAgents[0];
+    assert.doesNotThrow(() => {
+      team.addPlayer(fa);
+      team.validateStrategy();
+      region.freeAgents.splice(region.freeAgents.indexOf(fa), 1);
+    });
+    assert.ok(team.roster.includes(fa));
+    assert.ok(!region.freeAgents.includes(fa), 'signed player left the pool');
+  });
+});

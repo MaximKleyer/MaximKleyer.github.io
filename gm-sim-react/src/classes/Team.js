@@ -158,7 +158,13 @@ export class Team {
     const idx = this.roster.indexOf(player);
     if (idx === -1) return false;
     this.roster.splice(idx, 1);
-    this.strategy.assignments = this.strategy.assignments.filter(a => a.playerId !== player.id);
+    // NULL the slot, never compact. Slot identity is positional — index i
+    // pairs with the comp's slot i — so filtering the array shifted every
+    // later assignment onto the wrong role and the panel showed players
+    // against roles the sim wasn't running them on.
+    this.strategy.assignments = this.strategy.assignments.map(
+      a => (a && a.playerId === player.id) ? null : a
+    );
     if (this.strategy.iglId === player.id) this.strategy.iglId = null;
     return true;
   }
@@ -224,7 +230,9 @@ export class Team {
       }
     }
 
-    this.strategy.assignments = assignments.filter(a => a !== null);
+    // Keep the array positional (nulls mark unfilled slots) — see
+    // removePlayer for why compacting corrupts the slot mapping.
+    this.strategy.assignments = assignments;
 
     const currentIgl = this.roster.find(p => p.id === this.strategy.iglId);
     if (!currentIgl) {
@@ -262,10 +270,13 @@ export class Team {
 
   validateStrategy() {
     const rosterIds = new Set(this.roster.map(p => p.id));
-    this.strategy.assignments = this.strategy.assignments.filter(a => rosterIds.has(a.playerId));
+    this.strategy.assignments = this.strategy.assignments.map(
+      a => (a && rosterIds.has(a.playerId)) ? a : null
+    );
     if (this.strategy.iglId && !rosterIds.has(this.strategy.iglId)) this.strategy.iglId = null;
     const comp = COMPOSITIONS[this.strategy.comp];
-    if (comp && this.strategy.assignments.length < comp.slots.length && !this.isHuman) {
+    const filled = this.strategy.assignments.filter(Boolean).length;
+    if (comp && filled < comp.slots.length && !this.isHuman) {
       // Only AI teams refill themselves. Re-filling the human's slots
       // after a roster change would quietly overwrite the choices the
       // Strategy panel exists to let them make.
