@@ -27,6 +27,7 @@ import { generatePlayer } from '../classes/Player.js';
 import { getTier2TeamDefs, TIER2_TEAM_COUNT } from '../data/tier2Teams.js';
 import { generateMapRatings } from '../data/maps.js';
 import { assignRosterRoles, swapKeepsSpread } from '../data/roles.js';
+import { COMPOSITIONS } from '../data/strategy.js';
 import { calculateBaseSalary, adjustMorale } from '../data/salary.js';
 import { expectedAcs } from './poaching.js';
 import { simulateSeries } from '../classes/Match.js';
@@ -145,6 +146,11 @@ export function initTier2Region(regionKey, seasonNumber = 2025) {
     team.roster = buildRoster(regionKey, bands[i], !!def.parent);
     for (const p of team.roster) giveContract(p, seasonNumber);
     team.mapRatings = generateMapRatings(team.overallRating || 60);
+    // Pick the composition this roster can actually field before
+    // assigning — on the default comp, 56% of tier-2 sides carried a
+    // permanent off-role slot. Tier 1 has had this fix since roles
+    // landed; tier 2 was missed.
+    team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
     team.autoAssignStrategy();
     return team;
   });
@@ -490,10 +496,14 @@ export function runTier2AISignings(gameState, regionKey) {
       if (!target) break;
 
       team.removePlayer(weakest);
+      // Free agents carry no contract — every other release path holds
+      // this invariant, and cap math trusts it.
+      weakest.contract = null;
+      adjustMorale(weakest, -5, 'released_by_team');
       region.freeAgents.push(weakest);
       region.freeAgents.splice(region.freeAgents.indexOf(target), 1);
       giveContract(target, gameState.seasonNumber || 2025);
-      target.morale = 65;
+      adjustMorale(target, 65 - (target.morale ?? 65), 'signed_by_tier2');
       team.addPlayer(target);
       team.validateStrategy();
       signings++;
@@ -507,4 +517,70 @@ export function runAllTier2AISignings(gameState, regionKeys) {
   let total = 0;
   for (const rk of regionKeys) total += runTier2AISignings(gameState, rk);
   return total;
+}
+
+
+/* ─────────────── Tier-2 offseason lifecycle ─────────────── */
+
+/**
+ * Age, develop, retire, and re-sign the second division on the same
+ * offseason clock as tier 1. Hooks (developPlayer, shouldRetire) are
+ * passed in from season.js rather than imported, because season.js
+ * already imports this module and a cycle here would be fragile.
+ *
+ * Retirees are replaced with generated youth in the division's mid band
+ * so rosters stay at five, and expiring contracts simply renew — tier-2
+ * clubs have no re-sign window, and a player nobody re-signed would
+ * just be generated back anyway.
+ */
+export function runTier2Offseason(gameState, regionKeys, { developPlayer, shouldRetire, completedYear }) {
+  const nextSeason = (gameState.seasonNumber || 2025);
+  for (const rk of regionKeys) {
+    const tier2 = gameState.regions?.[rk]?.tier2;
+    if (!tier2?.teams?.length) continue;
+
+    for (const team of tier2.teams) {
+      const survivors = [];
+      for (const player of team.roster) {
+        player.age += 1;
+        if (shouldRetire(player)) continue;   // tier-2 retirees exit quietly
+        developPlayer(player);
+        if (player.contract) {
+          player.contract.yearsRemaining = Math.max(0, (player.contract.yearsRemaining || 0) - 1);
+          if (player.contract.yearsRemaining === 0) {
+            giveContract(player, nextSeason);
+          }
+        } else {
+          giveContract(player, nextSeason);
+        }
+        survivors.push(player);
+      }
+      team.roster = survivors;
+
+      // Replace retirees with generated youth so the club stays at five.
+      // Each rookie takes a role the squad is missing — a random roll
+      // broke coverage whenever a sole role-holder retired, the exact
+      // defect the poach backfill had.
+      while (team.roster.length < TIER2_ROSTER_SIZE) {
+        const covered = new Set(
+          team.roster.filter(p => p.primaryRole !== 'flex').map(p => p.primaryRole)
+        );
+        const missing = ['duelist', 'initiator', 'controller', 'sentinel']
+          .find(r => !covered.has(r));
+        const rookie = generatePlayer({
+          regionKey: rk,
+          ...(missing ? { primaryRole: missing, secondaryRole: null } : {}),
+          ageOverride: 17 + Math.floor(Math.random() * 4),
+          ratingFloor: 53,
+          ratingCeiling: 64,
+        });
+        giveContract(rookie, nextSeason);
+        team.addPlayer(rookie);
+      }
+
+      // Roster churn may have changed what the club can field.
+      team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
+      team.validateStrategy();
+    }
+  }
 }
