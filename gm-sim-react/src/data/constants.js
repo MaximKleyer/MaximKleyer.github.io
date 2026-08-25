@@ -27,7 +27,6 @@ export const FREE_AGENT_POOL_SIZE = 100;
 export const SIM = {
   VARIANCE: 5,           // ±random swing on team strength per map
   UPGRADE_THRESHOLD: 7,   // CPU only swaps if FA is this many points better
-  CPU_MOVE_CHANCE: 0.5,   // 70% chance CPU considers moves each week
 
   // How hard a team's per-map Attack/Defense rating pushes on round
   // outcomes. The modifier is 1 + (rating - 70)/100 * MAP_IMPACT, applied

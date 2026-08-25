@@ -28,6 +28,7 @@
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { seedActiveSeries, findActiveSeriesForMatch } from '../src/engine/activeSeries.js';
 import { installLocalStorage, newGame, roundTrip, humanTeam } from './helpers.mjs';
 import { Team } from '../src/classes/Team.js';
 import { Player, generatePlayer } from '../src/classes/Player.js';
@@ -412,5 +413,130 @@ describe('legacy saves', () => {
     assert.equal(loaded.mapPool.active.length, 7);
     assert.equal(typeof loaded.seasonNumber, 'number');
     assert.ok(Array.isArray(loaded.archive));
+  });
+});
+
+/* ─────────────── Match identity across save/load ─────────────── */
+/*
+ * In-flight series hold direct references to match objects that also live
+ * in canonical containers. Losing that identity on reload made finished
+ * series write results to orphaned copies — the canonical match stayed
+ * unplayed, the stage re-seeded, and the same series replayed with stats
+ * double-counted. These tests pin the identity, the write path, and the
+ * legacy-save repair.
+ */
+describe('match identity across save/load', () => {
+  function seedGroupSeries(gs) {
+    const rk = gs.humanRegion;
+    const region = gs.regions[rk];
+    const match = region.schedule.find(m => !m.teamA.isHuman && !m.teamB.isHuman);
+    const scheduleIdx = region.schedule.indexOf(match);
+    seedActiveSeries(gs, [{
+      seriesId: `${rk}:w${match.week}:${scheduleIdx}`,
+      phase: 'group',
+      regionKey: rk,
+      week: match.week,
+      scheduleIdx,
+      matchRef: match,
+      teamA: match.teamA,
+      teamB: match.teamB,
+      bestOf: 3,
+    }]);
+    return { rk, scheduleIdx };
+  }
+
+  test('a mid-series save keeps matchRef pointing at the canonical match', () => {
+    const gs = newGame();
+    const { rk, scheduleIdx } = seedGroupSeries(gs);
+
+    const loaded = roundTrip(gs);
+    const entry = loaded.season.activeSeries[0];
+    const canonical = loaded.regions[rk].schedule[scheduleIdx];
+
+    assert.ok(entry, 'active series entry survived the round trip');
+    assert.equal(entry.matchRef, canonical,
+      'matchRef must BE the schedule match, not a detached copy');
+
+    // The write path that corrupted saves: a result set through the ref
+    // must be visible on the canonical match, or the stage replays it.
+    entry.matchRef.result = { winner: canonical.teamA, score: '2-0' };
+    assert.ok(canonical.result, 'result written through the ref reaches the schedule');
+
+    // And the UI lookup that goes the other way must still resolve.
+    assert.equal(findActiveSeriesForMatch(loaded, canonical), entry,
+      'findActiveSeriesForMatch identity lookup survives a reload');
+  });
+
+  test('bracket-style refs shared under two keys come back as ONE object', () => {
+    const gs = newGame();
+    const rk = gs.humanRegion;
+    const region = gs.regions[rk];
+    const [a, b] = region.teams.filter(t => !t.isHuman);
+    const match = { teamA: a, teamB: b, result: null };
+    region.bracket = { stage: 5, matches: [match] };
+
+    seedActiveSeries(gs, [{
+      seriesId: `${rk}:bracket:s5:0`,
+      phase: 'bracket',
+      regionKey: rk,
+      bracketStage: 5,
+      bracketMatchRef: match,
+      matchRef: match,
+      teamA: a,
+      teamB: b,
+      bestOf: 5,
+    }]);
+
+    const loaded = roundTrip(gs);
+    const entry = loaded.season.activeSeries[0];
+    const canonical = loaded.regions[rk].bracket.matches[0];
+
+    assert.equal(entry.bracketMatchRef, canonical, 'bracketMatchRef identity');
+    assert.equal(entry.matchRef, canonical, 'matchRef identity');
+    assert.equal(entry.bracketMatchRef, entry.matchRef,
+      'both ref keys must resolve to the same object');
+  });
+
+  test('legacy saves with already-detached refs are structurally re-linked', () => {
+    const gs = newGame();
+    const { rk, scheduleIdx } = seedGroupSeries(gs);
+
+    // First round trip is healthy; now simulate a save written before
+    // match identity existed by detaching the ref into a copy.
+    const loaded = roundTrip(gs);
+    const entry = loaded.season.activeSeries[0];
+    entry.matchRef = { ...entry.matchRef };
+    assert.notEqual(entry.matchRef, loaded.regions[rk].schedule[scheduleIdx],
+      'precondition: ref is detached');
+
+    const reloaded = roundTrip(loaded);
+    assert.equal(
+      reloaded.season.activeSeries[0].matchRef,
+      reloaded.regions[rk].schedule[scheduleIdx],
+      'relink pass must repair a detached group-phase ref');
+  });
+
+  test('legacy bracket refs re-link by team pair', () => {
+    const gs = newGame();
+    const rk = gs.humanRegion;
+    const region = gs.regions[rk];
+    const [a, b] = region.teams.filter(t => !t.isHuman);
+    const match = { teamA: a, teamB: b, result: null };
+    region.bracket = { stage: 5, matches: [match] };
+    seedActiveSeries(gs, [{
+      seriesId: `${rk}:bracket:s5:0`, phase: 'bracket', regionKey: rk,
+      bracketStage: 5, bracketMatchRef: match, matchRef: match,
+      teamA: a, teamB: b, bestOf: 5,
+    }]);
+
+    const loaded = roundTrip(gs);
+    const entry = loaded.season.activeSeries[0];
+    entry.bracketMatchRef = { ...entry.bracketMatchRef };
+    entry.matchRef = entry.bracketMatchRef;
+
+    const reloaded = roundTrip(loaded);
+    const canonical = reloaded.regions[rk].bracket.matches[0];
+    assert.equal(reloaded.season.activeSeries[0].bracketMatchRef, canonical);
+    assert.equal(reloaded.season.activeSeries[0].matchRef, canonical);
   });
 });
