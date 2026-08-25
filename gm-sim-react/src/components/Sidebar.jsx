@@ -64,6 +64,8 @@ export default function Sidebar({
   onDeleteSave,
   onStartNewSeason, seasonNumber,
   isOffseason, onStartPreseason, humanRosterSize,
+  // capUsed/capMax already arrive for the meter; the start buttons
+  // reuse them so the over-cap grace period visibly closes here.
   // Phase 6f
   isMidseason, onStartStage, midseasonMovesUsed, midseasonMovesMax,
   godMode, onToggleGodMode, onOpenSettings,
@@ -87,12 +89,15 @@ export default function Sidebar({
   // Phase 6e+ Ask 1: during offseason, sidebar shows "Start Preseason"
   // directly (disabled when roster < 5). This replaces the intermediate
   // "Go to Offseason" button since the user is already there.
+  const overCap = capUsed != null && capMax != null && capUsed > capMax;
   const offseasonUnderstaffed = isOffseason && (humanRosterSize || 0) < 5;
+  const offseasonBlocked = offseasonUnderstaffed || (isOffseason && overCap);
 
   // Phase 6f: during a mid-season FA window, show "Start Stage" with the
   // same understaffed guard as offseason. The cap counter (X/2 signings)
   // shows in the dashboard banner — sidebar just shows the button.
   const midseasonUnderstaffed = isMidseason && (humanRosterSize || 0) < 5;
+  const midseasonBlocked = midseasonUnderstaffed || (isMidseason && overCap);
 
   function handleDeleteClick() {
     const ok = typeof window !== 'undefined' && window.confirm(
@@ -258,6 +263,17 @@ export default function Sidebar({
               }}>
                 ⚠ Sign {5 - (humanRosterSize || 0)} more player{5 - (humanRosterSize || 0) > 1 ? 's' : ''} to continue
               </div>
+            ) : overCap ? (
+              <div style={{
+                textAlign: 'center',
+                fontSize: '0.64rem',
+                color: 'var(--accent, #ff4655)',
+                marginBottom: 6,
+                padding: '0 4px',
+                lineHeight: 1.3,
+              }}>
+                ⚠ Over the cap — release a player to continue
+              </div>
             ) : (
               <div style={{
                 textAlign: 'center',
@@ -272,17 +288,17 @@ export default function Sidebar({
             )}
             <button
               onClick={onStartPreseason}
-              disabled={offseasonUnderstaffed}
+              disabled={offseasonBlocked}
               style={{
                 width: '100%',
                 padding: '8px 10px',
-                background: offseasonUnderstaffed ? '#3a4152' : 'var(--accent, #ff4655)',
-                border: offseasonUnderstaffed
+                background: offseasonBlocked ? '#3a4152' : 'var(--accent, #ff4655)',
+                border: offseasonBlocked
                   ? '1px solid #3a4152'
                   : '1px solid var(--accent, #ff4655)',
-                color: offseasonUnderstaffed ? '#6f7d93' : '#fff',
+                color: offseasonBlocked ? '#6f7d93' : '#fff',
                 borderRadius: 4,
-                cursor: offseasonUnderstaffed ? 'not-allowed' : 'pointer',
+                cursor: offseasonBlocked ? 'not-allowed' : 'pointer',
                 fontFamily: 'inherit',
                 fontSize: '0.78rem',
                 fontWeight: 600,
@@ -318,6 +334,17 @@ export default function Sidebar({
               }}>
                 ⚠ Sign {5 - (humanRosterSize || 0)} more player{5 - (humanRosterSize || 0) > 1 ? 's' : ''} to continue
               </div>
+            ) : overCap ? (
+              <div style={{
+                textAlign: 'center',
+                fontSize: '0.64rem',
+                color: 'var(--accent, #ff4655)',
+                marginBottom: 6,
+                padding: '0 4px',
+                lineHeight: 1.3,
+              }}>
+                ⚠ Over the cap — release a player to continue
+              </div>
             ) : (
               <div style={{
                 textAlign: 'center',
@@ -332,17 +359,17 @@ export default function Sidebar({
             )}
             <button
               onClick={onStartStage}
-              disabled={midseasonUnderstaffed}
+              disabled={midseasonBlocked}
               style={{
                 width: '100%',
                 padding: '8px 10px',
-                background: midseasonUnderstaffed ? '#3a4152' : '#3461d4',
-                border: midseasonUnderstaffed
+                background: midseasonBlocked ? '#3a4152' : '#3461d4',
+                border: midseasonBlocked
                   ? '1px solid #3a4152'
                   : '1px solid #3461d4',
-                color: midseasonUnderstaffed ? '#6f7d93' : '#fff',
+                color: midseasonBlocked ? '#6f7d93' : '#fff',
                 borderRadius: 4,
-                cursor: midseasonUnderstaffed ? 'not-allowed' : 'pointer',
+                cursor: midseasonBlocked ? 'not-allowed' : 'pointer',
                 fontFamily: 'inherit',
                 fontSize: '0.78rem',
                 fontWeight: 600,

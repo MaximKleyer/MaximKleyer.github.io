@@ -163,6 +163,7 @@ export default function App() {
   const [started, setStarted] = useState(() => gameState !== null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [toast, setToast] = useState(null);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [, forceRender] = useState(0);
   const [viewRegion, setViewRegion] = useState(() =>
@@ -176,7 +177,11 @@ export default function App() {
   // so this fires on every meaningful mutation. localStorage writes are
   // fast enough that we don't bother debouncing.
   useEffect(() => {
-    if (gameState) saveGameState(gameState);
+    if (!gameState) return;
+    const ok = saveGameState(gameState);
+    // Quota failures used to vanish into the console while the user
+    // played on against a stale save. Surface it, once per transition.
+    setSaveFailed(prev => (prev === !ok ? prev : !ok));
   }, [gameState]);
 
   // ── Keyboard shortcuts ──
@@ -383,21 +388,37 @@ export default function App() {
   // Hoisted out of the Sidebar props so the keyboard shortcuts below and
   // the buttons agree on exactly when each action is allowed.
   const ffCanSimSeries = (() => {
-    if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive
+        || resignWindowActive) return false;
     if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return false;
     const slot = getCurrentSlot(gameState);
     if (slot?.type === 'international' || slot?.type === 'worlds') return true;
     if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) return true;
     return !allBracketsDone;
   })();
+  // midseasonActive matters here: on entering a mid-season FA window the
+  // regions have ALREADY rolled over to week 0 of the next stage, so
+  // without the gate this button simmed the whole stage while the
+  // signing window stayed open — every result known before you sign.
   const ffCanSimGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group')
-    && !inTransition && !circuitComplete && !offseasonActive;
+    && !inTransition && !circuitComplete && !offseasonActive
+    && !midseasonActive && !resignWindowActive;
   const ffCanSimPlayoffs = (() => {
-    if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive
+        || resignWindowActive) return false;
     const slot = getCurrentSlot(gameState);
     if (slot?.type === 'international' || slot?.type === 'worlds') return true;
     return REGION_KEYS.every(k => gameState.regions[k].phase !== 'group') && !allBracketsDone;
   })();
+
+  // ── Signing windows ──
+  // Preseason (week 0 of the opening stage), mid-season FA windows, and
+  // the offseason. Everything the FreeAgents tab and signPlayer allow
+  // keys off this one definition.
+  const preseasonActive = seasonStatus === 'active'
+    && humanRegionData.phase === 'group'
+    && humanRegionData.currentWeek === 0;
+  const signingWindowOpen = preseasonActive || midseasonActive || offseasonActive;
 
   // ── Poaching ──
   //
@@ -626,6 +647,7 @@ export default function App() {
             teamA: entry.match.teamA,
             teamB: entry.match.teamB,
             bestOf: entry.bestOf,
+            grandFinal: !!entry.grandFinal,
           }));
         if (seeded.length > 0) seedActiveSeries(gameState, seeded);
       }
@@ -790,6 +812,7 @@ export default function App() {
             teamA: entry.match.teamA,
             teamB: entry.match.teamB,
             bestOf: entry.bestOf,
+            grandFinal: !!entry.grandFinal,
           }));
         if (seeded.length > 0) seedActiveSeries(gameState, seeded);
       }
@@ -940,9 +963,25 @@ export default function App() {
   function handleStartPreseason() {
     if (gameState.season?.status !== 'offseason-active') return;
     if (humanTeam.roster.length < 5) return; // defensive
+    if (!enforceCapBeforeStart()) return;
     gameState.season.status = 'active';
     setCurrentView('dashboard');
     setGameState(prev => ({ ...prev }));
+  }
+
+  // An over-cap poach is legal DURING a window precisely because the
+  // window is the grace period to release somebody. This is the closing
+  // transition that used to be missing: without it a club could start
+  // the stage over the cap and stay there for entire seasons.
+  function enforceCapBeforeStart() {
+    const over = computeTeamSalary(humanTeam) - getSalaryCap();
+    if (over <= 0) return true;
+    setToast({
+      type: 'info',
+      message: `You are $${Math.round(over / 1000)}K over the cap — release a player before starting.`,
+    });
+    setCurrentView('roster');
+    return false;
   }
 
   // Phase 6f: closes the mid-season FA window. Mirror of handleStartPreseason.
@@ -951,6 +990,7 @@ export default function App() {
   function handleStartStage() {
     if (gameState.season?.status !== 'mid-season-fa') return;
     if (humanTeam.roster.length < 5) return; // defensive
+    if (!enforceCapBeforeStart()) return;
     gameState.season.status = 'active';
     setCurrentView('dashboard');
     setGameState(prev => ({ ...prev }));
@@ -1059,6 +1099,8 @@ export default function App() {
   // Sim Group Stage: keeps clicking advance until all 4 regions exit
   // group phase. Confirmation prompt because this skips a lot of content.
   function handleSimGroupStage() {
+    // The G key routes here directly, so the button gate isn't enough.
+    if (!ffCanSimGroup) return;
     const anyInGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
     if (!anyInGroup) return;
 
@@ -1303,7 +1345,7 @@ export default function App() {
 
         const stageMatches = getStageMatches(region.bracket);
         for (let i = 0; i < stageMatches.length; i++) {
-          const { match, bestOf } = stageMatches[i];
+          const { match, bestOf, grandFinal } = stageMatches[i];
           if (match.result) continue; // defensive — already played
 
           seeded.push({
@@ -1315,6 +1357,10 @@ export default function App() {
             teamA: match.teamA,
             teamB: match.teamB,
             bestOf,
+            // Stage 6 runs the asymmetric grand-final veto: the upper-
+            // bracket winner (always seeded as team A) bans twice, the
+            // lower-bracket team picks twice and never bans.
+            grandFinal: !!grandFinal,
           });
         }
       }
@@ -1405,6 +1451,16 @@ export default function App() {
   // way; it doesn't anymore but defensive doesn't hurt.)
   function signPlayer(player, offer = null) {
     if (humanTeam.rosterFull) return { rosterFull: true };
+
+    // Signing is a WINDOW activity: preseason, the mid-season windows,
+    // and the offseason. The engines gate every AI signing this way and
+    // tier-2 poaching is hard-blocked outside windows so the budget
+    // can't be dodged — but this path used to stay open all season,
+    // making the 2-per-season cap trivially avoidable by signing just
+    // before or after the window.
+    if (!signingWindowOpen) {
+      return { accepted: false, reason: 'window_closed' };
+    }
 
     // Already signed? A second submit for the same player — from a rapid
     // double click, or a retry after raising the cap — must not go
@@ -1658,7 +1714,8 @@ export default function App() {
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}
-          canSign={!humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
+          canSign={signingWindowOpen && !humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
+          windowClosed={!signingWindowOpen}
           onSign={signPlayer}
           godMode={!!gameState.godMode}
           onEditPlayer={handleEditPlayer}
@@ -1754,6 +1811,15 @@ export default function App() {
       />
       <main id="content">{renderView()}</main>
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}
+      {saveFailed && (
+        <div style={{
+          position: 'fixed', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+          background: '#7a1c26', border: '1px solid #ff4655', color: '#fff',
+          padding: '8px 16px', borderRadius: 5, fontSize: '0.8rem', zIndex: 3000,
+        }}>
+          ⚠ Saving failed — browser storage is full. Progress since the last save will be lost.
+        </div>
+      )}
       {inTransition && (
         <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
       )}

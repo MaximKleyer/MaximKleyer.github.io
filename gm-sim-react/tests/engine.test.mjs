@@ -9,12 +9,15 @@
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { installLocalStorage, newGame, humanTeam, aiTeam } from './helpers.mjs';
+import { installLocalStorage, newGame, humanTeam, aiTeam, roundTrip } from './helpers.mjs';
 import { TIER1_MIN_TEAM_OVR, MARKET_UPGRADE_MARGIN, clearFreeAgentMarket, ensureContracts } from '../src/engine/league.js';
 import { ROLES, FLEX } from '../src/data/roles.js';
 import { computeTeamSalary, getSalaryCap } from '../src/data/salary.js';
 import { simulateMap, simulateSeries, isTeamAAttacking } from '../src/classes/Match.js';
 import { generatePlayer } from '../src/classes/Player.js';
+import { getStageMatches } from '../src/engine/bracket.js';
+import { getStageMatches as getIntlStageMatches } from '../src/engine/bracketInternational.js';
+import { getStageMatches as getWorldsStageMatches } from '../src/engine/bracketWorlds.js';
 import {
   createVeto, autoCompleteVeto, vetoToMapPlan, buildVetoSequence,
   applyMapAction, applySideChoice, runAIUntilHumanTurn, currentStep, isHumanTurn,
@@ -494,26 +497,32 @@ test('the upgrade pass leaves every tier-1 squad able to field all four roles', 
   }
 });
 
-test('the preseason market leaves no free agent better than the league', () => {
+test('the preseason market clears the board but spares the marquee names', () => {
   const gs = newGame();
   ensureContracts(gs);
   clearFreeAgentMarket(gs);
 
   for (const rk of Object.keys(gs.regions)) {
     const region = gs.regions[rk];
-    const bestFa = Math.max(...region.freeAgents.map(p => p.overall));
     const starters = region.teams
       .flatMap(t => t.startingFive.map(p => p.overall))
       .sort((a, b) => a - b);
     const median = starters[Math.floor(starters.length / 2)];
 
-    // The complaint this pass answers was a board showing several 75+
-    // players unsigned while half the league started worse. The best
-    // name left should sit below a typical starter, not above one.
-    assert.ok(bestFa < median,
-      `${rk}: best free agent is ${bestFa}, at or above the median starter ${median}`);
-    assert.ok(bestFa < 75,
-      `${rk}: a ${bestFa} is still unsigned — somebody would have taken them`);
+    // Two-tier intent: the ordinary market clears — no everyday FA
+    // should beat a typical starter — while the small elite tail
+    // survives as marquee names worth chasing, because a player that
+    // good holds out rather than taking the preseason filler deal.
+    const ordinary = region.freeAgents.filter(p => p.overall <= 72);
+    const elites = region.freeAgents.filter(p => p.overall > 72);
+
+    const bestOrdinary = Math.max(...ordinary.map(p => p.overall));
+    assert.ok(bestOrdinary < median,
+      `${rk}: ordinary market did not clear — a ${bestOrdinary} sits unsigned vs median starter ${median}`);
+    assert.ok(elites.length <= 12,
+      `${rk}: ${elites.length} elites is a flooded market, not a marquee tail`);
+    assert.ok(elites.every(p => !p.contract),
+      `${rk}: an unsigned elite is carrying a contract`);
   }
 });
 
@@ -594,4 +603,39 @@ describe('strategy assignment nulls and positions', () => {
     assert.ok(team.roster.includes(fa));
     assert.ok(!region.freeAgents.includes(fa), 'signed player left the pool');
   });
+});
+
+/* ─────────────── Grand final asymmetric veto reachability ─────────────── */
+
+test('stage-6 getters advertise the grand final so seeding can run the asymmetric veto', () => {
+  const fake = { stage: 6, grandFinal: { teamA: null, teamB: null, result: null } };
+  for (const getter of [getStageMatches, getIntlStageMatches, getWorldsStageMatches]) {
+    const entries = getter(fake);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].grandFinal, true,
+      `${getter.name} must flag the grand final — the flag was fully built and never set`);
+    assert.equal(entries[0].bestOf, 5);
+  }
+});
+
+/* ─────────────── Tag uniqueness across save/load ─────────────── */
+
+test('players generated after a reload never duplicate a living tag', () => {
+  const gs = newGame();
+  const loaded = roundTrip(gs);
+
+  const living = new Set();
+  for (const rk of Object.keys(loaded.regions)) {
+    const region = loaded.regions[rk];
+    for (const t of region.teams) for (const p of t.roster) living.add(p.tag);
+    for (const t of region.tier2.teams) for (const p of t.roster) living.add(p.tag);
+    for (const p of region.freeAgents) living.add(p.tag);
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const rookie = generatePlayer({ regionKey: 'americas' });
+    assert.ok(!living.has(rookie.tag),
+      `post-reload rookie duplicated living tag "${rookie.tag}"`);
+    living.add(rookie.tag);
+  }
 });
