@@ -81,7 +81,8 @@ function getIglBonus(team) {
 function buildAssignmentMap(team) {
   const map = {};
   if (team.strategy?.assignments) {
-    for (const a of team.strategy.assignments) map[a.playerId] = a;
+    // The panel's array is positional — empty slots are literal nulls.
+    for (const a of team.strategy.assignments) if (a) map[a.playerId] = a;
   }
   return map;
 }
@@ -293,7 +294,7 @@ export function simulateMap(teamA, teamB, plan = null) {
   const roleByPlayerId = {};
   for (const t of [teamA, teamB]) {
     for (const a of (t.strategy?.assignments || [])) {
-      if (a.playerId && a.role) roleByPlayerId[a.playerId] = a.role;
+      if (a && a.playerId && a.role) roleByPlayerId[a.playerId] = a.role;
     }
   }
 

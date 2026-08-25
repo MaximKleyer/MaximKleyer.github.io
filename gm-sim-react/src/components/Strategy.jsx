@@ -119,10 +119,14 @@ export default function Strategy({ team, onUpdate }) {
   function handleComp(next) {
     setComp(next);
     team.strategy.comp = next;
-    // Slots change shape, so drop assignments that no longer have a home.
+    // Slots change shape: keep entries whose role still matches their
+    // slot, null the rest IN PLACE. Filtering here shifted survivors onto
+    // the wrong slots.
     team.strategy.assignments = (COMPOSITIONS[next]?.slots || [])
-      .map((_, i) => team.strategy.assignments[i] || null)
-      .filter((a, i) => a && a.role === COMPOSITIONS[next].slots[i]);
+      .map((slotRole, i) => {
+        const a = team.strategy.assignments[i];
+        return (a && a.role === slotRole) ? a : null;
+      });
     commit();
   }
 
