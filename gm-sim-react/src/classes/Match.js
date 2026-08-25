@@ -9,7 +9,7 @@
  */
 
 import { SIM, ROUNDS_TO_WIN, HALF_LENGTH, REGULATION_ROUNDS } from '../data/constants.js';
-import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
+import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE, IGL_LEADERSHIP_PER_IQ } from '../data/strategy.js';
 import { moralePerformanceModifier } from '../data/salary.js';
 import { teamMapRating, getCurrentPool } from '../data/maps.js';
 import { roleFitMultiplier } from '../data/roles.js';
@@ -71,11 +71,26 @@ export function mapSideModifier(rating) {
   return 1 + ((r - 70) / 100) * SIM.MAP_IMPACT;
 }
 
-function getIglBonus(team) {
+/**
+ * The IGL's IQ above baseline — but ONLY if they are actually in the
+ * fielded five. A benched shot-caller used to grant the full bonus,
+ * which let a manager park a 95-IQ veteran on the bench, field five
+ * fraggers, and keep the swing from a player who never took the server.
+ */
+function fieldedIglIqAbove(team, lineup) {
   const igl = team.igl;
   if (!igl) return 0;
-  const iq = igl.ratings.gamesense;
-  return iq <= IGL_BASELINE ? 0 : (iq - IGL_BASELINE) * IGL_BONUS_MULTIPLIER;
+  if (lineup && !lineup.includes(igl)) return 0;
+  return Math.max(0, igl.ratings.gamesense - IGL_BASELINE);
+}
+
+export function getIglBonus(team, lineup = null) {
+  return fieldedIglIqAbove(team, lineup) * IGL_BONUS_MULTIPLIER;
+}
+
+/** Duel multiplier the fielded IGL's leadership gives the whole five. */
+export function iglLeadershipMultiplier(team, lineup = null) {
+  return 1 + fieldedIglIqAbove(team, lineup) * IGL_LEADERSHIP_PER_IQ;
 }
 
 function buildAssignmentMap(team) {
@@ -216,8 +231,6 @@ export function simulateMap(teamA, teamB, plan = null) {
   let roundsA = 0, roundsB = 0;
   const assignMapA = buildAssignmentMap(teamA);
   const assignMapB = buildAssignmentMap(teamB);
-  const iglBonusA = getIglBonus(teamA);
-  const iglBonusB = getIglBonus(teamB);
 
   const mapId = plan?.mapId || null;
   const firstHalfAttacker = plan?.firstHalfAttacker === 'B' ? 'B' : 'A';
@@ -238,6 +251,12 @@ export function simulateMap(teamA, teamB, plan = null) {
   const lineupA = teamA.startingFive;
   const lineupB = teamB.startingFive;
 
+  // Both IGL effects key off the FIELDED five, not the roster.
+  const iglBonusA = getIglBonus(teamA, lineupA);
+  const iglBonusB = getIglBonus(teamB, lineupB);
+  const leadA = iglLeadershipMultiplier(teamA, lineupA);
+  const leadB = iglLeadershipMultiplier(teamB, lineupB);
+
   const roundStats = {};
   for (const p of [...lineupA, ...lineupB]) {
     roundStats[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
@@ -250,8 +269,10 @@ export function simulateMap(teamA, teamB, plan = null) {
   function playRound() {
     const roundIndex = roundsA + roundsB;
     const aAttacking = isTeamAAttacking(roundIndex, firstHalfAttacker);
-    const sideMultA = aAttacking ? multA.attack : multA.defense;
-    const sideMultB = aAttacking ? multB.defense : multB.attack;
+    // Leadership rides the same channel as map comfort: it shifts every
+    // duel's mean without widening the noise.
+    const sideMultA = (aAttacking ? multA.attack : multA.defense) * leadA;
+    const sideMultB = (aAttacking ? multB.defense : multB.attack) * leadB;
     roundSides.push(aAttacking ? 'A-atk' : 'B-atk');
 
     const iglDiff = iglBonusA - iglBonusB;

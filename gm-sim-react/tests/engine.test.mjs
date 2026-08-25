@@ -13,9 +13,10 @@ import { installLocalStorage, newGame, humanTeam, aiTeam, roundTrip } from './he
 import { TIER1_MIN_TEAM_OVR, MARKET_UPGRADE_MARGIN, clearFreeAgentMarket, ensureContracts } from '../src/engine/league.js';
 import { ROLES, FLEX } from '../src/data/roles.js';
 import { computeTeamSalary, getSalaryCap } from '../src/data/salary.js';
-import { simulateMap, simulateSeries, isTeamAAttacking } from '../src/classes/Match.js';
+import { simulateMap, simulateSeries, isTeamAAttacking, getIglBonus, iglLeadershipMultiplier } from '../src/classes/Match.js';
 import { generatePlayer } from '../src/classes/Player.js';
 import { getStageMatches } from '../src/engine/bracket.js';
+import { developPlayer, runMidseasonDevelopment, DEV_WINDOW_SCALE } from '../src/engine/season.js';
 import { getStageMatches as getIntlStageMatches } from '../src/engine/bracketInternational.js';
 import { getStageMatches as getWorldsStageMatches } from '../src/engine/bracketWorlds.js';
 import {
@@ -638,4 +639,142 @@ test('players generated after a reload never duplicate a living tag', () => {
       `post-reload rookie duplicated living tag "${rookie.tag}"`);
     living.add(rookie.tag);
   }
+});
+
+/* ─────────────── IGL leadership and the benched-IGL exploit ─────────────── */
+
+describe('IGL effects key off the fielded five', () => {
+  test('a benched IGL grants neither the round swing nor leadership', () => {
+    const gs = newGame();
+    const team = aiTeam(gs);
+    // Grow the roster so there IS a bench, and make the bench player the
+    // highest-IQ option, then appoint them IGL.
+    const region = gs.regions[gs.humanRegion];
+    while (team.roster.length < 6) team.addPlayer(region.freeAgents.pop());
+    const bench = team.roster.find(p => !team.startingFive.includes(p));
+    bench.ratings.gamesense = 95;
+    team.strategy.iglId = bench.id;
+
+    const five = team.startingFive;
+    assert.ok(!five.includes(bench), 'precondition: IGL is on the bench');
+    assert.equal(getIglBonus(team, five), 0, 'benched IGL must give no round swing');
+    assert.equal(iglLeadershipMultiplier(team, five), 1, 'benched IGL must give no leadership');
+
+    // Promote them into the five: both effects switch on.
+    team.strategy.iglId = five[0].id;
+    five[0].ratings.gamesense = 95;
+    assert.ok(getIglBonus(team, five) > 0, 'fielded IGL grants the round swing');
+    const lead = iglLeadershipMultiplier(team, five);
+    assert.ok(lead > 1 && lead < 1.03,
+      `leadership should be a small boost, got ${lead}`);
+  });
+
+  test('leadership scales with IQ above the baseline and stays small', () => {
+    const gs = newGame();
+    const team = aiTeam(gs);
+    const five = team.startingFive;
+    team.strategy.iglId = five[0].id;
+
+    five[0].ratings.gamesense = 60;
+    assert.equal(iglLeadershipMultiplier(team, five), 1, 'baseline IQ gives nothing');
+    five[0].ratings.gamesense = 95;
+    const at95 = iglLeadershipMultiplier(team, five);
+    five[0].ratings.gamesense = 75;
+    const at75 = iglLeadershipMultiplier(team, five);
+    assert.ok(at95 > at75, 'more IQ, more leadership');
+  });
+});
+
+/* ─────────────── Development across the season's three windows ─────────────── */
+
+describe('development windows', () => {
+  test('three third-scale events match one full event in expectation', () => {
+    // Same-age cohorts through both schedules; means should agree within
+    // sampling noise, so splitting the year does not change growth rate.
+    const N = 3000;
+    const mk = () => generatePlayer({ regionKey: 'americas', ageOverride: 19 });
+    let full = 0, split = 0;
+    for (let i = 0; i < N; i++) {
+      const a = mk(); const beforeA = a.overall;
+      developPlayer(a);
+      full += a.overall - beforeA;
+      const b = mk(); const beforeB = b.overall;
+      developPlayer(b, { scale: DEV_WINDOW_SCALE });
+      developPlayer(b, { scale: DEV_WINDOW_SCALE });
+      developPlayer(b, { scale: DEV_WINDOW_SCALE });
+      split += b.overall - beforeB;
+    }
+    const gap = Math.abs(full - split) / N;
+    assert.ok(gap < 0.35,
+      `yearly growth drifted: full ${(full / N).toFixed(2)} vs split ${(split / N).toFixed(2)} per player`);
+  });
+
+  test('mid-season development scores the stage that was just played', () => {
+    const gs = newGame();
+    const region = gs.regions[gs.humanRegion];
+    const [eliteTeam, badTeam] = region.teams;
+
+    // Stage-1 snapshots: one squad dominant, one terrible; live stats
+    // already reset by the rollover, exactly like the real window.
+    for (const p of eliteTeam.roster) {
+      p.age = 19;
+      p.stageStats = { 1: { kills: 300, deaths: 150, assists: 60, acs: 260 * 12, maps: 12 } };
+    }
+    for (const p of badTeam.roster) {
+      p.age = 19;
+      p.stageStats = { 1: { kills: 100, deaths: 220, assists: 30, acs: 130 * 12, maps: 12 } };
+    }
+
+    // Average over repeated runs from identical snapshots.
+    let elite = 0, bad = 0;
+    const runs = 60;
+    for (let r = 0; r < runs; r++) {
+      const eliteBefore = eliteTeam.roster.map(p => ({ p, o: p.overall, r: { ...p.ratings } }));
+      const badBefore = badTeam.roster.map(p => ({ p, o: p.overall, r: { ...p.ratings } }));
+      runMidseasonDevelopment(gs, 1);
+      for (const { p, o, r } of eliteBefore) { elite += p.overall - o; p.ratings = r; p.overall = p.calcOverall(); }
+      for (const { p, o, r } of badBefore) { bad += p.overall - o; p.ratings = r; p.overall = p.calcOverall(); }
+    }
+    assert.ok(elite > bad,
+      `an elite stage must out-develop a bad one (elite ${elite}, bad ${bad})`);
+
+    // And the UI delta stash is refreshed by the window.
+    runMidseasonDevelopment(gs, 1);
+    assert.ok(eliteTeam.roster.every(p => p.lastOffseasonDelta),
+      'window development must stash deltas for the roster indicators');
+  });
+});
+
+/* ─────────────── Tier-1 map anchor floor ─────────────── */
+
+test('tier-1 map ratings anchor at 75+, tier 2 keeps its own level', () => {
+  const gs = newGame();
+  const t1avgs = [], t2avgs = [];
+  for (const rk of Object.keys(gs.regions)) {
+    for (const t of gs.regions[rk].teams) {
+      const v = Object.values(t.mapRatings).map(r => (r.attack + r.defense) / 2);
+      t1avgs.push(v.reduce((a, b) => a + b, 0) / v.length);
+    }
+    for (const t of gs.regions[rk].tier2.teams) {
+      const v = Object.values(t.mapRatings).map(r => (r.attack + r.defense) / 2);
+      t2avgs.push(v.reduce((a, b) => a + b, 0) / v.length);
+    }
+  }
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  assert.ok(mean(t1avgs) >= 73,
+    `tier-1 league map comfort should center near the 75 anchor, got ${mean(t1avgs).toFixed(1)}`);
+  assert.ok(Math.min(...t1avgs) >= 66,
+    `no tier-1 team should sit with amateur map comfort, worst ${Math.min(...t1avgs).toFixed(1)}`);
+  assert.ok(mean(t2avgs) < mean(t1avgs) - 5,
+    'tier 2 map comfort must stay clearly below tier 1');
+});
+
+/* ─────────────── God Mode survives a refresh ─────────────── */
+
+test('godMode round-trips through the save', () => {
+  const gs = newGame();
+  gs.godMode = true;
+  assert.equal(roundTrip(gs).godMode, true, 'enabled toggle must survive');
+  gs.godMode = false;
+  assert.equal(roundTrip(gs).godMode, false, 'disabled state must survive too');
 });

@@ -120,6 +120,20 @@ function clampRating(v) {
 }
 
 /**
+ * Tier-1 map ratings anchor no lower than this. A professional tier-1
+ * side does not show up to a stage with amateur map comfort even when
+ * its roster is at the 70 floor — and anchoring at the raw overall left
+ * teams whose squads were upgraded after generation carrying map
+ * ratings from the broken pre-upgrade roster all season.
+ */
+export const TIER1_MAP_ANCHOR_FLOOR = 75;
+
+/** The anchor a tier-1 team's map ratings generate and drift toward. */
+export function tier1MapAnchor(overall) {
+  return Math.max(TIER1_MAP_ANCHOR_FLOOR, overall || 0);
+}
+
+/**
  * Build a full { mapId: { attack, defense } } table for one team.
  * `anchor` is the team's overall rating (roughly 60-90).
  */

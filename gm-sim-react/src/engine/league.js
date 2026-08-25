@@ -13,7 +13,7 @@ import { REGIONS, REGION_KEYS } from '../data/regions.js';
 import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
-import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap, computeTeamSalary, getSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
@@ -114,13 +114,6 @@ export function initGame(humanRegion, humanTeamIndex) {
       // Unassigned players take no penalty — see roleFit's 'none'.
     }
 
-    // Per-map Attack/Defense strengths. Generated here (not in the Team
-    // constructor) because the anchor is team overall, which only exists
-    // once the roster has been generated above.
-    for (const team of teams) {
-      team.mapRatings = generateMapRatings(team.overallRating || 70);
-    }
-
     // Free agents.
     //
     // Drawn on a lower curve than rostered players, because that is what
@@ -179,6 +172,15 @@ export function initGame(humanRegion, humanTeamIndex) {
       if (team.isHuman) continue;
       team.strategy.comp = team.bestCompFor(COMPOSITIONS) || team.strategy.comp;
       team.autoAssignStrategy();
+    }
+  }
+
+  // Per-map Attack/Defense strengths — generated AFTER the floor pass so
+  // the anchor reflects the roster the team actually fields, and never
+  // below the tier-1 map floor.
+  for (const regionKey of REGION_KEYS) {
+    for (const team of regions[regionKey].teams) {
+      team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
     }
   }
 

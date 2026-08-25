@@ -41,7 +41,7 @@
 import { Team } from '../classes/Team.js';
 import { Player, registerTag } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { inferRoleFromStats } from '../data/roles.js';
@@ -177,6 +177,9 @@ function serialize(gameState) {
     settings: gameState.settings,
     humanRegion: gameState.humanRegion,
     humanTeamIndex: gameState.humanTeamIndex,
+    // The toggle promises it survives refresh; the explicit field list
+    // was silently dropping it.
+    godMode: gameState.godMode === true,
   };
 
   return JSON.stringify(ordered, (key, value) => {
@@ -361,7 +364,7 @@ function deserialize(json) {
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
-        team.mapRatings = generateMapRatings(team.overallRating || 70);
+        team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
       }
     }
   }
