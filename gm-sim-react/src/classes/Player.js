@@ -93,6 +93,16 @@ export function resetTagPool() {
   usedTags.clear();
 }
 
+/**
+ * Re-register a tag on save load. The uniqueness pool is module state
+ * that only generation fills — without reseeding it from the loaded
+ * players, every rookie or backfill generated after a refresh could
+ * duplicate a living player's tag (measured: 19 of 20 did).
+ */
+export function registerTag(tag) {
+  if (tag) usedTags.add(tag);
+}
+
 // ── Neutral overall weighting (no role dependency) ──
 //
 // Slightly favors aim as the "foundational" skill while keeping all 5

@@ -20,7 +20,7 @@
 
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
-import { runTier2Stage } from './tier2.js';
+import { runTier2Stage, runTier2Offseason } from './tier2.js';
 import { Team } from '../classes/Team.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
@@ -386,12 +386,14 @@ export function completeCurrentInternational(gameState) {
     runnerUp: results.bracketPlacements.find(p => p.placement === 2)
       ? teamCard(results.bracketPlacements.find(p => p.placement === 2).team)
       : null,
-    // Full state refs for History tab rendering. Same rationale as stage
-    // brackets: gameState.international is nulled out but the underlying
-    // swiss/selection/bracket objects aren't mutated, so these stay valid.
-    swiss: intl.swiss,
+    // History snapshots, CLONED with per-map playerStats dropped — the
+    // same treatment stage brackets get. Archiving these raw grew the
+    // save ~1 MB per season and crossed the localStorage quota around
+    // season 3, at which point saving silently stopped. History renders
+    // read-only match cards and never reads the per-map stat tables.
+    swiss: cloneWithoutPlayerStats(intl.swiss),
     selectionShow: intl.selectionShow,
-    bracket: intl.bracket,
+    bracket: cloneWithoutPlayerStats(intl.bracket),
   };
   gameState.season.history.push(intlEntry);
 
@@ -462,11 +464,9 @@ export function completeCurrentWorlds(gameState) {
     champion: championEntry ? teamCard(championEntry.team) : null,
     runnerUp: runnerUpEntry ? teamCard(runnerUpEntry.team) : null,
     pointsAwarded: {}, // no circuit points from Worlds
-    // Full state refs for History tab rendering. Same rationale as stage
-    // and international: gameState.worlds gets nulled out below but the
-    // underlying bracket/playoffSelection objects aren't mutated, so
-    // these refs stay valid indefinitely.
-    bracket: worlds.bracket,
+    // Cloned without per-map playerStats — see the international entry
+    // for why; Worlds brackets were the other unbounded archive term.
+    bracket: cloneWithoutPlayerStats(worlds.bracket),
     playoffSelection: worlds.playoffSelection,
   };
   gameState.season.history.push(worldsEntry);
@@ -1644,6 +1644,17 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
     }
     region.freeAgents = faSurvivors;
   }
+
+  // ── 4.5. Tier-2 lifecycle ──
+  // The second division ages, develops, retires, and re-signs on the
+  // same offseason clock as everyone else. It used to be exempt from all
+  // four passes, so a 17-year-old standout was still 17 with identical
+  // ratings in season four and 29-year-old tier-2 vets never retired.
+  runTier2Offseason(gameState, REGION_KEYS, {
+    developPlayer,
+    shouldRetire,
+    completedYear,
+  });
 
   // ── 5. AI team backfill ──
   // Any non-human team below ROSTER_MIN auto-signs free agents until it

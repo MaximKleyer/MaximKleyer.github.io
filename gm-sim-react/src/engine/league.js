@@ -445,6 +445,13 @@ export function clearFreeAgentMarket(gameState) {
       const ranked = [...region.freeAgents].sort((a, b) => b.overall - a.overall);
 
       for (const fa of ranked) {
+        // The elite tail exists so the board keeps a marquee name or two
+        // worth chasing — but this pass used to sign every one of them
+        // (435 generated across 20 measured saves, 0 survived). A player
+        // that good holds out for the offer a manager makes, not the
+        // filler deal the preseason market clears at.
+        if (fa.overall > FREE_AGENT_CEILING) continue;
+
         // The club this player improves most, that can also afford them.
         let best = null;
         for (const team of region.teams) {

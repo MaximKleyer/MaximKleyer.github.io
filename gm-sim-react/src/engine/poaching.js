@@ -146,6 +146,12 @@ export function backfillTier2Team(gameState, regionKey, team, departed) {
 
   const replacement = generatePlayer({
     regionKey,
+    // Same roles as whoever left: tier-2 squads guarantee one of each
+    // role, so three of five players are sole holders — a random-role
+    // replacement broke the club's coverage about half the time and
+    // left it stuck off-role until a matching FA appeared.
+    primaryRole: departed.primaryRole,
+    secondaryRole: departed.secondaryRole ?? null,
     ageOverride: 17 + Math.floor(Math.random() * 6),
     ratingFloor: Math.max(35, floor),
     ratingCeiling: Math.max(38, ceiling),
@@ -183,15 +189,21 @@ export function executePoach(gameState, team, player, { force = false } = {}) {
   }
 
   const evaluation = evaluatePoach(gameState, team, player);
+  if (!evaluation.allowed) {
+    // The UI checks first, but this function must hold its own invariant:
+    // a refused poach leaves EVERY roster untouched. Splicing before this
+    // check deleted the player from the league when the destination was
+    // full.
+    return { ok: false, refused: false, player, message: evaluation.reason };
+  }
 
-  // Move the player.
-  if (team.roster.some(p => p === player || p.id === player.id)) {
-    return { ok: false, refused: false, player, message: `${player.tag} is already on your roster.` };
+  // Move the player — destination first, so a refusal can't strand them.
+  if (!team.addPlayer(player)) {
+    return { ok: false, refused: false, player, message: `${player.tag} could not join the roster.` };
   }
   source.team.roster.splice(source.team.roster.indexOf(player), 1);
   source.team.validateStrategy();
-  team.addPlayer(player);            // arrives as a sub; promote deliberately
-  team.validateStrategy();
+  team.validateStrategy();           // arrives as a sub; promote deliberately
 
   // New room, new expectations.
   adjustMorale(player, POACH_RESET_MORALE - (player.morale ?? 65), 'poached_to_tier1');

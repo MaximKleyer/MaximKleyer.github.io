@@ -262,7 +262,13 @@ export default function ResignWindow({
             {expiring.map(player => {
               const state = getOfferState(player);
               const totalCommit = state.salary * 1000 * state.years;
-              const exceedsCap = (state.salary * 1000) > capRemaining;
+              // A re-sign REPLACES the expiring salary, which is still
+              // on the books — so the offer is capped at headroom PLUS
+              // the player's current money, exactly the formula the
+              // engine applies. Gating on raw headroom blocked salary-
+              // neutral renewals near the cap and forced stars to walk.
+              const exceedsCap =
+                (state.salary * 1000) - (player.contract?.salary || 0) > capRemaining;
               return (
                 <div
                   key={player.id}

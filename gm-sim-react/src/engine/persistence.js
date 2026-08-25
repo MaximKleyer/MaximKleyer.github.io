@@ -39,7 +39,7 @@
  */
 
 import { Team } from '../classes/Team.js';
-import { Player } from '../classes/Player.js';
+import { Player, registerTag } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
 import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
@@ -80,12 +80,17 @@ export function clearSave() {
  * Safe to call on every state change — localStorage writes are fast.
  */
 export function saveGameState(gameState) {
-  if (!gameState) return;
+  if (!gameState) return false;
   try {
     const json = serialize(gameState);
     localStorage.setItem(SAVE_KEY, json);
+    return true;
   } catch (e) {
+    // Usually QuotaExceededError. The caller must surface this — playing
+    // on against a stale save and discovering the loss at tab close is
+    // strictly worse than being told now.
     console.error('Save failed:', e);
+    return false;
   }
 }
 
@@ -300,6 +305,17 @@ function deserialize(json) {
   resolveMatchRefs(data);
 
   walkAndReplace(data, teamMap, new Set());
+
+  // Reseed the tag-uniqueness pool from every living player. Same
+  // mirror-resync pattern as syncCurrentPool/syncSalaryCap below — and
+  // it must run before any migration that generates players.
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+    for (const t of region.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const t of region.tier2?.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const pl of region.freeAgents || []) registerTag(pl.tag);
+  }
 
   // Pass 2.5: saves written before match identity existed already contain
   // detached copies. Re-link them structurally so an old mid-series save

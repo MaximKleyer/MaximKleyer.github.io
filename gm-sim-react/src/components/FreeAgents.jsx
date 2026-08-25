@@ -49,6 +49,7 @@ const GAP_HINT = {
 
 export default function FreeAgents({
   freeAgents, canSign, onSign,
+  windowClosed = false,
   godMode = false, onEditPlayer,
   midseasonInfo = null,
   capRemaining = null, // Phase 7b: how much cap the human team has left
@@ -149,6 +150,16 @@ export default function FreeAgents({
       <h2>Free Agents</h2>
       <p className="muted">{sorted.length} available players</p>
 
+      {windowClosed && (
+        <p style={{
+          margin: '0 0 14px', fontSize: '0.8em', padding: '8px 12px', borderRadius: 5,
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',
+          opacity: 0.75,
+        }}>
+          The signing window is closed. Free agents can be signed during the preseason,
+          the mid-season windows between stages, and the offseason.
+        </p>
+      )}
       {midseasonInfo && (
         <div style={{
           marginBottom: 12,
@@ -270,7 +281,10 @@ export default function FreeAgents({
                   disabled={!canSign}
                   onClick={() => startNegotiation(player)}
                 >
-                  {canSign ? 'Sign' : 'Full'}
+                  {canSign ? 'Sign'
+                    : windowClosed ? 'Closed'
+                    : midseasonInfo && midseasonInfo.used >= midseasonInfo.max ? 'Cap'
+                    : 'Full'}
                 </button>
               </td>
             </tr>
