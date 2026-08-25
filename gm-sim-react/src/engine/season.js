@@ -19,7 +19,7 @@
  */
 
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
+import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings, tier1MapAnchor } from '../data/maps.js';
 import { runTier2Stage, runTier2Offseason } from './tier2.js';
 import { Team } from '../classes/Team.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
@@ -561,6 +561,40 @@ function teamCard(team) {
  * Phases 3 and 4 will intercept the placeholder branches and implement
  * real Swiss + bracket handling.
  */
+/**
+ * Development happens three times a season — entering each mid-season
+ * window (scored on the stage just completed, via its stageStats
+ * snapshot) and in the offseason (scored on stage 3 plus internationals,
+ * the stats still live on the player). Each event runs at a third scale
+ * with probabilistic rounding, so total yearly movement matches the old
+ * single offseason pass in expectation.
+ *
+ * This replaces a system where the whole year's development was scored
+ * on player.stats at offseason time — which, because stats reset at
+ * every stage rollover, meant a player who dominated stages 1-2 and sat
+ * out stage 3 developed as if he never played.
+ */
+export const DEV_WINDOW_SCALE = 1 / 3;
+
+export function runMidseasonDevelopment(gameState, completedStageNum) {
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        developPlayer(player, {
+          scale: DEV_WINDOW_SCALE,
+          stats: player.stageStats?.[completedStageNum] || null,
+        });
+      }
+    }
+    // Free agents played nothing this stage; they still move on the age
+    // curve alone, same as the offseason treats them.
+    for (const player of region.freeAgents) {
+      developPlayer(player, { scale: DEV_WINDOW_SCALE });
+    }
+  }
+}
+
 export function beginNextSlot(gameState) {
   const s = gameState.season;
 
@@ -592,6 +626,10 @@ export function beginNextSlot(gameState) {
       rolloverRegionsForNewStage(gameState);
       const isMidseasonStage = slot.stageNumber === 2 || slot.stageNumber === 3;
       if (isMidseasonStage) {
+        // Players grow between stages, scored on the stage they just
+        // played — BEFORE the signing passes, so clubs evaluate the
+        // market on developed ratings.
+        runMidseasonDevelopment(gameState, slot.stageNumber - 1);
         // Run AI mid-season signings ONCE on entry to the FA window. AI
         // teams roll under their archetype-specific dice (15/35/50). Cap
         // is enforced inside runMidseasonAISignings — teams already at
@@ -841,6 +879,17 @@ function randInt(min, max) {
  *   25–26: declining
  *   27–29: steep decline (forced retirement at 30 handles the tail)
  */
+/**
+ * Round toward the nearest integers with the fraction as probability, so
+ * expectation is preserved: 0.67 → +1 two-thirds of the time, -1.33 → -1
+ * two-thirds and -2 one-third. Plain rounding would bias every scaled
+ * development roll toward zero.
+ */
+function probRound(x) {
+  const lo = Math.floor(x);
+  return lo + (Math.random() < x - lo ? 1 : 0);
+}
+
 function ageDelta(age) {
   if (age <= 20) return randInt(-1, 4);
   if (age <= 22) return randInt(-2, 3);
@@ -860,8 +909,8 @@ function ageDelta(age) {
  * Tier 1 = average season (K/D ≥ 0.9 AND ACS ≥ 170)
  * Tier 0 = bad season (anything worse)
  */
-function performanceTier(player) {
-  const s = player.stats;
+function performanceTier(player, statsOverride = null) {
+  const s = statsOverride || player.stats;
   if (!s || s.maps < 3) return null;
   const kd = s.kills / Math.max(1, s.deaths);
   const acs = s.acs / s.maps;
@@ -903,7 +952,7 @@ function performanceDelta(tier) {
  * Rookies entering via generatePlayer don't get a delta stashed (no
  * previous state to diff against).
  */
-function developPlayer(player) {
+export function developPlayer(player, { scale = 1, stats = null } = {}) {
   // Snapshot pre-development state for the delta
   const oldRatings = { ...player.ratings };
   const oldOverall = player.overall;
@@ -911,7 +960,7 @@ function developPlayer(player) {
   // Compute performance tier ONCE per player (same tier drives all 5
   // stat perf modifiers — but each stat still rolls its own random value
   // within the tier's range, so you can gain aim and not gain positioning)
-  const tier = performanceTier(player);
+  const tier = performanceTier(player, stats);
 
   // Apply per-stat deltas
   const newRatings = {};
@@ -919,7 +968,12 @@ function developPlayer(player) {
     const age = player.age; // pre-aging, the age they just played at
     const base = ageDelta(age);
     const perf = performanceDelta(tier);
-    const newVal = Math.max(1, Math.min(99, (oldRatings[stat] || 0) + base + perf));
+    // `scale` splits a year's development across the season's windows.
+    // Probabilistic rounding keeps the EXPECTED yearly movement equal to
+    // the unscaled roll — a third of +2 is +0.67, so it lands +1 about
+    // two-thirds of the time rather than always truncating to 0.
+    const scaled = probRound((base + perf) * scale);
+    const newVal = Math.max(1, Math.min(99, (oldRatings[stat] || 0) + scaled));
     newRatings[stat] = newVal;
   }
 
@@ -1396,13 +1450,13 @@ export function beginNewSeason(gameState) {
     const region = gameState.regions[regionKey];
     for (const team of region.teams) {
       for (const player of team.roster) {
-        developPlayer(player);
+        developPlayer(player, { scale: DEV_WINDOW_SCALE });
         offseasonSummary.developedCount++;
         allMovers.push(player);
       }
     }
     for (const player of region.freeAgents) {
-      developPlayer(player);
+      developPlayer(player, { scale: DEV_WINDOW_SCALE });
       offseasonSummary.developedCount++;
       allMovers.push(player);
     }
@@ -1584,7 +1638,7 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
     // toward the team's current strength, so the map meta shifts across
     // a career instead of a team owning the same picks forever.
     for (const team of region.teams) {
-      team.mapRatings = driftMapRatings(team.mapRatings, team.overallRating || 70);
+      team.mapRatings = driftMapRatings(team.mapRatings, tier1MapAnchor(team.overallRating));
     }
 
     // Roster aging + retirement
