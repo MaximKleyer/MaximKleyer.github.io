@@ -365,7 +365,15 @@ function deserialize(json) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
         team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
+        continue;
       }
+      // Saves written before the 75 anchor carry ratings centred on the
+      // old anchor (raw team overall). Re-centre them ONCE: shift every
+      // side by the same amount, so the team's relative spread — its
+      // standout maps, its problem maps, everything training earned —
+      // is preserved exactly. Only ever shifts UP (a mean above target
+      // is left alone), and the 2-point tolerance makes reloads no-ops.
+      liftMapRatingsToAnchor(team);
     }
   }
   // Legacy status migration: very old saves used 'complete' for end-of-season,
@@ -498,6 +506,24 @@ function walkAndReplace(node, teamMap, visited) {
         walkAndReplace(v, teamMap, visited);
       }
     }
+  }
+}
+
+/**
+ * One-time upward re-centre of a tier-1 team's map ratings onto the
+ * current anchor. See the migration site above for the rationale.
+ */
+function liftMapRatingsToAnchor(team) {
+  const entries = Object.values(team.mapRatings);
+  if (entries.length === 0) return;
+  const mean = entries.reduce((s, r) => s + ((r.attack ?? 70) + (r.defense ?? 70)) / 2, 0)
+    / entries.length;
+  const target = tier1MapAnchor(team.overallRating);
+  const shift = target - mean;
+  if (shift <= 2) return;   // already there (or above) — leave alone
+  for (const r of entries) {
+    r.attack = Math.max(1, Math.min(99, Math.round((r.attack ?? 70) + shift)));
+    r.defense = Math.max(1, Math.min(99, Math.round((r.defense ?? 70) + shift)));
   }
 }
 

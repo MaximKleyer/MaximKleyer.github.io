@@ -186,7 +186,10 @@ describe('round trip preserves state', () => {
     team.record = { wins: 7, losses: 3, mapWins: 15, mapLosses: 9, roundWins: 200, roundLosses: 180 };
     team.group = 'B';
     team.deadCapHits = [{ year: 2026, amount: 250000, fromPlayerTag: 'cut1' }];
-    team.mapRatings.ascent = { attack: 91, defense: 44 };
+    // High on both sides: a low value can drag the team's mean under the
+    // 75 anchor and legitimately trigger the load-time lift, which is
+    // tested separately — this test is about fields surviving verbatim.
+    team.mapRatings.ascent = { attack: 91, defense: 84 };
     team.strategy = { ...team.strategy, comp: team.strategy.comp, iglId: team.roster[1].id };
 
     const loaded = humanTeam(roundTrip(gs));
@@ -196,7 +199,7 @@ describe('round trip preserves state', () => {
     assert.equal(loaded.group, 'B');
     assert.equal(loaded.deadCapHits.length, 1);
     assert.equal(loaded.deadCapHits[0].amount, 250000);
-    assert.deepEqual(loaded.mapRatings.ascent, { attack: 91, defense: 44 });
+    assert.deepEqual(loaded.mapRatings.ascent, { attack: 91, defense: 84 });
     assert.equal(loaded.strategy.iglId, team.roster[1].id);
   });
 
@@ -538,5 +541,63 @@ describe('match identity across save/load', () => {
     const canonical = reloaded.regions[rk].bracket.matches[0];
     assert.equal(reloaded.season.activeSeries[0].bracketMatchRef, canonical);
     assert.equal(reloaded.season.activeSeries[0].matchRef, canonical);
+  });
+});
+
+/* ─────────────── Map anchor migration for pre-75 saves ─────────────── */
+describe('map ratings re-centre onto the 75 anchor on load', () => {
+  test('an old save is lifted, spread and best-map order intact', () => {
+    const gs = newGame();
+    const team = gs.regions[gs.humanRegion].teams.find(t => !t.isHuman);
+    // Simulate a pre-anchor save: ratings centred well below 75.
+    for (const r of Object.values(team.mapRatings)) {
+      r.attack -= 10;
+      r.defense -= 10;
+    }
+    const orderBefore = Object.entries(team.mapRatings)
+      .sort((a, b) => (b[1].attack + b[1].defense) - (a[1].attack + a[1].defense))
+      .map(([id]) => id);
+    const spreadBefore = Math.max(...Object.values(team.mapRatings).map(r => r.attack))
+      - Math.min(...Object.values(team.mapRatings).map(r => r.attack));
+
+    const loaded = roundTrip(gs);
+    const migrated = loaded.regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
+    const entries = Object.values(migrated.mapRatings);
+    const mean = entries.reduce((s, r) => s + (r.attack + r.defense) / 2, 0) / entries.length;
+
+    assert.ok(mean >= 73, `mean should land near the 75 anchor, got ${mean.toFixed(1)}`);
+    const orderAfter = Object.entries(migrated.mapRatings)
+      .sort((a, b) => (b[1].attack + b[1].defense) - (a[1].attack + a[1].defense))
+      .map(([id]) => id);
+    assert.deepEqual(orderAfter, orderBefore, 'best map must stay the best map');
+    const spreadAfter = Math.max(...entries.map(r => r.attack))
+      - Math.min(...entries.map(r => r.attack));
+    assert.ok(Math.abs(spreadAfter - spreadBefore) <= 2,
+      'the standout/problem-map spread must survive the shift');
+  });
+
+  test('the migration is one-time and never pulls a strong team down', () => {
+    const gs = newGame();
+    const team = gs.regions[gs.humanRegion].teams.find(t => !t.isHuman);
+    // A trained-up team sitting ABOVE its anchor must be left alone.
+    for (const r of Object.values(team.mapRatings)) { r.attack += 8; r.defense += 8; }
+    const snapshot = JSON.stringify(team.mapRatings);
+
+    let loaded = roundTrip(gs);
+    let migrated = loaded.regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
+    assert.equal(JSON.stringify(migrated.mapRatings), snapshot,
+      'a team above the anchor must not be shifted');
+
+    // And a second load after a lift shifts nothing further.
+    for (const r of Object.values(migrated.mapRatings)) { r.attack -= 20; r.defense -= 20; }
+    loaded = roundTrip(loaded);
+    const once = loaded.regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
+    const meanOnce = Object.values(once.mapRatings)
+      .reduce((s, r) => s + (r.attack + r.defense) / 2, 0) / Object.keys(once.mapRatings).length;
+    const again = roundTrip(loaded).regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
+    const meanAgain = Object.values(again.mapRatings)
+      .reduce((s, r) => s + (r.attack + r.defense) / 2, 0) / Object.keys(again.mapRatings).length;
+    assert.ok(Math.abs(meanAgain - meanOnce) <= 2.5,
+      `reloads must be no-ops, drifted ${meanOnce.toFixed(1)} -> ${meanAgain.toFixed(1)}`);
   });
 });
