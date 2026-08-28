@@ -17,6 +17,7 @@
 
 import { TAGS, getNamePool } from '../data/names.js';
 import { randomNationalityForRegion } from '../data/nationalities.js';
+import { rollRole, ROLE_IQ_BIAS, FLEX, FLEX_RATING_CEILING } from '../data/roles.js';
 
 // ── Helpers ──
 
@@ -92,6 +93,16 @@ export function resetTagPool() {
   usedTags.clear();
 }
 
+/**
+ * Re-register a tag on save load. The uniqueness pool is module state
+ * that only generation fills — without reseeding it from the loaded
+ * players, every rookie or backfill generated after a refresh could
+ * duplicate a living player's tag (measured: 19 of 20 did).
+ */
+export function registerTag(tag) {
+  if (tag) usedTags.add(tag);
+}
+
 // ── Neutral overall weighting (no role dependency) ──
 //
 // Slightly favors aim as the "foundational" skill while keeping all 5
@@ -115,7 +126,7 @@ function calcNeutralOverall(ratings) {
 // ── Player class ──
 
 export class Player {
-  constructor(name, tag, ratings, { age, nationality } = {}) {
+  constructor(name, tag, ratings, { age, nationality, primaryRole, secondaryRole } = {}) {
     this.id = makeId();
     this.name = name;
     this.tag = tag;
@@ -123,6 +134,13 @@ export class Player {
     this.overall = calcNeutralOverall(ratings);
     this.age = age ?? 20;
     this.nationality = nationality || 'US';
+
+    // ── Role ──
+    // Where this player actually belongs. Slotting them anywhere else
+    // costs rating — see data/roles.js. `flex` covers every role at a
+    // token penalty and has no secondary.
+    this.primaryRole = primaryRole || 'duelist';
+    this.secondaryRole = secondaryRole ?? null;
 
     this.stats = {
       kills: 0,
@@ -185,6 +203,10 @@ export class Player {
  *   regionKey     — used to pick a region-appropriate nationality
  *   ageOverride   — explicit age (for rookies, set to 17 or 18)
  *   ratingFloor   — minimum rating on all 5 stats
+ *   ratingCeiling — maximum rating on all 5 stats. Tier 2 uses this to
+ *                   generate genuinely weaker players rather than merely
+ *                   raising the floor, which would only compress the
+ *                   distribution upward.
  *
  * No `role` parameter — players are role-agnostic.
  *
@@ -208,14 +230,31 @@ export function generatePlayer(options = {}) {
   const lastName = randomFrom(pool.last);
   const tag = getUniqueTag();
 
+  // Role first — it constrains the ratings that follow.
+  const { primaryRole, secondaryRole } = options.primaryRole
+    ? { primaryRole: options.primaryRole, secondaryRole: options.secondaryRole ?? null }
+    : rollRole();
+
   const floor = options.ratingFloor ?? 45;
+  // Flex players are deliberately generated weak: an 80-rated flex would
+  // be strictly better than an 80-rated specialist everywhere, so flex is
+  // a development project rather than a jackpot.
+  const requested = options.ratingCeiling ?? 99;
+  const ceiling = primaryRole === FLEX
+    ? Math.max(floor + 1, Math.min(requested, FLEX_RATING_CEILING))
+    : Math.max(floor + 1, requested);
+
   const ratings = {
-    aim:         randRating(floor, 99),
-    positioning: randRating(floor, 99),
-    utility:     randRating(floor, 99),
-    gamesense:   randRating(floor, 99),
-    clutch:      randRating(floor, 99),
+    aim:         randRating(floor, ceiling),
+    positioning: randRating(floor, ceiling),
+    utility:     randRating(floor, ceiling),
+    gamesense:   randRating(floor, ceiling),
+    clutch:      randRating(floor, ceiling),
   };
+
+  // Game sense skews by role — initiators call most, duelists least.
+  const iqBias = ROLE_IQ_BIAS[primaryRole] || 0;
+  ratings.gamesense = Math.max(1, Math.min(99, ratings.gamesense + iqBias));
 
   const age = options.ageOverride ?? randAge();
 
@@ -223,6 +262,6 @@ export function generatePlayer(options = {}) {
     `${firstName} ${lastName}`,
     tag,
     ratings,
-    { age, nationality },
+    { age, nationality, primaryRole, secondaryRole },
   );
 }

@@ -39,9 +39,12 @@
  */
 
 import { Team } from '../classes/Team.js';
-import { Player } from '../classes/Player.js';
+import { Player, registerTag } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, generateMapRatings, syncCurrentPool } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
+import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
+import { initTier2Region } from './tier2.js';
+import { inferRoleFromStats } from '../data/roles.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -77,12 +80,17 @@ export function clearSave() {
  * Safe to call on every state change — localStorage writes are fast.
  */
 export function saveGameState(gameState) {
-  if (!gameState) return;
+  if (!gameState) return false;
   try {
     const json = serialize(gameState);
     localStorage.setItem(SAVE_KEY, json);
+    return true;
   } catch (e) {
+    // Usually QuotaExceededError. The caller must surface this — playing
+    // on against a stale save and discovering the loss at tab close is
+    // strictly worse than being told now.
     console.error('Save failed:', e);
+    return false;
   }
 }
 
@@ -115,13 +123,42 @@ function serialize(gameState) {
   const teamIdMap = new Map();
   for (const rk of REGION_KEYS) {
     const region = gameState.regions?.[rk];
-    if (!region?.teams) continue;
-    for (const t of region.teams) {
-      teamIdMap.set(t, { region: rk, abbr: t.abbr });
+    if (!region) continue;
+    for (const t of region.teams || []) {
+      teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 1 });
+    }
+    // Tier-2 teams are canonical too. Without them here they would fall
+    // through the replacer as ordinary objects, deserialize as plain data
+    // with no class identity, and lose every getter the sim relies on.
+    for (const t of region.tier2?.teams || []) {
+      teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
+    }
+  }
+
+  // Match identity map. In-flight series entries hold DIRECT references
+  // to match objects that also live in their canonical containers
+  // (region.schedule, region.bracket, international, worlds). Without
+  // identity, JSON.stringify writes the shared object twice and a reload
+  // resurrects two independent copies — the finished series then writes
+  // its result to the orphan, the canonical match still reads unplayed,
+  // and the stage re-seeds and REPLAYS the series with stats and records
+  // double-counted. Same disease the team __ref markers cure, so same
+  // cure: first visit serializes the body plus a __matchId, every later
+  // visit emits a { __ref:'match' } marker the loader resolves back to
+  // one object.
+  const matchIdMap = new Map();
+  let nextMatchId = 1;
+  for (const entry of gameState.season?.activeSeries || []) {
+    for (const key of ['matchRef', 'bracketMatchRef', 'intlMatchRef']) {
+      const m = entry[key];
+      if (m && typeof m === 'object' && !matchIdMap.has(m)) {
+        matchIdMap.set(m, nextMatchId++);
+      }
     }
   }
 
   const seen = new WeakSet();
+  const seenMatches = new WeakSet();
 
   // Force key iteration order: regions FIRST so teams get seen before
   // any reference in season/international/worlds/archive.
@@ -137,16 +174,31 @@ function serialize(gameState) {
     archive: gameState.archive,
     seasonNumber: gameState.seasonNumber,
     mapPool: gameState.mapPool,
+    settings: gameState.settings,
     humanRegion: gameState.humanRegion,
     humanTeamIndex: gameState.humanTeamIndex,
+    // The toggle promises it survives refresh; the explicit field list
+    // was silently dropping it.
+    godMode: gameState.godMode === true,
   };
 
   return JSON.stringify(ordered, (key, value) => {
+    // Shared match objects — see matchIdMap above.
+    if (value && typeof value === 'object' && matchIdMap.has(value)) {
+      const id = matchIdMap.get(value);
+      if (seenMatches.has(value)) {
+        return { __ref: 'match', id };
+      }
+      seenMatches.add(value);
+      // Shallow copy so the id rides along without mutating live state.
+      return { ...value, __matchId: id };
+    }
+
     // Team detection via the identity map
     if (value && typeof value === 'object' && teamIdMap.has(value)) {
       const ident = teamIdMap.get(value);
       if (seen.has(value)) {
-        return { __ref: 'team', region: ident.region, abbr: ident.abbr };
+        return { __ref: 'team', region: ident.region, abbr: ident.abbr, tier: ident.tier };
       }
       seen.add(value);
       // First visit → serialize full team data. Note: we cannot return
@@ -157,6 +209,8 @@ function serialize(gameState) {
       return {
         __type: 'team',
         region: ident.region,
+        tier: ident.tier,
+        parentAbbr: value.parentAbbr,
         name: value.name,
         abbr: value.abbr,
         color: value.color,
@@ -169,6 +223,12 @@ function serialize(gameState) {
         deadCapHits: value.deadCapHits,
         // Per-map Attack/Defense strengths.
         mapRatings: value.mapRatings,
+        // Signing-window budgets. These are consumed across MULTIPLE ticks
+        // (the mid-season window spans stages; reactive offseason signings
+        // fire when the user releases someone later), so losing them on
+        // reload would silently refund a team's signing allowance.
+        _midseasonMoves: value._midseasonMoves,
+        _offseasonMoves: value._offseasonMoves,
         roster: value.roster,
       };
     }
@@ -197,6 +257,12 @@ function serialize(gameState) {
         morale: value.morale,
         moraleHistory: value.moraleHistory,
         contract: value.contract,
+        // Drives the Roster delta indicators after an offseason.
+        lastOffseasonDelta: value.lastOffseasonDelta,
+        // Where this player belongs. Slotting them elsewhere costs
+        // rating, so losing this would silently change performance.
+        primaryRole: value.primaryRole,
+        secondaryRole: value.secondaryRole,
       };
     }
 
@@ -218,7 +284,11 @@ function deserialize(json) {
     if (!region) continue;
 
     if (Array.isArray(region.teams)) {
-      region.teams = region.teams.map(td => rehydrateTeam(td, rk, teamMap));
+      region.teams = region.teams.map(td => rehydrateTeam(td, rk, teamMap, 1));
+    }
+
+    if (Array.isArray(region.tier2?.teams)) {
+      region.tier2.teams = region.tier2.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
     }
 
     if (Array.isArray(region.freeAgents)) {
@@ -231,7 +301,29 @@ function deserialize(json) {
   // may be reached from outside the canonical roster arrays (e.g. inside
   // schedule match result objects — though currently there shouldn't be
   // any, this is defensive).
+  // Pass 1.5: restore match identity — collect __matchId bodies, then
+  // point every { __ref:'match' } marker back at the one real object.
+  // Must run before the team walk so the shared body's team refs are
+  // resolved exactly once.
+  resolveMatchRefs(data);
+
   walkAndReplace(data, teamMap, new Set());
+
+  // Reseed the tag-uniqueness pool from every living player. Same
+  // mirror-resync pattern as syncCurrentPool/syncSalaryCap below — and
+  // it must run before any migration that generates players.
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+    for (const t of region.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const t of region.tier2?.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const pl of region.freeAgents || []) registerTag(pl.tag);
+  }
+
+  // Pass 2.5: saves written before match identity existed already contain
+  // detached copies. Re-link them structurally so an old mid-series save
+  // doesn't replay its bracket games. No-op for new saves.
+  relinkActiveSeriesRefs(data);
 
   // Pass 3: schema migration. Older saves predate Phase 6c's seasonNumber
   // and archive fields; if we don't fill them in here, the first call to
@@ -251,11 +343,37 @@ function deserialize(json) {
   }
   // Keep the batch-sim mirror in step with the pool we just loaded.
   syncCurrentPool(data);
+
+  // Settings. Saves predating them get the defaults.
+  if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+  if (typeof data.settings.salaryCap !== 'number' || data.settings.salaryCap <= 0) {
+    data.settings.salaryCap = DEFAULT_SALARY_CAP;
+  }
+  syncSalaryCap(data);
+
+  // Saves written before tier 2 existed have no second division. Generate
+  // one rather than leaving the region permanently empty — without this
+  // an existing save can never see the tier-2 scene at all.
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+    if (!region.tier2?.teams?.length) {
+      region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+    }
+  }
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
-        team.mapRatings = generateMapRatings(team.overallRating || 70);
+        team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
+        continue;
       }
+      // Saves written before the 75 anchor carry ratings centred on the
+      // old anchor (raw team overall). Re-centre them ONCE: shift every
+      // side by the same amount, so the team's relative spread — its
+      // standout maps, its problem maps, everything training earned —
+      // is preserved exactly. Only ever shifts UP (a mean above target
+      // is left alone), and the 2-point tolerance makes reloads no-ops.
+      liftMapRatingsToAnchor(team);
     }
   }
   // Legacy status migration: very old saves used 'complete' for end-of-season,
@@ -277,7 +395,7 @@ function deserialize(json) {
  * Rehydrate a serialized team data object into a Team class instance.
  * The roster is rehydrated recursively (players into Player instances).
  */
-function rehydrateTeam(td, regionKey, teamMap) {
+function rehydrateTeam(td, regionKey, teamMap, tier = 1) {
   if (td instanceof Team) return td; // already rehydrated (defensive)
   const team = new Team(td.name, td.abbr, td.color);
   team.isHuman = td.isHuman === true;
@@ -288,13 +406,30 @@ function rehydrateTeam(td, regionKey, teamMap) {
   // saves, which ensureContracts() then backfills.
   if (Array.isArray(td.deadCapHits)) team.deadCapHits = td.deadCapHits;
   if (td.mapRatings && typeof td.mapRatings === 'object') team.mapRatings = td.mapRatings;
+  if (typeof td._midseasonMoves === 'number') team._midseasonMoves = td._midseasonMoves;
+  if (typeof td._offseasonMoves === 'number') team._offseasonMoves = td._offseasonMoves;
+  // Migration: `starters` used to be a separate id list. The depth chart
+  // now IS the roster order, so lift those players to the top and drop
+  // the field. Saves written after this keep their order naturally.
+  if (Array.isArray(td.starters) && td.starters.length > 0) {
+    const rank = new Map(td.starters.map((id, i) => [id, i]));
+    team.roster.sort((a, b) => {
+      const ra = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const rb = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+      return ra - rb;
+    });
+  }
 
   // Roster: each entry is a serialized player
   if (Array.isArray(td.roster)) {
     team.roster = td.roster.map(pd => rehydratePlayer(pd));
   }
 
-  teamMap.set(`${regionKey}:${team.abbr}`, team);
+  team.tier = td.tier ?? tier;
+  team.parentAbbr = td.parentAbbr ?? null;
+  // Key by tier as well as abbr: a tier-2 academy could otherwise be
+  // confused with its tier-1 parent when refs are resolved.
+  teamMap.set(`${regionKey}:${team.tier}:${team.abbr}`, team);
   return team;
 }
 
@@ -324,6 +459,17 @@ function rehydratePlayer(pd) {
   if (typeof pd.morale === 'number') player.morale = pd.morale;
   if (Array.isArray(pd.moraleHistory)) player.moraleHistory = pd.moraleHistory;
   if (pd.contract) player.contract = { ...pd.contract };
+  if (pd.lastOffseasonDelta) player.lastOffseasonDelta = pd.lastOffseasonDelta;
+  if (pd.primaryRole) {
+    player.primaryRole = pd.primaryRole;
+    player.secondaryRole = pd.secondaryRole ?? null;
+  } else {
+    // Save predates roles. Infer from the stats the player already has
+    // so their tag agrees with their profile rather than being random.
+    const inferred = inferRoleFromStats(player);
+    player.primaryRole = inferred.primaryRole;
+    player.secondaryRole = inferred.secondaryRole;
+  }
 
   return player;
 }
@@ -346,7 +492,7 @@ function walkAndReplace(node, teamMap, visited) {
     for (let i = 0; i < node.length; i++) {
       const v = node[i];
       if (isRefMarker(v)) {
-        node[i] = teamMap.get(`${v.region}:${v.abbr}`) || null;
+        node[i] = resolveTeamRef(teamMap, v);
       } else {
         walkAndReplace(v, teamMap, visited);
       }
@@ -355,12 +501,135 @@ function walkAndReplace(node, teamMap, visited) {
     for (const k of Object.keys(node)) {
       const v = node[k];
       if (isRefMarker(v)) {
-        node[k] = teamMap.get(`${v.region}:${v.abbr}`) || null;
+        node[k] = resolveTeamRef(teamMap, v);
       } else {
         walkAndReplace(v, teamMap, visited);
       }
     }
   }
+}
+
+/**
+ * One-time upward re-centre of a tier-1 team's map ratings onto the
+ * current anchor. See the migration site above for the rationale.
+ */
+function liftMapRatingsToAnchor(team) {
+  const entries = Object.values(team.mapRatings);
+  if (entries.length === 0) return;
+  const mean = entries.reduce((s, r) => s + ((r.attack ?? 70) + (r.defense ?? 70)) / 2, 0)
+    / entries.length;
+  const target = tier1MapAnchor(team.overallRating);
+  const shift = target - mean;
+  if (shift <= 2) return;   // already there (or above) — leave alone
+  for (const r of entries) {
+    r.attack = Math.max(1, Math.min(99, Math.round((r.attack ?? 70) + shift)));
+    r.defense = Math.max(1, Math.min(99, Math.round((r.defense ?? 70) + shift)));
+  }
+}
+
+/**
+ * Restore match identity after JSON.parse. Two walks: collect every
+ * object carrying a __matchId (stripping the marker), then replace every
+ * { __ref:'match', id } with the collected object. See serialize().
+ */
+function resolveMatchRefs(root) {
+  const byId = new Map();
+
+  const collect = (node, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    if (!Array.isArray(node) && typeof node.__matchId === 'number') {
+      byId.set(node.__matchId, node);
+      delete node.__matchId;
+    }
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      collect(node[k], visited);
+    }
+  };
+
+  const replace = (node, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      const v = node[k];
+      if (v && typeof v === 'object' && v.__ref === 'match') {
+        // An unresolvable id keeps the marker replaced by null rather
+        // than a dangling pseudo-match; relink below can still repair it.
+        node[k] = byId.get(v.id) || null;
+      } else {
+        replace(v, visited);
+      }
+    }
+  };
+
+  collect(root, new Set());
+  replace(root, new Set());
+}
+
+/**
+ * Legacy repair: for saves written before match identity, re-point each
+ * active-series entry's match refs at the canonical match object by
+ * structure — the group phase by schedule index, every bracket phase by
+ * its (still canonical, thanks to team __refs) team pair among the
+ * container's unresolved matches. Idempotent on healthy saves.
+ */
+function relinkActiveSeriesRefs(data) {
+  const entries = data.season?.activeSeries || [];
+  if (entries.length === 0) return;
+
+  const collectMatches = (node, out, visited) => {
+    if (node === null || typeof node !== 'object') return;
+    if (node instanceof Team || node instanceof Player) return;
+    if (visited.has(node)) return;
+    visited.add(node);
+    if (!Array.isArray(node)
+        && 'teamA' in node && 'teamB' in node && 'result' in node) {
+      out.push(node);
+    }
+    for (const k of Array.isArray(node) ? node.keys() : Object.keys(node)) {
+      collectMatches(node[k], out, visited);
+    }
+  };
+
+  for (const entry of entries) {
+    let canonical = null;
+
+    if (entry.phase === 'group' && typeof entry.scheduleIdx === 'number') {
+      const m = data.regions?.[entry.regionKey]?.schedule?.[entry.scheduleIdx];
+      if (m && m.teamA === entry.teamA && m.teamB === entry.teamB) canonical = m;
+    } else {
+      const container =
+        entry.phase === 'bracket' ? data.regions?.[entry.regionKey]?.bracket
+        : entry.phase?.startsWith('international') ? data.international
+        : entry.phase?.startsWith('worlds') ? data.worlds
+        : null;
+      if (container) {
+        const candidates = [];
+        collectMatches(container, candidates, new Set());
+        canonical = candidates.find(m =>
+          !m.result && m.teamA === entry.teamA && m.teamB === entry.teamB
+        ) || null;
+      }
+    }
+
+    if (!canonical) continue;
+    if ('matchRef' in entry) entry.matchRef = canonical;
+    if ('bracketMatchRef' in entry) entry.bracketMatchRef = canonical;
+    if ('intlMatchRef' in entry) entry.intlMatchRef = canonical;
+  }
+}
+
+/**
+ * Resolve a { __ref:'team' } marker. Saves written before tier 2 carry no
+ * `tier`, so fall back to tier 1 and then to a bare abbr lookup.
+ */
+function resolveTeamRef(teamMap, v) {
+  const tier = v.tier ?? 1;
+  return teamMap.get(`${v.region}:${tier}:${v.abbr}`)
+      || teamMap.get(`${v.region}:1:${v.abbr}`)
+      || null;
 }
 
 function isRefMarker(v) {

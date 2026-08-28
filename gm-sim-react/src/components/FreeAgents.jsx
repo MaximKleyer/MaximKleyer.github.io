@@ -22,6 +22,7 @@ import { flagClass, nationalityName } from '../data/nationalities.js';
 import {
   calculateBaseSalary,
 } from '../data/salary.js';
+import { RoleTag } from './RoleTag.jsx';
 
 function formatSalary(n) {
   if (n == null) return '—';
@@ -48,6 +49,7 @@ const GAP_HINT = {
 
 export default function FreeAgents({
   freeAgents, canSign, onSign,
+  windowClosed = false,
   godMode = false, onEditPlayer,
   midseasonInfo = null,
   capRemaining = null, // Phase 7b: how much cap the human team has left
@@ -57,6 +59,7 @@ export default function FreeAgents({
   const [offerSalary, setOfferSalary] = useState(0);    // salary input ($K)
   const [offerYears, setOfferYears] = useState(1);
   const [lastReject, setLastReject] = useState(null);   // {askTier, capExceeded, reason} from previous attempt
+  const [submitting, setSubmitting] = useState(false);  // guards double submits
   const [, forceUpdate] = useState(0);
 
   const sorted = [...freeAgents].sort((a, b) => {
@@ -92,11 +95,26 @@ export default function FreeAgents({
   // call returns a result object (accepted/rejected), we react here.
   function submitOffer() {
     if (!signTarget) return;
+    // A second click before React re-renders would call onSign again with
+    // the same target. The engine now refuses a duplicate outright, but
+    // blocking it here keeps the button from ever looking unresponsive.
+    if (submitting) return;
+    setSubmitting(true);
+
     const offer = {
       salary: offerSalary * 1000,
       years: offerYears,
     };
     const result = onSign(signTarget, offer);
+    setSubmitting(false);
+
+    if (result?.alreadySigned) {
+      // Signed already — most likely a double submit. Close rather than
+      // leaving a panel open for a player who is no longer available.
+      setSignTarget(null);
+      setLastReject(null);
+      return;
+    }
     if (result?.accepted) {
       // Modal closes; signTarget will be removed from the FA list on
       // next render via the parent's state update
@@ -117,6 +135,12 @@ export default function FreeAgents({
     }
   }
 
+  // Safety net, derived rather than stored: if the player being
+  // negotiated with has left the pool — signed here, or taken elsewhere —
+  // the panel must not linger offering a deal that cannot happen.
+  // Computed instead of calling setState during render, which loops.
+  const activeTarget = signTarget && freeAgents.includes(signTarget) ? signTarget : null;
+
   // Total commitment if the current offer is accepted
   const totalCommit = (offerSalary * 1000) * offerYears;
   const exceedsCap = capRemaining != null && (offerSalary * 1000) > capRemaining;
@@ -126,6 +150,16 @@ export default function FreeAgents({
       <h2>Free Agents</h2>
       <p className="muted">{sorted.length} available players</p>
 
+      {windowClosed && (
+        <p style={{
+          margin: '0 0 14px', fontSize: '0.8em', padding: '8px 12px', borderRadius: 5,
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',
+          opacity: 0.75,
+        }}>
+          The signing window is closed. Free agents can be signed during the preseason,
+          the mid-season windows between stages, and the offseason.
+        </p>
+      )}
       {midseasonInfo && (
         <div style={{
           marginBottom: 12,
@@ -177,6 +211,7 @@ export default function FreeAgents({
         <thead>
           <tr>
             <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Morale</th>
             <th></th>
@@ -211,6 +246,7 @@ export default function FreeAgents({
                   onCommit={v => onEditPlayer(player, 'age', v)} />
               </td>
               <td>{player.overall}<DeltaIndicator delta={d?.overall} /></td>
+              <td><RoleTag player={player} /></td>
               <td>
                 <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
                 <DeltaIndicator delta={d?.aim} size="small" />
@@ -245,7 +281,10 @@ export default function FreeAgents({
                   disabled={!canSign}
                   onClick={() => startNegotiation(player)}
                 >
-                  {canSign ? 'Sign' : 'Full'}
+                  {canSign ? 'Sign'
+                    : windowClosed ? 'Closed'
+                    : midseasonInfo && midseasonInfo.used >= midseasonInfo.max ? 'Cap'
+                    : 'Full'}
                 </button>
               </td>
             </tr>
@@ -255,7 +294,7 @@ export default function FreeAgents({
       </table>
 
       {/* Sign / negotiate modal */}
-      {signTarget && (
+      {activeTarget && (
         <div style={{
           position: 'fixed',
           inset: 0,
@@ -281,22 +320,22 @@ export default function FreeAgents({
               marginBottom: 6,
             }}>
               <h3 style={{ margin: 0, color: '#fff' }}>
-                Sign {signTarget.tag}
+                Sign {activeTarget.tag}
               </h3>
               <span style={{
                 fontSize: '0.78rem',
                 color: '#8a98b1',
               }}>
-                OVR {signTarget.overall} · Age {signTarget.age}
+                OVR {activeTarget.overall} · Age {activeTarget.age}
               </span>
             </div>
             <p style={{
-              color: moraleColor(signTarget.morale),
+              color: moraleColor(activeTarget.morale),
               fontSize: '0.85rem',
               marginTop: 0,
               marginBottom: 18,
             }}>
-              Morale: {signTarget.morale ?? 65}
+              Morale: {activeTarget.morale ?? 65}
             </p>
 
             {/* Salary input */}
@@ -467,7 +506,7 @@ export default function FreeAgents({
                   fontWeight: 600,
                 }}
               >
-                Submit Offer
+                {submitting ? 'Signing…' : 'Submit Offer'}
               </button>
             </div>
           </div>

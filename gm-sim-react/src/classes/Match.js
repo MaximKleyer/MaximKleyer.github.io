@@ -9,9 +9,10 @@
  */
 
 import { SIM, ROUNDS_TO_WIN, HALF_LENGTH, REGULATION_ROUNDS } from '../data/constants.js';
-import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE } from '../data/strategy.js';
+import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE, IGL_LEADERSHIP_PER_IQ } from '../data/strategy.js';
 import { moralePerformanceModifier } from '../data/salary.js';
 import { teamMapRating, getCurrentPool } from '../data/maps.js';
+import { roleFitMultiplier } from '../data/roles.js';
 import { autoMapPlan } from '../engine/veto.js';
 
 const ROLE_AGGRESSION = {
@@ -54,6 +55,10 @@ function getDuelRating(player, assignment, sideMult = 1) {
   // Map/side comfort. Applied before the noise window for the same
   // reason as morale: it shifts the mean, not the spread.
   base *= sideMult;
+  // Role fit. A player slotted off-role performs roughly ten points of
+  // overall below themselves — an 80 plays like a 70. Secondary costs a
+  // little, flex a token amount everywhere. See data/roles.js.
+  base *= roleFitMultiplier(player, assignment?.role);
   return base + (Math.random() * 16) - 8;
 }
 
@@ -66,17 +71,33 @@ export function mapSideModifier(rating) {
   return 1 + ((r - 70) / 100) * SIM.MAP_IMPACT;
 }
 
-function getIglBonus(team) {
+/**
+ * The IGL's IQ above baseline — but ONLY if they are actually in the
+ * fielded five. A benched shot-caller used to grant the full bonus,
+ * which let a manager park a 95-IQ veteran on the bench, field five
+ * fraggers, and keep the swing from a player who never took the server.
+ */
+function fieldedIglIqAbove(team, lineup) {
   const igl = team.igl;
   if (!igl) return 0;
-  const iq = igl.ratings.gamesense;
-  return iq <= IGL_BASELINE ? 0 : (iq - IGL_BASELINE) * IGL_BONUS_MULTIPLIER;
+  if (lineup && !lineup.includes(igl)) return 0;
+  return Math.max(0, igl.ratings.gamesense - IGL_BASELINE);
+}
+
+export function getIglBonus(team, lineup = null) {
+  return fieldedIglIqAbove(team, lineup) * IGL_BONUS_MULTIPLIER;
+}
+
+/** Duel multiplier the fielded IGL's leadership gives the whole five. */
+export function iglLeadershipMultiplier(team, lineup = null) {
+  return 1 + fieldedIglIqAbove(team, lineup) * IGL_LEADERSHIP_PER_IQ;
 }
 
 function buildAssignmentMap(team) {
   const map = {};
   if (team.strategy?.assignments) {
-    for (const a of team.strategy.assignments) map[a.playerId] = a;
+    // The panel's array is positional — empty slots are literal nulls.
+    for (const a of team.strategy.assignments) if (a) map[a.playerId] = a;
   }
   return map;
 }
@@ -210,8 +231,6 @@ export function simulateMap(teamA, teamB, plan = null) {
   let roundsA = 0, roundsB = 0;
   const assignMapA = buildAssignmentMap(teamA);
   const assignMapB = buildAssignmentMap(teamB);
-  const iglBonusA = getIglBonus(teamA);
-  const iglBonusB = getIglBonus(teamB);
 
   const mapId = plan?.mapId || null;
   const firstHalfAttacker = plan?.firstHalfAttacker === 'B' ? 'B' : 'A';
@@ -227,8 +246,19 @@ export function simulateMap(teamA, teamB, plan = null) {
         defense: mapSideModifier(teamMapRating(teamB, mapId, 'defense')) }
     : { attack: 1, defense: 1 };
 
+  // Only the starting five play. Rosters can hold up to ROSTER_MAX, and
+  // before this every signing walked onto the server alongside them.
+  const lineupA = teamA.startingFive;
+  const lineupB = teamB.startingFive;
+
+  // Both IGL effects key off the FIELDED five, not the roster.
+  const iglBonusA = getIglBonus(teamA, lineupA);
+  const iglBonusB = getIglBonus(teamB, lineupB);
+  const leadA = iglLeadershipMultiplier(teamA, lineupA);
+  const leadB = iglLeadershipMultiplier(teamB, lineupB);
+
   const roundStats = {};
-  for (const p of [...teamA.roster, ...teamB.roster]) {
+  for (const p of [...lineupA, ...lineupB]) {
     roundStats[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
   }
 
@@ -239,17 +269,19 @@ export function simulateMap(teamA, teamB, plan = null) {
   function playRound() {
     const roundIndex = roundsA + roundsB;
     const aAttacking = isTeamAAttacking(roundIndex, firstHalfAttacker);
-    const sideMultA = aAttacking ? multA.attack : multA.defense;
-    const sideMultB = aAttacking ? multB.defense : multB.attack;
+    // Leadership rides the same channel as map comfort: it shifts every
+    // duel's mean without widening the noise.
+    const sideMultA = (aAttacking ? multA.attack : multA.defense) * leadA;
+    const sideMultB = (aAttacking ? multB.defense : multB.attack) * leadB;
     roundSides.push(aAttacking ? 'A-atk' : 'B-atk');
 
     const iglDiff = iglBonusA - iglBonusB;
     const iglSwing = iglDiff * 0.01;
     if (Math.random() < Math.abs(iglSwing)) {
-      simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
+      simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
       return iglSwing > 0 ? 'A' : 'B';
     }
-    return simulateRound(teamA.roster, teamB.roster, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
+    return simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
   }
 
   const OT_TRIGGER = ROUNDS_TO_WIN - 1; // 12
@@ -272,8 +304,10 @@ export function simulateMap(teamA, teamB, plan = null) {
 
   // Build per-player stats AND snapshot roster IDs at match time
   const playerStats = {};
-  const rosterAIds = teamA.roster.map(p => p.id);
-  const rosterBIds = teamB.roster.map(p => p.id);
+  // Snapshot the LINEUP, not the whole roster — this drives which players
+  // the match detail view lists.
+  const rosterAIds = lineupA.map(p => p.id);
+  const rosterBIds = lineupB.map(p => p.id);
 
   // Build assignment → role lookup so each player's match stats can
   // record the role they played. Assignment is authoritative — the
@@ -281,11 +315,11 @@ export function simulateMap(teamA, teamB, plan = null) {
   const roleByPlayerId = {};
   for (const t of [teamA, teamB]) {
     for (const a of (t.strategy?.assignments || [])) {
-      if (a.playerId && a.role) roleByPlayerId[a.playerId] = a.role;
+      if (a && a.playerId && a.role) roleByPlayerId[a.playerId] = a.role;
     }
   }
 
-  for (const player of [...teamA.roster, ...teamB.roster]) {
+  for (const player of [...lineupA, ...lineupB]) {
     const rs = roundStats[player.id];
     const acs = Math.round(rs.combatScore / totalRounds);
     playerStats[player.id] = {

@@ -19,7 +19,9 @@
  */
 
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings } from '../data/maps.js';
+import { initMapPool, rotateMapPool, syncCurrentPool, driftMapRatings, tier1MapAnchor } from '../data/maps.js';
+import { runTier2Stage, runTier2Offseason } from './tier2.js';
+import { Team } from '../classes/Team.js';
 import { GROUP_SIZE, ROSTER_MIN, FREE_AGENT_POOL_SIZE } from '../data/constants.js';
 import { STAGE_POINTS, INTERNATIONAL_POINTS, GROUP_WIN_POINTS } from '../data/points.js';
 import { generateSchedule } from './league.js';
@@ -27,6 +29,7 @@ import { generatePlayer } from '../classes/Player.js';
 import { computeFinalStagePlacements } from './placements.js';
 import { runOffseasonAISignings } from './offseason.js';
 import { runMidseasonAISignings } from './midseason.js';
+import { runAllTier2AISignings } from './tier2.js';
 import {
   initInternational,
   computeInternationalResults,
@@ -38,7 +41,7 @@ import {
 } from './worlds.js';
 import {
   calculateBaseSalary, calculateBuyout, computeTeamSalary, resolveOffer,
-  adjustMorale, SALARY_CAP,
+  adjustMorale, getSalaryCap,
 } from '../data/salary.js';
 
 /* ─────────────── Circuit definition ─────────────── */
@@ -268,9 +271,26 @@ export function completeCurrentStage(gameState) {
     // What the pool rotation did at the end of this stage, so History
     // can show how the map pool evolved across a career.
     mapRotation: rotateStageMapPool(gameState),
+    // Tier 2 plays its own Swiss + bracket alongside each tier-1 stage.
+    // Run it here, at stage close, so the mid-season signing window that
+    // follows has fresh tier-2 form to scout and poach from.
+    tier2Champions: runTier2Stages(gameState),
   });
 
   gameState.season.status = 'transition';
+}
+
+/**
+ * Play every region's tier-2 stage. Returns { regionKey: championAbbr }
+ * for the stage history entry.
+ */
+function runTier2Stages(gameState) {
+  const champions = {};
+  for (const regionKey of REGION_KEYS) {
+    const t2 = runTier2Stage(gameState, regionKey);
+    if (t2?.champion) champions[regionKey] = t2.champion.abbr;
+  }
+  return champions;
 }
 
 /**
@@ -366,12 +386,14 @@ export function completeCurrentInternational(gameState) {
     runnerUp: results.bracketPlacements.find(p => p.placement === 2)
       ? teamCard(results.bracketPlacements.find(p => p.placement === 2).team)
       : null,
-    // Full state refs for History tab rendering. Same rationale as stage
-    // brackets: gameState.international is nulled out but the underlying
-    // swiss/selection/bracket objects aren't mutated, so these stay valid.
-    swiss: intl.swiss,
+    // History snapshots, CLONED with per-map playerStats dropped — the
+    // same treatment stage brackets get. Archiving these raw grew the
+    // save ~1 MB per season and crossed the localStorage quota around
+    // season 3, at which point saving silently stopped. History renders
+    // read-only match cards and never reads the per-map stat tables.
+    swiss: cloneWithoutPlayerStats(intl.swiss),
     selectionShow: intl.selectionShow,
-    bracket: intl.bracket,
+    bracket: cloneWithoutPlayerStats(intl.bracket),
   };
   gameState.season.history.push(intlEntry);
 
@@ -442,11 +464,9 @@ export function completeCurrentWorlds(gameState) {
     champion: championEntry ? teamCard(championEntry.team) : null,
     runnerUp: runnerUpEntry ? teamCard(runnerUpEntry.team) : null,
     pointsAwarded: {}, // no circuit points from Worlds
-    // Full state refs for History tab rendering. Same rationale as stage
-    // and international: gameState.worlds gets nulled out below but the
-    // underlying bracket/playoffSelection objects aren't mutated, so
-    // these refs stay valid indefinitely.
-    bracket: worlds.bracket,
+    // Cloned without per-map playerStats — see the international entry
+    // for why; Worlds brackets were the other unbounded archive term.
+    bracket: cloneWithoutPlayerStats(worlds.bracket),
     playoffSelection: worlds.playoffSelection,
   };
   gameState.season.history.push(worldsEntry);
@@ -486,13 +506,36 @@ function snapshotAllBrackets(gameState) {
       runnerUp: teamCard(elim[0]),
       top4: [championCard, ...elim.slice(0, 3).map(teamCard)],
       top8: [championCard, ...elim.slice(0, 7).map(teamCard)],
-      // Full bracket reference for History tab rendering. Safe to store —
-      // rolloverRegionsForNewStage drops the region.bracket pointer rather
-      // than mutating its matches, so these refs stay valid indefinitely.
-      // The matches already carry their own result objects with frozen
-      // series scores, maps, and player stats.
-      fullBracket: b,
+      // Bracket copy for the History tab.
+      //
+      // Stored WITHOUT per-map player stats. History renders bracket
+      // structure and scores only — it never reads playerStats — and
+      // those tables dominate the save: measured at 53% of a 4 MB save
+      // by the end of one season, which puts a browser's 5 MB
+      // localStorage quota within reach.
+      //
+      // Cloned rather than stripped in place: `b` is still the live
+      // bracket that the Bracket tab renders until the next stage rolls
+      // over, and that view DOES show player stats.
+      fullBracket: cloneWithoutPlayerStats(b),
     };
+  }
+  return out;
+}
+
+/**
+ * Deep copy that drops per-map playerStats and keeps Team references
+ * intact — cloning a Team would break identity comparisons and the
+ * __ref machinery in persistence.js.
+ */
+function cloneWithoutPlayerStats(node) {
+  if (node === null || typeof node !== 'object') return node;
+  if (node instanceof Team) return node;
+  if (Array.isArray(node)) return node.map(cloneWithoutPlayerStats);
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'playerStats') continue;
+    out[k] = cloneWithoutPlayerStats(v);
   }
   return out;
 }
@@ -518,6 +561,40 @@ function teamCard(team) {
  * Phases 3 and 4 will intercept the placeholder branches and implement
  * real Swiss + bracket handling.
  */
+/**
+ * Development happens three times a season — entering each mid-season
+ * window (scored on the stage just completed, via its stageStats
+ * snapshot) and in the offseason (scored on stage 3 plus internationals,
+ * the stats still live on the player). Each event runs at a third scale
+ * with probabilistic rounding, so total yearly movement matches the old
+ * single offseason pass in expectation.
+ *
+ * This replaces a system where the whole year's development was scored
+ * on player.stats at offseason time — which, because stats reset at
+ * every stage rollover, meant a player who dominated stages 1-2 and sat
+ * out stage 3 developed as if he never played.
+ */
+export const DEV_WINDOW_SCALE = 1 / 3;
+
+export function runMidseasonDevelopment(gameState, completedStageNum) {
+  for (const regionKey of REGION_KEYS) {
+    const region = gameState.regions[regionKey];
+    for (const team of region.teams) {
+      for (const player of team.roster) {
+        developPlayer(player, {
+          scale: DEV_WINDOW_SCALE,
+          stats: player.stageStats?.[completedStageNum] || null,
+        });
+      }
+    }
+    // Free agents played nothing this stage; they still move on the age
+    // curve alone, same as the offseason treats them.
+    for (const player of region.freeAgents) {
+      developPlayer(player, { scale: DEV_WINDOW_SCALE });
+    }
+  }
+}
+
 export function beginNextSlot(gameState) {
   const s = gameState.season;
 
@@ -549,11 +626,18 @@ export function beginNextSlot(gameState) {
       rolloverRegionsForNewStage(gameState);
       const isMidseasonStage = slot.stageNumber === 2 || slot.stageNumber === 3;
       if (isMidseasonStage) {
+        // Players grow between stages, scored on the stage they just
+        // played — BEFORE the signing passes, so clubs evaluate the
+        // market on developed ratings.
+        runMidseasonDevelopment(gameState, slot.stageNumber - 1);
         // Run AI mid-season signings ONCE on entry to the FA window. AI
         // teams roll under their archetype-specific dice (15/35/50). Cap
         // is enforced inside runMidseasonAISignings — teams already at
         // the season cap from a prior window skip entirely.
         runMidseasonAISignings(gameState);
+        // Tier 2 does its business only after tier 1 has picked, so the
+        // second division genuinely signs from what is left over.
+        runAllTier2AISignings(gameState, REGION_KEYS);
         s.status = 'mid-season-fa';
       } else {
         s.status = 'active';
@@ -795,6 +879,17 @@ function randInt(min, max) {
  *   25–26: declining
  *   27–29: steep decline (forced retirement at 30 handles the tail)
  */
+/**
+ * Round toward the nearest integers with the fraction as probability, so
+ * expectation is preserved: 0.67 → +1 two-thirds of the time, -1.33 → -1
+ * two-thirds and -2 one-third. Plain rounding would bias every scaled
+ * development roll toward zero.
+ */
+function probRound(x) {
+  const lo = Math.floor(x);
+  return lo + (Math.random() < x - lo ? 1 : 0);
+}
+
 function ageDelta(age) {
   if (age <= 20) return randInt(-1, 4);
   if (age <= 22) return randInt(-2, 3);
@@ -814,8 +909,8 @@ function ageDelta(age) {
  * Tier 1 = average season (K/D ≥ 0.9 AND ACS ≥ 170)
  * Tier 0 = bad season (anything worse)
  */
-function performanceTier(player) {
-  const s = player.stats;
+function performanceTier(player, statsOverride = null) {
+  const s = statsOverride || player.stats;
   if (!s || s.maps < 3) return null;
   const kd = s.kills / Math.max(1, s.deaths);
   const acs = s.acs / s.maps;
@@ -857,7 +952,7 @@ function performanceDelta(tier) {
  * Rookies entering via generatePlayer don't get a delta stashed (no
  * previous state to diff against).
  */
-function developPlayer(player) {
+export function developPlayer(player, { scale = 1, stats = null } = {}) {
   // Snapshot pre-development state for the delta
   const oldRatings = { ...player.ratings };
   const oldOverall = player.overall;
@@ -865,7 +960,7 @@ function developPlayer(player) {
   // Compute performance tier ONCE per player (same tier drives all 5
   // stat perf modifiers — but each stat still rolls its own random value
   // within the tier's range, so you can gain aim and not gain positioning)
-  const tier = performanceTier(player);
+  const tier = performanceTier(player, stats);
 
   // Apply per-stat deltas
   const newRatings = {};
@@ -873,7 +968,12 @@ function developPlayer(player) {
     const age = player.age; // pre-aging, the age they just played at
     const base = ageDelta(age);
     const perf = performanceDelta(tier);
-    const newVal = Math.max(1, Math.min(99, (oldRatings[stat] || 0) + base + perf));
+    // `scale` splits a year's development across the season's windows.
+    // Probabilistic rounding keeps the EXPECTED yearly movement equal to
+    // the unscaled roll — a third of +2 is +0.67, so it lands +1 about
+    // two-thirds of the time rather than always truncating to 0.
+    const scaled = probRound((base + perf) * scale);
+    const newVal = Math.max(1, Math.min(99, (oldRatings[stat] || 0) + scaled));
     newRatings[stat] = newVal;
   }
 
@@ -1134,7 +1234,7 @@ function buildAIResignOffer(team, player, currentTeamSalary) {
   // proposed new salary.
   const oldSalary = player.contract?.salary || 0;
   const projectedSalary = currentTeamSalary - oldSalary + baseSalary;
-  if (projectedSalary > SALARY_CAP) return null; // can't afford
+  if (projectedSalary > getSalaryCap()) return null; // can't afford
 
   // Length roll — slight bias toward 2yr
   const r = Math.random();
@@ -1350,13 +1450,13 @@ export function beginNewSeason(gameState) {
     const region = gameState.regions[regionKey];
     for (const team of region.teams) {
       for (const player of team.roster) {
-        developPlayer(player);
+        developPlayer(player, { scale: DEV_WINDOW_SCALE });
         offseasonSummary.developedCount++;
         allMovers.push(player);
       }
     }
     for (const player of region.freeAgents) {
-      developPlayer(player);
+      developPlayer(player, { scale: DEV_WINDOW_SCALE });
       offseasonSummary.developedCount++;
       allMovers.push(player);
     }
@@ -1538,7 +1638,7 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
     // toward the team's current strength, so the map meta shifts across
     // a career instead of a team owning the same picks forever.
     for (const team of region.teams) {
-      team.mapRatings = driftMapRatings(team.mapRatings, team.overallRating || 70);
+      team.mapRatings = driftMapRatings(team.mapRatings, tier1MapAnchor(team.overallRating));
     }
 
     // Roster aging + retirement
@@ -1599,6 +1699,17 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
     region.freeAgents = faSurvivors;
   }
 
+  // ── 4.5. Tier-2 lifecycle ──
+  // The second division ages, develops, retires, and re-signs on the
+  // same offseason clock as everyone else. It used to be exempt from all
+  // four passes, so a 17-year-old standout was still 17 with identical
+  // ratings in season four and 29-year-old tier-2 vets never retired.
+  runTier2Offseason(gameState, REGION_KEYS, {
+    developPlayer,
+    shouldRetire,
+    completedYear,
+  });
+
   // ── 5. AI team backfill ──
   // Any non-human team below ROSTER_MIN auto-signs free agents until it
   // hits the minimum. Phase 7c: cap-aware. Tries to sign the best-OVR FA
@@ -1613,7 +1724,7 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
       if (team.isHuman) continue;
       while (team.roster.length < ROSTER_MIN && region.freeAgents.length > 0) {
         const currentSalary = computeTeamSalary(team);
-        const headroom = SALARY_CAP - currentSalary;
+        const headroom = getSalaryCap() - currentSalary;
 
         // Look for the best-OVR FA whose base salary fits headroom.
         let bestIdx = -1;
@@ -1651,8 +1762,12 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
           yearsRemaining: newLength,
           signedYear: gameState.seasonNumber || 2025,
         };
-        team.roster.push(signed);
-        offseasonSummary.aiSigningsCount++;
+        if (team.addPlayer(signed)) {
+          offseasonSummary.aiSigningsCount++;
+        } else {
+          // Refused — return them to the pool instead of losing them.
+          region.freeAgents.push(signed);
+        }
       }
       team.validateStrategy();
     }
@@ -1746,6 +1861,10 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
   // The user's subsequent releases can trigger additional reactive AI
   // moves via runReactiveAISignings() called from App.jsx.
   runOffseasonAISignings(gameState);
+
+  // Tier 2 signs last, from whoever tier 1 passed over. These players are
+  // then poachable during the following season like any other tier-2 name.
+  runAllTier2AISignings(gameState, REGION_KEYS);
 }
 
 

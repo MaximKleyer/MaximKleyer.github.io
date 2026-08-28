@@ -12,17 +12,22 @@
  * available on the Stats tab. K/D and ACS retained as quick reference.
  */
 
-import { useState } from 'react';
+import { useState, useRef, Fragment } from 'react';
 import Strategy from './Strategy.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import { mapName, getActivePool } from '../data/maps.js';
+import { RoleTag } from './RoleTag.jsx';
+import { ROSTER_MIN } from '../data/constants.js';
 import {
   computeTeamSalary, computeCapRemaining, calculateBuyout,
-  moraleTier, SALARY_CAP,
+  moraleTier, getSalaryCap,
 } from '../data/salary.js';
+
+// The depth chart's starter line sits after this many rows.
+const STARTER_COUNT = ROSTER_MIN;
 
 // Convert a number like 432500 → "$432K". Used wherever we want a
 // compact dollar display. Players' salary widgets show K-rounded values.
@@ -44,9 +49,48 @@ function moraleColor(morale) {
 export default function Roster({
   team, onRelease, onUpdate, allowMinRelease = false,
   godMode = false, onEditPlayer, mapPool = null,
+  onTrainMap = null, trainingUsed = false,
 }) {
   const [, forceUpdate] = useState(0);
   const [confirmingRelease, setConfirmingRelease] = useState(null); // player or null
+  // Depth-chart drag state. Row order IS the depth chart: the top
+  // STARTER_COUNT rows start, everything under the line is a sub.
+  //
+  // The source index lives in a ref, not state: handlers close over the
+  // render they were created in, so if React has not re-rendered between
+  // dragstart and drop the state value would still read null and the drop
+  // would silently do nothing. A ref is always current.
+  const dragIdxRef = useRef(null);
+  const [dragIdx, setDragIdx] = useState(null);   // for the drag styling only
+  const [overIdx, setOverIdx] = useState(null);
+
+  function beginDrag(idx) {
+    dragIdxRef.current = idx;
+    setDragIdx(idx);
+  }
+
+  function endDrag() {
+    dragIdxRef.current = null;
+    setDragIdx(null);
+    setOverIdx(null);
+  }
+
+  function handleDrop(toIdx) {
+    const fromIdx = dragIdxRef.current;
+    if (fromIdx === null || fromIdx === toIdx) { endDrag(); return; }
+    team.movePlayer(fromIdx, toIdx);
+    team.validateStrategy();   // comp slots follow whoever is now starting
+    endDrag();
+    forceUpdate(n => n + 1);
+    onUpdate?.();
+  }
+
+  function autoSortRoster() {
+    team.sortRosterByOverall();
+    team.validateStrategy();
+    forceUpdate(n => n + 1);
+    onUpdate?.();
+  }
 
   function handleStrategyUpdate() {
     forceUpdate(n => n + 1);
@@ -57,8 +101,8 @@ export default function Roster({
 
   const usedSalary = computeTeamSalary(team);
   const capRemaining = computeCapRemaining(team);
-  const utilization = Math.min(100, Math.round(100 * usedSalary / SALARY_CAP));
-  const overCap = usedSalary > SALARY_CAP;
+  const utilization = Math.min(100, Math.round(100 * usedSalary / getSalaryCap()));
+  const overCap = usedSalary > getSalaryCap();
   const deadCap = (team.deadCapHits || []).reduce((s, h) => s + (h?.amount || 0), 0);
 
   // Cap meter color tracks utilization
@@ -118,7 +162,7 @@ export default function Roster({
           <span style={{ fontSize: '0.85rem', color: '#cdd5e5' }}>
             <strong style={{ color: overCap ? '#ff5460' : '#fff' }}>{formatSalary(usedSalary)}</strong>
             {' / '}
-            {formatSalary(SALARY_CAP)}
+            {formatSalary(getSalaryCap())}
             {' · '}
             <span style={{ color: capRemaining < 0 ? '#ff5460' : '#a3d977' }}>
               {capRemaining < 0 ? `${formatSalary(-capRemaining)} OVER` : `${formatSalary(capRemaining)} headroom`}
@@ -148,7 +192,9 @@ export default function Roster({
       <table>
         <thead>
           <tr>
+            <th style={{ width: 24 }}></th>
             <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Salary</th><th>Yrs</th><th>Morale</th>
             <th>K/D</th><th>ACS</th>
@@ -156,11 +202,45 @@ export default function Roster({
           </tr>
         </thead>
         <tbody>
-          {team.roster.map(player => {
+          {team.roster.map((player, idx) => {
             const d = player.lastOffseasonDelta;
             const c = player.contract;
+            const isStarter = idx < STARTER_COUNT;
             return (
-            <tr key={player.id}>
+            <Fragment key={player.id}>
+            {idx === STARTER_COUNT && (
+              <tr className="starter-divider">
+                <td colSpan={18} style={{
+                  padding: 0, height: 0, borderTop: '2px solid #ff4655',
+                  position: 'relative',
+                }}>
+                  <span style={{
+                    position: 'absolute', left: 8, top: -8,
+                    background: 'var(--bg, #0d0f14)', padding: '0 8px',
+                    fontSize: '0.58rem', letterSpacing: '0.14em',
+                    color: '#ff4655', fontFamily: "'JetBrains Mono', monospace",
+                  }}>SUBS</span>
+                </td>
+              </tr>
+            )}
+            <tr
+              draggable
+              onDragStart={() => beginDrag(idx)}
+              onDragEnd={endDrag}
+              onDragOver={e => { e.preventDefault(); setOverIdx(idx); }}
+              onDragLeave={() => setOverIdx(o => (o === idx ? null : o))}
+              onDrop={e => { e.preventDefault(); handleDrop(idx); }}
+              style={{
+                cursor: 'grab',
+                opacity: dragIdx === idx ? 0.35 : 1,
+                background: overIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'rgba(255,70,85,0.14)' : undefined,
+                boxShadow: overIdx === idx && dragIdx !== null && dragIdx !== idx
+                  ? 'inset 0 2px 0 #ff4655' : undefined,
+              }}
+              title={isStarter ? 'Starter — drag below the line to bench' : 'Sub — drag above the line to start'}
+            >
+              <td style={{ textAlign: 'center', opacity: 0.35, cursor: 'grab', userSelect: 'none' }}>⠿</td>
               <td>
                 {godMode ? (
                   <EditableCell
@@ -201,6 +281,9 @@ export default function Roster({
               <td>
                 {player.overall}
                 <DeltaIndicator delta={d?.overall} />
+              </td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                <RoleTag player={player} />
               </td>
               <td>
                 <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
@@ -300,6 +383,7 @@ export default function Roster({
                 </button>
               </td>
             </tr>
+            </Fragment>
             );
           })}
         </tbody>
@@ -394,7 +478,8 @@ export default function Roster({
         </div>
       )}
 
-      <MapStrengths team={team} pool={mapPool} />
+      <MapStrengths team={team} pool={mapPool}
+                    onTrain={onTrainMap} trainingUsed={trainingUsed} />
 
       <Strategy team={team} onUpdate={handleStrategyUpdate} />
     </>
@@ -434,7 +519,7 @@ function RatingBar({ label, value }) {
   );
 }
 
-function MapStrengths({ team, pool }) {
+function MapStrengths({ team, pool, onTrain = null, trainingUsed = false }) {
   const active = (pool && pool.length ? pool : getActivePool(null)) || [];
   const ratings = team?.mapRatings || {};
 
@@ -456,6 +541,15 @@ function MapStrengths({ team, pool }) {
           active pool · strongest first
         </span>
       </div>
+      {onTrain && (
+        <p style={{ margin: '0 0 12px', fontSize: '0.78em',
+                    color: trainingUsed ? undefined : '#4ade80',
+                    opacity: trainingUsed ? 0.55 : 1 }}>
+          {trainingUsed
+            ? 'Practice used — the squad can run another block before the next series.'
+            : 'Practice available: pick one map to drill before this series. Gains shrink the stronger a map already is.'}
+        </p>
+      )}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
@@ -476,6 +570,29 @@ function MapStrengths({ team, pool }) {
             </div>
             <RatingBar label="ATK" value={r.attack} />
             <RatingBar label="DEF" value={r.defense} />
+            {onTrain && (
+              <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                {[['attack', 'ATK'], ['balanced', 'BOTH'], ['defense', 'DEF']].map(([focus, label]) => (
+                  <button
+                    key={focus}
+                    disabled={trainingUsed}
+                    onClick={() => onTrain(r.id, focus)}
+                    title={trainingUsed
+                      ? 'Already practised before this series'
+                      : `Drill ${mapName(r.id)} — ${label === 'BOTH' ? 'both sides' : label}`}
+                    style={{
+                      flex: 1, padding: '3px 0', fontSize: '0.62rem', fontWeight: 700,
+                      letterSpacing: '0.06em', borderRadius: 3, color: 'inherit',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.18)',
+                      cursor: trainingUsed ? 'not-allowed' : 'pointer',
+                      opacity: trainingUsed ? 0.3 : 0.85,
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

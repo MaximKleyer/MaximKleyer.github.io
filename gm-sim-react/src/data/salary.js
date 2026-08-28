@@ -36,7 +36,36 @@
  * leaving $1M for 3 more = ~$330K average = about 67 OVR. That's still
  * a real depth tradeoff: a two-superstar team has below-average depth.
  */
-export const SALARY_CAP = 2500000;
+export const DEFAULT_SALARY_CAP = 2500000;
+
+/**
+ * The cap is a user setting, so it cannot be a plain const — engine code
+ * in offseason.js / season.js reads it without gameState in scope.
+ *
+ * Same mirror pattern as the map pool: gameState.settings.salaryCap is
+ * the source of truth and what persists; this module holds a live copy
+ * that syncSalaryCap() refreshes on init, on load, and whenever the
+ * setting changes. Read it through getSalaryCap(), never by capturing
+ * the value at import time, or a cap change won't be picked up.
+ */
+let CURRENT_SALARY_CAP = DEFAULT_SALARY_CAP;
+
+export function getSalaryCap() {
+  return CURRENT_SALARY_CAP;
+}
+
+export function syncSalaryCap(gameState) {
+  const v = gameState?.settings?.salaryCap;
+  if (typeof v === 'number' && v > 0) CURRENT_SALARY_CAP = v;
+  else CURRENT_SALARY_CAP = DEFAULT_SALARY_CAP;
+  return CURRENT_SALARY_CAP;
+}
+
+// Bounds for the settings UI. Below the floor a legal roster is
+// impossible to assemble; above the ceiling the cap stops binding.
+export const SALARY_CAP_MIN = 1000000;
+export const SALARY_CAP_MAX = 10000000;
+export const SALARY_CAP_STEP = 50000;
 
 /**
  * Mid-contract release penalty. When a team releases a player whose
@@ -410,7 +439,7 @@ export function computeTeamSalary(team) {
  * (shouldn't happen with hard cap enforcement but defensive).
  */
 export function computeCapRemaining(team) {
-  return SALARY_CAP - computeTeamSalary(team);
+  return getSalaryCap() - computeTeamSalary(team);
 }
 
 /**

@@ -44,8 +44,8 @@ function processMatchResult(result) {
 }
 
 /** Helper: simulate and process a match */
-function playMatch(match, bestOf = 3) {
-  match.result = simulateSeries(match.teamA, match.teamB, bestOf);
+function playMatch(match, bestOf = 3, opts = {}) {
+  match.result = simulateSeries(match.teamA, match.teamB, bestOf, null, opts);
   processMatchResult(match.result);
 }
 
@@ -70,7 +70,7 @@ export function getStageMatches(bracket) {
     ];
     case 4: return [{ match: bracket.lbSF, bestOf: 3 }];
     case 5: return [{ match: bracket.lbFinal, bestOf: 5 }];
-    case 6: return [{ match: bracket.grandFinal, bestOf: 5 }];
+    case 6: return [{ match: bracket.grandFinal, bestOf: 5, grandFinal: true }];
     default: return [];
   }
 }
@@ -210,7 +210,7 @@ export function advanceBracketStage(bracket) {
       break;
     }
     case 6: {
-      playMatch(b.grandFinal, 5);
+      playMatch(b.grandFinal, 5, { grandFinal: true });
       b.eliminated = [...b.eliminated, b.grandFinal.result.loser];
       b.stage = 7;
       break;

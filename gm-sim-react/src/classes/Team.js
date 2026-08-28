@@ -4,9 +4,10 @@
  * ADDED: record.roundWins, record.roundLosses
  */
 
-import { ROSTER_MIN, ROSTER_MAX, ROLE_WEIGHTS } from '../data/constants.js';
+import { ROSTER_MIN, ROSTER_MAX } from '../data/constants.js';
 import { DEFAULT_COMP, COMPOSITIONS, getDefaultSubtype } from '../data/strategy.js';
 import { archetypeFor } from '../data/archetypes.js';
+import { roleFitPenalty, effectiveOverall } from '../data/roles.js';
 
 export class Team {
   constructor(name, abbr, color) {
@@ -52,6 +53,13 @@ export class Team {
     // of the time.
     this.deadCapHits = [];
 
+    // ── Depth chart ──
+    //
+    // `roster` IS the depth chart: its order is meaningful. The first
+    // ROSTER_MIN players start, everyone below them is a sub. New
+    // signings are pushed onto the end, so they arrive as subs and the
+    // manager promotes them deliberately.
+
     // ── Map strengths ──
     //
     // { mapId: { attack, defense } } for every map in the game, not just
@@ -60,6 +68,13 @@ export class Team {
     // in initGame once rosters exist (the anchor is team overall), and
     // drifted each offseason. See data/maps.js.
     this.mapRatings = {};
+
+    // ── Tier ──
+    // 1 = franchised top flight, 2 = the open second division. Set by the
+    // tier-2 generator; tier-1 teams keep the default. `parentAbbr` links
+    // an academy side to its tier-1 org (null for independents).
+    this.tier = 1;
+    this.parentAbbr = null;
   }
 
   get overallRating() {
@@ -73,13 +88,68 @@ export class Team {
   get rosterFull() { return this.roster.length >= ROSTER_MAX; }
   get atMinRoster() { return this.roster.length <= ROSTER_MIN; }
 
+  /**
+   * The five who actually take the server — the top of the depth chart.
+   *
+   * AI teams always field their best five by overall: they have no UI to
+   * order a depth chart, so reading their roster order would field
+   * whoever happened to be generated or signed first.
+   */
+  get startingFive() {
+    if (!this.isHuman) {
+      return [...this.roster].sort((a, b) => b.overall - a.overall).slice(0, ROSTER_MIN);
+    }
+    return this.roster.slice(0, ROSTER_MIN);
+  }
+
+  /** Everyone below the starter line. */
+  get bench() {
+    if (!this.isHuman) {
+      const starting = new Set(this.startingFive.map(p => p.id));
+      return this.roster.filter(p => !starting.has(p.id));
+    }
+    return this.roster.slice(ROSTER_MIN);
+  }
+
+  /** True when this player is currently starting. */
+  isStarter(player) {
+    return this.startingFive.some(p => p.id === player.id);
+  }
+
+  /**
+   * Move a player within the depth chart. Both indices are positions in
+   * `roster`. Crossing the ROSTER_MIN boundary is what promotes or
+   * benches someone — there is no separate starters list to keep in sync.
+   */
+  movePlayer(fromIdx, toIdx) {
+    const n = this.roster.length;
+    if (fromIdx < 0 || fromIdx >= n) return false;
+    const clamped = Math.max(0, Math.min(n - 1, toIdx));
+    if (clamped === fromIdx) return false;
+    const [moved] = this.roster.splice(fromIdx, 1);
+    this.roster.splice(clamped, 0, moved);
+    return true;
+  }
+
+  /** Order the depth chart best-first. Used by the Auto button. */
+  sortRosterByOverall() {
+    this.roster.sort((a, b) => b.overall - a.overall);
+  }
+
   get igl() {
     if (!this.strategy.iglId) return null;
     return this.roster.find(p => p.id === this.strategy.iglId) || null;
   }
 
   addPlayer(player) {
+    if (!player) return false;
     if (this.roster.length >= ROSTER_MAX) return false;
+    // Never hold the same player twice. Any double-submit — a rapid
+    // second click before React re-rendered, a retried signing after a
+    // cap change — would otherwise push the same object again, giving
+    // the roster duplicate ids and double-counting the salary against
+    // the cap.
+    if (this.roster.some(p => p === player || p.id === player.id)) return false;
     this.roster.push(player);
     return true;
   }
@@ -88,7 +158,13 @@ export class Team {
     const idx = this.roster.indexOf(player);
     if (idx === -1) return false;
     this.roster.splice(idx, 1);
-    this.strategy.assignments = this.strategy.assignments.filter(a => a.playerId !== player.id);
+    // NULL the slot, never compact. Slot identity is positional — index i
+    // pairs with the comp's slot i — so filtering the array shifted every
+    // later assignment onto the wrong role and the panel showed players
+    // against roles the sim wasn't running them on.
+    this.strategy.assignments = this.strategy.assignments.map(
+      a => (a && a.playerId === player.id) ? null : a
+    );
     if (this.strategy.iglId === player.id) this.strategy.iglId = null;
     return true;
   }
@@ -100,47 +176,45 @@ export class Team {
     const slots = [...comp.slots];
     const assignments = new Array(slots.length).fill(null);
     const used = new Set();
+    // Role slots belong to the five who actually play, not the whole
+    // roster — otherwise a bench player could be handed a comp slot.
+    const eligible = this.startingFive;
 
-    // For each slot, pick the unused player whose rating profile best
-    // matches the role's weighted profile. This replaces the old
-    // "player.role === slot.role" matching now that players are
-    // role-agnostic. Greedy — assign slot-by-slot in order, taking the
-    // best remaining fit each time.
+    // Global best-first assignment rather than slot-by-slot.
+    //
+    // Filling slots in order let the early slots take the best-fitting
+    // players and left the last slot with whoever remained — measured at
+    // 30% of AI slots being off-role. Scoring every (slot, player) pair
+    // and repeatedly taking the best remaining one keeps specialists on
+    // their own role far more often.
+    const pairs = [];
     for (let i = 0; i < slots.length; i++) {
       const role = slots[i];
-      const weights = ROLE_WEIGHTS[role] || null;
-      let bestPlayer = null;
-      let bestScore = -Infinity;
-      for (const p of this.roster) {
-        if (used.has(p.id)) continue;
-        // Score = sum of (player.ratings[stat] * role weight for stat).
-        // Falls back to overall if no weights defined for this role.
-        let score = 0;
-        if (weights) {
-          for (const [stat, w] of Object.entries(weights)) {
-            score += (p.ratings[stat] || 0) * w;
-          }
-        } else {
-          score = p.overall;
-        }
-        if (score > bestScore) {
-          bestScore = score;
-          bestPlayer = p;
-        }
+      for (const p of eligible) {
+        // Rated on what they would actually play at in this slot: their
+        // overall, less the penalty for being out of position. Scoring on
+        // per-role stat weights instead made the panel claim a duelist
+        // slot wanted aim and clutch specifically, which is not how the
+        // match sim reads a lineup — it only ever sees role fit.
+        pairs.push({ slot: i, player: p, score: effectiveOverall(p, role) });
       }
-      if (bestPlayer) {
-        used.add(bestPlayer.id);
-        assignments[i] = {
-          playerId: bestPlayer.id,
-          role,
-          subtypeId: getDefaultSubtype(role),
-        };
-      }
+    }
+    pairs.sort((a, b) => b.score - a.score);
+
+    for (const { slot, player } of pairs) {
+      if (assignments[slot] !== null) continue;
+      if (used.has(player.id)) continue;
+      used.add(player.id);
+      assignments[slot] = {
+        playerId: player.id,
+        role: slots[slot],
+        subtypeId: getDefaultSubtype(slots[slot]),
+      };
     }
 
     // Fill any remaining slots with unassigned players sorted by overall
     // (should only trigger if roster is smaller than the comp's slot count)
-    const unassigned = this.roster
+    const unassigned = eligible
       .filter(p => !used.has(p.id))
       .sort((a, b) => b.overall - a.overall);
     let ui = 0;
@@ -156,7 +230,9 @@ export class Team {
       }
     }
 
-    this.strategy.assignments = assignments.filter(a => a !== null);
+    // Keep the array positional (nulls mark unfilled slots) — see
+    // removePlayer for why compacting corrupts the slot mapping.
+    this.strategy.assignments = assignments;
 
     const currentIgl = this.roster.find(p => p.id === this.strategy.iglId);
     if (!currentIgl) {
@@ -165,12 +241,45 @@ export class Team {
     }
   }
 
+  /**
+   * The composition this roster can field with the least role strain.
+   * AI teams previously picked at random, which regularly demanded two
+   * of a role they had one of.
+   */
+  bestCompFor(compositions) {
+    let best = null, bestPenalty = -Infinity;
+    for (const [key, comp] of Object.entries(compositions)) {
+      const pool = [...this.startingFive];
+      let penalty = 0;
+      // Greedy: each slot takes its best remaining fit.
+      for (const role of comp.slots) {
+        let pick = null, pickPenalty = -Infinity;
+        for (const p of pool) {
+          const v = roleFitPenalty(p, role);
+          if (v > pickPenalty) { pickPenalty = v; pick = p; }
+        }
+        if (pick) {
+          pool.splice(pool.indexOf(pick), 1);
+          penalty += pickPenalty;
+        }
+      }
+      if (penalty > bestPenalty) { bestPenalty = penalty; best = key; }
+    }
+    return best;
+  }
+
   validateStrategy() {
     const rosterIds = new Set(this.roster.map(p => p.id));
-    this.strategy.assignments = this.strategy.assignments.filter(a => rosterIds.has(a.playerId));
+    this.strategy.assignments = this.strategy.assignments.map(
+      a => (a && rosterIds.has(a.playerId)) ? a : null
+    );
     if (this.strategy.iglId && !rosterIds.has(this.strategy.iglId)) this.strategy.iglId = null;
     const comp = COMPOSITIONS[this.strategy.comp];
-    if (comp && this.strategy.assignments.length < comp.slots.length) {
+    const filled = this.strategy.assignments.filter(Boolean).length;
+    if (comp && filled < comp.slots.length && !this.isHuman) {
+      // Only AI teams refill themselves. Re-filling the human's slots
+      // after a roster change would quietly overwrite the choices the
+      // Strategy panel exists to let them make.
       this.autoAssignStrategy();
     }
   }

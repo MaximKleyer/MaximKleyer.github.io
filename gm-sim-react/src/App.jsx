@@ -11,18 +11,22 @@ import { useState, useEffect, useCallback } from 'react';
 // without each one needing its own stylesheet import.
 import 'flag-icons/css/flag-icons.min.css';
 
-import { initGame, getHumanTeam, ensureContracts } from './engine/league.js';
+import { initGame, getHumanTeam, ensureContracts, clearFreeAgentMarket } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import MapVeto from './components/MapVeto.jsx';
 import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
+import { trainMap, mapName } from './data/maps.js';
+import Settings from './components/Settings.jsx';
+import Tier2 from './components/Tier2.jsx';
+import { executePoach, evaluatePoach } from './engine/poaching.js';
+import { syncSalaryCap } from './data/salary.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
-import { runCpuMoves } from './engine/ai.js';
 import { runReactiveAISignings } from './engine/offseason.js';
 import {
   resolveOffer, calculateBuyout, computeCapRemaining, computeTeamSalary, fitsCap,
   calculateBaseSalary, adjustMorale,
-  SALARY_CAP,
+  getSalaryCap,
 } from './data/salary.js';
 import {
   runMidseasonReactiveSignings,
@@ -159,6 +163,8 @@ export default function App() {
   const [started, setStarted] = useState(() => gameState !== null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [toast, setToast] = useState(null);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [, forceRender] = useState(0);
   const [viewRegion, setViewRegion] = useState(() =>
     gameState ? gameState.humanRegion : null
@@ -171,8 +177,50 @@ export default function App() {
   // so this fires on every meaningful mutation. localStorage writes are
   // fast enough that we don't bother debouncing.
   useEffect(() => {
-    if (gameState) saveGameState(gameState);
+    if (!gameState) return;
+    const ok = saveGameState(gameState);
+    // Quota failures used to vanish into the console while the user
+    // played on against a stale save. Surface it, once per transition.
+    setSaveFailed(prev => (prev === !ok ? prev : !ok));
   }, [gameState]);
+
+  // ── Keyboard shortcuts ──
+  //
+  // Space = Advance, S = Sim Series, G = Sim Group Stage, P = Sim Playoffs.
+  // The same bindings show as hover keycaps in the sidebar.
+  //
+  // Declared HERE, above every early return, so the hook order never
+  // changes between the team-select render and the in-game render.
+  // It deliberately reads state off gameState rather than closing over
+  // derived values declared further down, which are not in scope yet on
+  // renders that return early. Each handler re-checks its own
+  // preconditions, so this only has to filter typing and modals.
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+      if (!gameState || !started) return;
+      // Never let a keypress skip a modal.
+      if (gameState.season?.pendingVeto) return;
+      if (gameState.season?.status === 'transition') return;
+
+      switch (e.key) {
+        case ' ':
+        case 'Spacebar':
+          e.preventDefault();   // stop the page scrolling
+          advanceAll();
+          break;
+        case 's': case 'S': handleSimSeries(); break;
+        case 'g': case 'G': handleSimGroupStage(); break;
+        case 'p': case 'P': handleSimPlayoffs(); break;
+        default: break;
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   function handleTeamSelect(regionKey, teamIndex) {
     const gs = initGame(regionKey, teamIndex);
@@ -181,6 +229,12 @@ export default function App() {
     // the game starts; cap math depends on it. Run AFTER initSeason
     // since ensureContracts reads seasonNumber for backdating.
     ensureContracts(gs);
+    // The preseason transfer window already happened before you took
+    // over: clubs sign the good free agents who are left, so the board
+    // does not open with unsigned players better than half the league.
+    // Runs after ensureContracts because it is the first point where
+    // salaries exist and the cap can be enforced.
+    clearFreeAgentMarket(gs);
     setGameState(gs);
     setViewRegion(regionKey);
     setStarted(true);
@@ -328,6 +382,116 @@ export default function App() {
       type: won ? 'win' : 'loss',
       mapScores: getMapScoreStrings(result),
     });
+  }
+
+  // ── Fast-forward availability ──
+  // Hoisted out of the Sidebar props so the keyboard shortcuts below and
+  // the buttons agree on exactly when each action is allowed.
+  const ffCanSimSeries = (() => {
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive
+        || resignWindowActive) return false;
+    if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return false;
+    const slot = getCurrentSlot(gameState);
+    if (slot?.type === 'international' || slot?.type === 'worlds') return true;
+    if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) return true;
+    return !allBracketsDone;
+  })();
+  // midseasonActive matters here: on entering a mid-season FA window the
+  // regions have ALREADY rolled over to week 0 of the next stage, so
+  // without the gate this button simmed the whole stage while the
+  // signing window stayed open — every result known before you sign.
+  const ffCanSimGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group')
+    && !inTransition && !circuitComplete && !offseasonActive
+    && !midseasonActive && !resignWindowActive;
+  const ffCanSimPlayoffs = (() => {
+    if (inTransition || circuitComplete || offseasonActive || midseasonActive
+        || resignWindowActive) return false;
+    const slot = getCurrentSlot(gameState);
+    if (slot?.type === 'international' || slot?.type === 'worlds') return true;
+    return REGION_KEYS.every(k => gameState.regions[k].phase !== 'group') && !allBracketsDone;
+  })();
+
+  // ── Signing windows ──
+  // Preseason (week 0 of the opening stage), mid-season FA windows, and
+  // the offseason. Everything the FreeAgents tab and signPlayer allow
+  // keys off this one definition.
+  const preseasonActive = seasonStatus === 'active'
+    && humanRegionData.phase === 'group'
+    && humanRegionData.currentWeek === 0;
+  const signingWindowOpen = preseasonActive || midseasonActive || offseasonActive;
+
+  // ── Poaching ──
+  //
+  // A tier-2 signing spends one of the same two mid-season moves as a
+  // free-agent signing, so the budget cannot be dodged by raiding tier 2.
+  function handlePoach(player) {
+    // Open in the mid-season window AND the offseason. Free agency is
+    // open in both, and tier 2 is the same market.
+    if (!midseasonActive && !offseasonActive) return;
+    const club = getHumanTeam(gameState);
+    // Only the mid-season window is capped at two signings; offseason
+    // business is unlimited, exactly like signing a free agent.
+    const remaining = midseasonActive ? midseasonMovesRemaining(club) : null;
+    const evaluation = evaluatePoach(gameState, club, player, { movesRemaining: remaining });
+    if (!evaluation.allowed) {
+      setToast({ message: evaluation.reason, type: 'loss', mapScores: null });
+      return;
+    }
+
+    const result = executePoach(gameState, club, player);
+    if (result.refused) {
+      // A refusal costs nothing but the approach.
+      setToast({ message: result.message, type: 'loss', mapScores: null });
+      setGameState(prev => ({ ...prev }));
+      return;
+    }
+    if (!result.ok) {
+      setToast({ message: result.message, type: 'loss', mapScores: null });
+      return;
+    }
+
+    if (midseasonActive) {
+      club._midseasonMoves = (club._midseasonMoves || 0) + 1;
+    }
+    setToast({
+      message: result.message,
+      type: result.requiresRelease ? 'loss' : 'win',
+      mapScores: null,
+    });
+    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── Settings ──
+  function handleChangeSalaryCap(value) {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, settings: { ...(prev.settings || {}), salaryCap: value } };
+      // Refresh the module mirror engine code reads through, so the new
+      // cap is live for AI signings and headroom without a reload.
+      syncSalaryCap(next);
+      return next;
+    });
+  }
+
+  // ── Map training ──
+  //
+  // One practice block per series. `trainingUsed` lives on season so it
+  // persists with the save and resets when the next series is seeded.
+  function handleTrainMap(mapId, focus) {
+    if (gameState.season?.trainingUsed) return;
+    const t = getHumanTeam(gameState);
+    const result = trainMap(t, mapId, focus);
+    if (!result) return;
+    gameState.season.trainingUsed = true;
+    const parts = [];
+    if (result.attack) parts.push(`ATK +${result.attack}`);
+    if (result.defense) parts.push(`DEF +${result.defense}`);
+    setToast({
+      message: `Practised ${mapName(mapId)} — ${parts.join(' · ')}`,
+      type: 'win',
+      mapScores: null,
+    });
+    setGameState(prev => ({ ...prev }));
   }
 
   // ── Map veto ──
@@ -483,6 +647,7 @@ export default function App() {
             teamA: entry.match.teamA,
             teamB: entry.match.teamB,
             bestOf: entry.bestOf,
+            grandFinal: !!entry.grandFinal,
           }));
         if (seeded.length > 0) seedActiveSeries(gameState, seeded);
       }
@@ -647,6 +812,7 @@ export default function App() {
             teamA: entry.match.teamA,
             teamB: entry.match.teamB,
             bestOf: entry.bestOf,
+            grandFinal: !!entry.grandFinal,
           }));
         if (seeded.length > 0) seedActiveSeries(gameState, seeded);
       }
@@ -750,7 +916,7 @@ export default function App() {
     // So projected = current_team_salary - old_salary + new_salary.
     const oldSalary = player.contract?.salary || 0;
     const projectedSalary = computeTeamSalary(humanTeam) - oldSalary + offer.salary;
-    if (projectedSalary > SALARY_CAP) {
+    if (projectedSalary > getSalaryCap()) {
       return { capExceeded: true };
     }
 
@@ -797,9 +963,25 @@ export default function App() {
   function handleStartPreseason() {
     if (gameState.season?.status !== 'offseason-active') return;
     if (humanTeam.roster.length < 5) return; // defensive
+    if (!enforceCapBeforeStart()) return;
     gameState.season.status = 'active';
     setCurrentView('dashboard');
     setGameState(prev => ({ ...prev }));
+  }
+
+  // An over-cap poach is legal DURING a window precisely because the
+  // window is the grace period to release somebody. This is the closing
+  // transition that used to be missing: without it a club could start
+  // the stage over the cap and stay there for entire seasons.
+  function enforceCapBeforeStart() {
+    const over = computeTeamSalary(humanTeam) - getSalaryCap();
+    if (over <= 0) return true;
+    setToast({
+      type: 'info',
+      message: `You are $${Math.round(over / 1000)}K over the cap — release a player before starting.`,
+    });
+    setCurrentView('roster');
+    return false;
   }
 
   // Phase 6f: closes the mid-season FA window. Mirror of handleStartPreseason.
@@ -808,6 +990,7 @@ export default function App() {
   function handleStartStage() {
     if (gameState.season?.status !== 'mid-season-fa') return;
     if (humanTeam.roster.length < 5) return; // defensive
+    if (!enforceCapBeforeStart()) return;
     gameState.season.status = 'active';
     setCurrentView('dashboard');
     setGameState(prev => ({ ...prev }));
@@ -834,6 +1017,10 @@ export default function App() {
   function handleSimSeries() {
     if (inTransition || circuitComplete || offseasonActive || midseasonActive) return;
     if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return;
+    // Skipping ahead: auto-veto instead of prompting, and don't apply the
+    // one-tick seeding hold (it would stall the loop below).
+    gameState.season._fastForward = true;
+    try {
 
     // Snapshot used to detect "did anything change?" between iterations.
     // If two consecutive calls produce the same snapshot AND activeSeries
@@ -844,6 +1031,16 @@ export default function App() {
       return [
         gameState.season?.status,
         gameState.season?.activeSeries?.length || 0,
+        // Maps played across every in-flight series.
+        //
+        // Without this the snapshot cannot see progress WITHIN a series:
+        // playing map 2 of a Bo5 changes no status, no week, no bracket
+        // stage and no series count, so the "nothing changed" guard below
+        // fired and Sim Series bailed mid-series. Most visible on Bo5s and
+        // on 2-1 Bo3s; a 2-0 sweep happened to work because the series
+        // drained and activeSeries.length hit 0.
+        (gameState.season?.activeSeries || [])
+          .reduce((n, e) => n + (e.series?.maps?.length || 0), 0),
         ...REGION_KEYS.map(k => gameState.regions[k].currentWeek),
         ...REGION_KEYS.map(k => gameState.regions[k].phase),
         ...REGION_KEYS.map(k => gameState.regions[k].bracket?.stage ?? -1),
@@ -894,11 +1091,16 @@ export default function App() {
 
       prevSnap = newSnap;
     }
+    } finally {
+      gameState.season._fastForward = false;
+    }
   }
 
   // Sim Group Stage: keeps clicking advance until all 4 regions exit
   // group phase. Confirmation prompt because this skips a lot of content.
   function handleSimGroupStage() {
+    // The G key routes here directly, so the button gate isn't enough.
+    if (!ffCanSimGroup) return;
     const anyInGroup = REGION_KEYS.some(k => gameState.regions[k].phase === 'group');
     if (!anyInGroup) return;
 
@@ -910,9 +1112,14 @@ export default function App() {
     );
     if (!ok) return;
 
-    let safety = 1000;
-    while (safety-- > 0 && REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) {
-      advanceGroupWeek();
+    gameState.season._fastForward = true;
+    try {
+      let safety = 1000;
+      while (safety-- > 0 && REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) {
+        advanceGroupWeek();
+      }
+    } finally {
+      gameState.season._fastForward = false;
     }
   }
 
@@ -932,6 +1139,8 @@ export default function App() {
     );
     if (!ok) return;
 
+    gameState.season._fastForward = true;
+    try {
     let safety = 200;
     while (safety-- > 0) {
       const s = gameState.season?.status;
@@ -952,6 +1161,9 @@ export default function App() {
       if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) break; // not in playoffs
       if (allBracketsDone) break;
       advanceBracketAll();
+    }
+    } finally {
+      gameState.season._fastForward = false;
     }
   }
 
@@ -980,12 +1192,18 @@ export default function App() {
           if (team.isHuman) continue;
           while (team.roster.length < 5) {
             const bestFA = [...region.freeAgents].sort((a, b) => b.overall - a.overall)[0];
-            if (bestFA) {
-              team.roster.push(bestFA);
-              region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
-            } else {
-              team.roster.push(generatePlayer({ regionKey }));
+            const added = bestFA || generatePlayer({ regionKey });
+            if (bestFA) region.freeAgents.splice(region.freeAgents.indexOf(bestFA), 1);
+            // Every rostered player must carry a contract — cap math and
+            // the re-sign window both key on it.
+            if (!added.contract) {
+              added.contract = {
+                salary: Math.max(50000, Math.round(calculateBaseSalary(added.overall) * 0.9 / 5000) * 5000),
+                yearsRemaining: 1,
+                signedYear: gameState.seasonNumber || 2025,
+              };
             }
+            team.addPlayer(added);
           }
           team.validateStrategy();
         }
@@ -1095,10 +1313,13 @@ export default function App() {
       );
       if (unplayedThisWeek) continue;
 
-      // Week complete for this region — bump to next week + run AI roster moves
+      // Week complete for this region — bump to next week. AI roster
+      // movement happens ONLY in the windowed engines (midseason.js /
+      // offseason.js): the legacy weekly runCpuMoves pass that used to
+      // fire here signed players with no contract, no cap check, and no
+      // budget, silently corrupting payrolls across a reload.
       const remaining = region.schedule.some(m => !m.result);
       if (remaining) {
-        runCpuMoves({ teams: region.teams, freeAgents: region.freeAgents });
         region.currentWeek++;
       }
     }
@@ -1124,7 +1345,7 @@ export default function App() {
 
         const stageMatches = getStageMatches(region.bracket);
         for (let i = 0; i < stageMatches.length; i++) {
-          const { match, bestOf } = stageMatches[i];
+          const { match, bestOf, grandFinal } = stageMatches[i];
           if (match.result) continue; // defensive — already played
 
           seeded.push({
@@ -1136,6 +1357,10 @@ export default function App() {
             teamA: match.teamA,
             teamB: match.teamB,
             bestOf,
+            // Stage 6 runs the asymmetric grand-final veto: the upper-
+            // bracket winner (always seeded as team A) bans twice, the
+            // lower-bracket team picks twice and never bans.
+            grandFinal: !!grandFinal,
           });
         }
       }
@@ -1227,6 +1452,25 @@ export default function App() {
   function signPlayer(player, offer = null) {
     if (humanTeam.rosterFull) return { rosterFull: true };
 
+    // Signing is a WINDOW activity: preseason, the mid-season windows,
+    // and the offseason. The engines gate every AI signing this way and
+    // tier-2 poaching is hard-blocked outside windows so the budget
+    // can't be dodged — but this path used to stay open all season,
+    // making the 2-per-season cap trivially avoidable by signing just
+    // before or after the window.
+    if (!signingWindowOpen) {
+      return { accepted: false, reason: 'window_closed' };
+    }
+
+    // Already signed? A second submit for the same player — from a rapid
+    // double click, or a retry after raising the cap — must not go
+    // through again. Checked against the pool rather than the roster so
+    // it also catches a player another team took.
+    const humanRegion = gameState.regions[gameState.humanRegion];
+    if (!humanRegion.freeAgents.includes(player)) {
+      return { accepted: false, alreadySigned: true, reason: 'no_longer_available' };
+    }
+
     // Phase 6f mid-season cap check: still applies on top of the new
     // salary cap.
     if (midseasonActive) {
@@ -1261,7 +1505,10 @@ export default function App() {
 
     // Accepted — apply the contract and roster move
     player.contract = result.contract;
-    humanTeam.addPlayer(player);
+    if (!humanTeam.addPlayer(player)) {
+      // Roster full or already present — leave the pool untouched.
+      return { accepted: false, alreadySigned: true, reason: 'roster_rejected' };
+    }
     humanTeam.validateStrategy();
     const region = gameState.regions[gameState.humanRegion];
     region.freeAgents = region.freeAgents.filter(p => p !== player);
@@ -1273,12 +1520,14 @@ export default function App() {
   }
 
   function releasePlayer(player) {
-    // During regular season, enforce the 5-player minimum to prevent the
-    // user from accidentally going understrength mid-year. During the
-    // offseason OR a mid-season FA window, allow going below 5 — the user
-    // might want to release then sign, and the Start Preseason / Start
-    // Stage buttons are the safeguard that prevent starting with <5.
-    if (!offseasonActive && !midseasonActive && humanTeam.atMinRoster) return;
+    // The 5-player floor holds everywhere EXCEPT the offseason. It used
+    // to be waived in the mid-season window too ("release then re-sign"),
+    // but signings there are budgeted at 2 per season while releases were
+    // free — with the budget spent and the roster below 5, every way back
+    // up was refused and Start Stage stayed disabled forever: a one-click,
+    // auto-saved soft-lock. Mid-season cap trouble never needs to go
+    // below 5 anyway: an over-cap poach is only legal at 6+ players.
+    if (!offseasonActive && humanTeam.atMinRoster) return;
 
     // Phase 7b: apply buyout cap hit if the player has remaining
     // contract years. The hit goes onto the team's deadCapHits ledger,
@@ -1343,7 +1592,14 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
-  function handleStrategyUpdate() { forceRender(n => n + 1); }
+  // Roster/strategy edits mutate the Team in place, so a local re-render
+  // alone leaves the gameState reference unchanged — and the auto-save
+  // effect keys on that reference, so the change was never written and
+  // was lost on the next reload. Bump the reference too.
+  function handleStrategyUpdate() {
+    forceRender(n => n + 1);
+    setGameState(prev => (prev ? { ...prev } : prev));
+  }
 
   // ── Sidebar display ──
   const currentSlotForSidebar = getCurrentSlot(gameState);
@@ -1454,11 +1710,12 @@ export default function App() {
       case 'schedule':
         return <Schedule regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} gameState={gameState} />;
       case 'roster':
-        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive || midseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} mapPool={gameState.mapPool?.active} />;
+        return <Roster team={humanTeam} onRelease={releasePlayer} onUpdate={handleStrategyUpdate} allowMinRelease={offseasonActive} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} mapPool={gameState.mapPool?.active} onTrainMap={handleTrainMap} trainingUsed={!!gameState.season?.trainingUsed} />;
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}
-          canSign={!humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
+          canSign={signingWindowOpen && !humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
+          windowClosed={!signingWindowOpen}
           onSign={signPlayer}
           godMode={!!gameState.godMode}
           onEditPlayer={handleEditPlayer}
@@ -1467,6 +1724,16 @@ export default function App() {
             max: MAX_MIDSEASON_MOVES_PER_SEASON,
           } : null}
           capRemaining={computeCapRemaining(humanTeam)}
+        />;
+      case 'tier2':
+        return <Tier2
+          gameState={gameState}
+          viewRegion={viewRegion}
+          onChangeRegion={setViewRegion}
+          humanTeam={humanTeam}
+          canPoach={midseasonActive || offseasonActive}
+          movesRemaining={midseasonActive ? midseasonMovesRemaining(humanTeam) : null}
+          onPoach={handlePoach}
         />;
       case 'standings':
         return <Standings regionData={regionData} viewRegion={vr} onChangeRegion={setViewRegion} godMode={!!gameState.godMode} onEditPlayer={handleEditPlayer} />;
@@ -1529,39 +1796,39 @@ export default function App() {
         midseasonMovesUsed={humanTeam._midseasonMoves || 0}
         midseasonMovesMax={MAX_MIDSEASON_MOVES_PER_SEASON}
         capUsed={computeTeamSalary(humanTeam)}
-        capMax={SALARY_CAP}
+        capMax={getSalaryCap()}
         isResignWindow={resignWindowActive}
         onCloseResignWindow={handleCloseResignWindow}
         godMode={!!gameState.godMode}
         onToggleGodMode={handleToggleGodMode}
-        hasActiveSeries={(() => {
-          // Sim Series available any time games are playable — not just
-          // when series are mid-flight. Same conditions as the regular
-          // Advance button being enabled.
-          if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
-          if (isAwaitingHumanPick(gameState) || isWorldsAwaitingHumanPick(gameState)) return false;
-          const slot = getCurrentSlot(gameState);
-          if (slot?.type === 'international' || slot?.type === 'worlds') return true;
-          // Stage slot — playable if any region still has unfinished work
-          if (REGION_KEYS.some(k => gameState.regions[k].phase === 'group')) return true;
-          return !allBracketsDone;
-        })()}
-        canSimGroup={REGION_KEYS.some(k => gameState.regions[k].phase === 'group') && !inTransition && !circuitComplete && !offseasonActive}
-        canSimPlayoffs={(() => {
-          if (inTransition || circuitComplete || offseasonActive || midseasonActive) return false;
-          const slot = getCurrentSlot(gameState);
-          if (slot?.type === 'international' || slot?.type === 'worlds') return true;
-          // Stage slot — only show "Sim Playoffs" when in bracket phase
-          return REGION_KEYS.every(k => gameState.regions[k].phase !== 'group') && !allBracketsDone;
-        })()}
+        onOpenSettings={() => setShowSettings(true)}
+        hasActiveSeries={ffCanSimSeries}
+        canSimGroup={ffCanSimGroup}
+        canSimPlayoffs={ffCanSimPlayoffs}
         onSimSeries={handleSimSeries}
         onSimGroupStage={handleSimGroupStage}
         onSimPlayoffs={handleSimPlayoffs}
       />
       <main id="content">{renderView()}</main>
       {toast && <Toast message={toast.message} type={toast.type} mapScores={toast.mapScores} onClose={clearToast} />}
+      {saveFailed && (
+        <div style={{
+          position: 'fixed', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+          background: '#7a1c26', border: '1px solid #ff4655', color: '#fff',
+          padding: '8px 16px', borderRadius: 5, fontSize: '0.8rem', zIndex: 3000,
+        }}>
+          ⚠ Saving failed — browser storage is full. Progress since the last save will be lost.
+        </div>
+      )}
       {inTransition && (
         <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
+      )}
+      {showSettings && (
+        <Settings
+          gameState={gameState}
+          onChangeSalaryCap={handleChangeSalaryCap}
+          onClose={() => setShowSettings(false)}
+        />
       )}
       {gameState.season?.pendingVeto && (
         <MapVeto

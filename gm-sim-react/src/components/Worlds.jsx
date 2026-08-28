@@ -21,6 +21,7 @@ import {
   getWorldsBracketChampion,
 } from '../engine/bracketWorlds.js';
 import { getWorldsPlayoffAvailable } from '../engine/worlds.js';
+import { mapName } from '../data/maps.js';
 
 const REGION_ABBR = {
   americas: 'AMR',
@@ -51,7 +52,7 @@ function MatchDetail({ result, teamA, teamB }) {
             className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`}
             onClick={(e) => { e.stopPropagation(); setSelectedMap(i); }}
           >
-            <span className="map-pill-label">Map {i + 1}</span>
+            <span className="map-pill-label">{m.mapId ? mapName(m.mapId) : `Map ${i + 1}`}</span>
             <span className="map-pill-score">{Math.max(m.roundsA, m.roundsB)}-{Math.min(m.roundsA, m.roundsB)}</span>
             <span className="map-pill-winner">{m.winner?.abbr}</span>
           </button>

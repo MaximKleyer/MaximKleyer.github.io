@@ -147,3 +147,14 @@ export function getDefaultSubtype(role) {
 // This represents better mid-round calls, better reads, better economy.
 export const IGL_BONUS_MULTIPLIER = 0.15;
 export const IGL_BASELINE = 60; // no bonus below this IQ
+
+// ── IGL leadership ──
+// On top of the round-win swing, a fielded IGL lifts the whole five's
+// round-by-round duel performance a little — good calls make everyone
+// play better, not just tip close rounds. Scaled per IQ point above the
+// baseline: a 95-IQ IGL multiplies duels by ~1.005. Measured, not
+// guessed: per-duel edges compound over ~24 rounds and again over a
+// series, so the first cut (0.0004, "only +1.4% duels") turned a 35-IQ
+// gap from 75% into 86% series wins. At this value the same matchup
+// lands ~79% — leadership is felt, the round-win swing stays the star.
+export const IGL_LEADERSHIP_PER_IQ = 0.00015;

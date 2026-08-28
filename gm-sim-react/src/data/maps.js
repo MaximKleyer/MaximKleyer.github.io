@@ -120,6 +120,20 @@ function clampRating(v) {
 }
 
 /**
+ * Tier-1 map ratings anchor no lower than this. A professional tier-1
+ * side does not show up to a stage with amateur map comfort even when
+ * its roster is at the 70 floor — and anchoring at the raw overall left
+ * teams whose squads were upgraded after generation carrying map
+ * ratings from the broken pre-upgrade roster all season.
+ */
+export const TIER1_MAP_ANCHOR_FLOOR = 75;
+
+/** The anchor a tier-1 team's map ratings generate and drift toward. */
+export function tier1MapAnchor(overall) {
+  return Math.max(TIER1_MAP_ANCHOR_FLOOR, overall || 0);
+}
+
+/**
  * Build a full { mapId: { attack, defense } } table for one team.
  * `anchor` is the team's overall rating (roughly 60-90).
  */
@@ -204,4 +218,51 @@ export function syncCurrentPool(gameState) {
 
 export function getCurrentPool() {
   return CURRENT_POOL;
+}
+
+/* ─────────────── Map training ─────────────── */
+
+/**
+ * Between series a team may run one practice block on a single map.
+ *
+ * Gains shrink as a rating climbs, so training is a way to shore up a
+ * weak map rather than a treadmill to 99 on your best one:
+ *
+ *   rating 50 -> near the full base gain
+ *   rating 75 -> roughly half
+ *   rating 90 -> a point or two
+ *
+ * Focus picks the shape of the block:
+ *   'attack'  / 'defense' — all the work on one side
+ *   'balanced'            — split across both, less on each
+ */
+export const TRAIN_BASE_GAIN = 5;
+
+function trainGain(rating, weight) {
+  const headroom = Math.max(0, RATING_MAX - rating);
+  const scaled = TRAIN_BASE_GAIN * weight * (headroom / 45);
+  // Always worth at least a point while there's room, so a session
+  // never feels wasted.
+  return headroom <= 0 ? 0 : Math.max(1, Math.round(scaled));
+}
+
+/**
+ * Apply one training block. Mutates the team's ratings and returns
+ * { mapId, focus, attack, defense } describing the gain, or null if the
+ * team has no rating for that map.
+ */
+export function trainMap(team, mapId, focus = 'balanced') {
+  const entry = team?.mapRatings?.[mapId];
+  if (!entry) return null;
+
+  const wAtk = focus === 'attack' ? 1 : focus === 'defense' ? 0 : 0.5;
+  const wDef = focus === 'defense' ? 1 : focus === 'attack' ? 0 : 0.5;
+
+  const gainAtk = wAtk > 0 ? trainGain(entry.attack ?? 70, wAtk) : 0;
+  const gainDef = wDef > 0 ? trainGain(entry.defense ?? 70, wDef) : 0;
+
+  entry.attack = clampRating((entry.attack ?? 70) + gainAtk);
+  entry.defense = clampRating((entry.defense ?? 70) + gainDef);
+
+  return { mapId, focus, attack: gainAtk, defense: gainDef };
 }

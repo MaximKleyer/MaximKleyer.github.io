@@ -31,7 +31,7 @@
 import { ARCHETYPES, archetypeFor } from '../data/archetypes.js';
 import { REGION_KEYS } from '../data/regions.js';
 import {
-  calculateBaseSalary, calculateBuyout, computeTeamSalary, adjustMorale, SALARY_CAP,
+  calculateBaseSalary, calculateBuyout, computeTeamSalary, adjustMorale, getSalaryCap,
 } from '../data/salary.js';
 
 // Probability tables for the per-team offseason dice roll.
@@ -328,7 +328,7 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
   if (rIdx === -1) return false; // defensive
 
   // Phase 7c: cap math BEFORE mutating anything. Compute what the team's
-  // salary would be after this swap and compare to SALARY_CAP.
+  // salary would be after this swap and compare to the current cap setting.
   const releasedSalary = releasePlayer.contract?.salary || 0;
   const buyout = calculateBuyout(releasePlayer.contract);
   // AI offers exactly base salary on a random 1-3yr term.
@@ -337,7 +337,7 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
 
   const currentTeamSalary = computeTeamSalary(team);
   const projectedSalary = currentTeamSalary - releasedSalary + newSalary + buyout;
-  if (projectedSalary > SALARY_CAP) {
+  if (projectedSalary > getSalaryCap()) {
     return false; // hard cap blocks this swap
   }
 
@@ -364,7 +364,7 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
   const sIdx = region.freeAgents.indexOf(signPlayer);
   if (sIdx === -1) {
     // Rollback the release — shouldn't happen but defensive
-    team.roster.push(releasePlayer);
+    team.addPlayer(releasePlayer);
     region.freeAgents.pop();
     if (buyout > 0 && team.deadCapHits.length > 0) {
       team.deadCapHits.pop(); // unwind the dead cap entry too
@@ -377,7 +377,12 @@ function executeSwap(team, region, releasePlayer, signPlayer, gameState, logKey 
     yearsRemaining: newLength,
     signedYear: gameState.seasonNumber || 2025,
   };
-  team.roster.push(signPlayer);
+  if (!team.addPlayer(signPlayer)) {
+    // Refused (already present, or full). Put them back rather than
+    // letting the player vanish from both the pool and the roster.
+    region.freeAgents.splice(sIdx, 0, signPlayer);
+    return false;
+  }
 
   // Clean up any stale strategy assignment for the released player
   team.validateStrategy();
