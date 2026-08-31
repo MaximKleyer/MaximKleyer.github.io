@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import TeamLogo from './TeamLogo.jsx';
 import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
 import { evaluatePoach, refusalChance, REFUSAL_MORALE, expectedAcs } from '../engine/poaching.js';
@@ -129,6 +130,7 @@ function TeamCard({ team, rank, expanded, onToggle, scoutFor, standing }) {
         }}
       >
         <span style={{ width: 22, opacity: 0.45, fontSize: '0.8em' }}>{rank}</span>
+        <TeamLogo team={team} size={20} />
         <strong style={{ minWidth: 58 }}>{team.abbr}</strong>
         <span style={{ flex: 1, opacity: 0.85 }}>
           {team.name}

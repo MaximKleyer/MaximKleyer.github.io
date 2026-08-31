@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { mapName } from '../data/maps.js';
+import TeamLogo from './TeamLogo.jsx';
 
 const ROUND_MS = 1500;               // per-round delay at 1×
 const SPEEDS = [0.5, 1, 2, 4];
@@ -350,7 +351,9 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
 
         {/* ── Score line ── */}
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 18, margin: '14px 0 4px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#6aa9ff' }}>{series.teamA?.name}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#6aa9ff' }}>
+            <TeamLogo team={series.teamA} size={28} />{series.teamA?.name}
+          </span>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.8rem', fontWeight: 700 }}>
             {mapIdx === 'all' ? winsA : shownRoundsA}
           </span>
@@ -365,7 +368,9 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.8rem', fontWeight: 700 }}>
             {mapIdx === 'all' ? winsB : shownRoundsB}
           </span>
-          <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#ff8c95' }}>{series.teamB?.name}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#ff8c95' }}>
+            {series.teamB?.name}<TeamLogo team={series.teamB} size={28} />
+          </span>
         </div>
 
         {/* ── Map tabs ── */}

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import TeamLogo from './TeamLogo.jsx';
 import { getGroupStandings } from '../engine/standings.js';
 import { COMPOSITIONS, SUBTYPES } from '../data/strategy.js';
 import RegionSelector from './RegionSelector.jsx';
@@ -49,7 +50,7 @@ export default function Standings({
         <tr key={abbr} className={`standings-row clickable ${(isFrozen ? entry.isHuman : team.isHuman) ? 'highlight' : ''}`} onClick={() => toggleExpand(abbr)}>
           <td>{i + 1}</td>
           <td className="standings-team-col">
-            <span className="standings-team-color" style={{ background: isFrozen ? entry.color : team.color }} />
+            <TeamLogo abbr={abbr} color={isFrozen ? entry.color : team.color} name={isFrozen ? entry.name : team.name} size={18} />{' '}
             {isFrozen ? entry.name : team.name} ({abbr})
             <span className="expand-arrow">{isExpanded ? ' ▲' : ' ▼'}</span>
           </td>

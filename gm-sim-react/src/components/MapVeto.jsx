@@ -16,6 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { mapName, teamMapRating, teamMapOverall } from '../data/maps.js';
+import TeamLogo from './TeamLogo.jsx';
 import {
   currentStep, isHumanTurn, applyMapAction, applySideChoice,
   runAIUntilHumanTurn, autoCompleteVeto, vetoToMapPlan,
@@ -152,8 +153,12 @@ export default function MapVeto({ pending, humanTeam, oppTeam, onResolve, onSkip
         border: '1px solid rgba(255,70,85,0.35)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-          <h2 style={{ margin: 0 }}>
-            Map Veto — {pending.teamAAbbr} vs {pending.teamBAbbr}
+          <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            Map Veto —
+            <TeamLogo team={humanSide === 'A' ? humanTeam : oppTeam} abbr={pending.teamAAbbr} size={24} />
+            {pending.teamAAbbr} vs
+            <TeamLogo team={humanSide === 'B' ? humanTeam : oppTeam} abbr={pending.teamBAbbr} size={24} />
+            {pending.teamBAbbr}
           </h2>
           <span style={{ fontSize: '0.8em', opacity: 0.7 }}>
             Bo{pending.bestOf}{pending.grandFinal ? ' · Grand Final' : ''}
