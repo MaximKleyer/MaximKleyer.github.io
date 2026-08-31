@@ -15,6 +15,7 @@
 import { useState, useRef, Fragment } from 'react';
 import Strategy from './Strategy.jsx';
 import PlayerCard from './PlayerCard.jsx';
+import TeamLogo from './TeamLogo.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
@@ -138,7 +139,9 @@ export default function Roster({
 
   return (
     <>
-      <h2>{team.name} Roster</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <TeamLogo team={team} size={30} />{team.name} Roster
+      </h2>
       <p className="muted">{team.roster.length} players · Team OVR: {team.overallRating}</p>
 
       {/* Cap meter strip */}
