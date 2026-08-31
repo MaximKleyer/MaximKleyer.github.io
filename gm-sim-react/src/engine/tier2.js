@@ -301,7 +301,7 @@ function stripTier2PlayerStats(bracket) {
   for (const value of Object.values(bracket)) {
     const matches = Array.isArray(value) ? value : [value];
     for (const m of matches) {
-      for (const map of m?.result?.maps || []) delete map.playerStats;
+      for (const map of m?.result?.maps || []) { delete map.playerStats; delete map.roundLog; }
     }
   }
 }

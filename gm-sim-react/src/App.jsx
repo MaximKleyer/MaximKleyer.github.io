@@ -14,6 +14,7 @@ import 'flag-icons/css/flag-icons.min.css';
 import { initGame, getHumanTeam, ensureContracts, clearFreeAgentMarket } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import MapVeto from './components/MapVeto.jsx';
+import LiveMatch from './components/LiveMatch.jsx';
 import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
 import { trainMap, mapName } from './data/maps.js';
 import Settings from './components/Settings.jsx';
@@ -164,6 +165,8 @@ export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [toast, setToast] = useState(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  // Series id the live viewer is following, or null.
+  const [watchingSeriesId, setWatchingSeriesId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [, forceRender] = useState(0);
   const [viewRegion, setViewRegion] = useState(() =>
@@ -202,9 +205,13 @@ export default function App() {
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
       if (!gameState || !started) return;
-      // Never let a keypress skip a modal.
+      // Never let a keypress skip a modal — the veto, a stage
+      // transition, or the live viewer, whose own buttons are the only
+      // sanctioned way to advance while it is open (a stray Space here
+      // played maps behind the overlay mid-animation).
       if (gameState.season?.pendingVeto) return;
       if (gameState.season?.status === 'transition') return;
+      if (watchingSeriesId) return;
 
       switch (e.key) {
         case ' ':
@@ -509,16 +516,49 @@ export default function App() {
     return { human, opponent };
   })();
 
-  function handleVetoResolve(plan) {
+  function handleVetoResolve(plan, { watchLive = false } = {}) {
+    const pending = gameState.season?.pendingVeto;
+    const entry = pending != null
+      ? gameState.season.activeSeries?.[pending.entryIndex]
+      : null;
     resolvePendingVeto(gameState, plan);
+    if (watchLive && entry) setWatchingSeriesId(entry.seriesId);
     setGameState(prev => ({ ...prev }));
   }
 
-  function handleVetoSkipSeason() {
+  // ── Live viewer ──
+  // The overlay drives the SAME advance tick as the sidebar button, so
+  // watching changes nothing about how the league progresses — it only
+  // changes what you see. One user click can land on the seeding tick
+  // (which deliberately plays no maps), so push through it.
+  function watchAdvance() {
+    const entry = (gameState.season.activeSeries || [])
+      .find(e => e.seriesId === watchingSeriesId);
+    const before = entry?.series?.maps?.length ?? -1;
+    advanceAll();
+    const after = entry?.series?.maps?.length ?? -1;
+    if (entry && !entry.series.winner && after === before) advanceAll();
+  }
+
+  function watchSimSeries() {
+    handleSimSeries();
+  }
+
+  const humanLiveEntry = (gameState.season.activeSeries || [])
+    .find(e => (e.teamA?.isHuman || e.teamB?.isHuman) && !e.series?.winner) || null;
+
+  function handleVetoSkipSeason({ watchLive = false } = {}) {
     // Keep the auto plan for the current series and stop prompting for
     // the rest of the season. Cleared again on the next new season.
+    const pending = gameState.season?.pendingVeto;
+    const entry = pending != null
+      ? gameState.season.activeSeries?.[pending.entryIndex]
+      : null;
     gameState.season.skipVetoThisSeason = true;
     resolvePendingVeto(gameState, null);
+    // A checked "watch live" box must survive this exit too — dropping
+    // it silently made one checkbox void the other.
+    if (watchLive && entry) setWatchingSeriesId(entry.seriesId);
     setGameState(prev => ({ ...prev }));
   }
 
@@ -1838,6 +1878,31 @@ export default function App() {
           onResolve={handleVetoResolve}
           onSkipSeason={handleVetoSkipSeason}
         />
+      )}
+      {watchingSeriesId && (
+        <LiveMatch
+          gameState={gameState}
+          seriesId={watchingSeriesId}
+          onAdvanceMap={watchAdvance}
+          onSimSeries={watchSimSeries}
+          onClose={() => setWatchingSeriesId(null)}
+        />
+      )}
+      {humanLiveEntry && !watchingSeriesId && !gameState.season?.pendingVeto && !inTransition && (
+        <button
+          onClick={() => setWatchingSeriesId(humanLiveEntry.seriesId)}
+          title="Open the live round-by-round view of your series"
+          style={{
+            position: 'fixed', right: 18, bottom: 18, zIndex: 800,
+            padding: '10px 18px', cursor: 'pointer', fontWeight: 700,
+            letterSpacing: '0.06em', fontSize: '0.8rem',
+            background: '#ff4655', color: '#fff',
+            border: '1px solid #ff4655', borderRadius: 6,
+            boxShadow: '0 4px 18px rgba(255,70,85,0.4)',
+          }}
+        >
+          ● WATCH LIVE
+        </button>
       )}
     </div>
   );
