@@ -4,7 +4,7 @@
  *   - Bracket stage: advances all regions' brackets one stage
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // Flag-icons provides offline SVG country flags via CSS sprites.
 // Imported once here so every component can use <span className="fi fi-xx" />
@@ -167,6 +167,8 @@ export default function App() {
   const [saveFailed, setSaveFailed] = useState(false);
   // Series id the live viewer is following, or null.
   const [watchingSeriesId, setWatchingSeriesId] = useState(null);
+  // A match toast held back while its series is being watched live.
+  const pendingToastRef = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [, forceRender] = useState(0);
   const [viewRegion, setViewRegion] = useState(() =>
@@ -379,6 +381,19 @@ export default function App() {
   }
 
   function showMatchToast(result, team) {
+    // While the live viewer is open, the engine finishes the series the
+    // moment the last map is APPENDED — but the user is still watching
+    // that map's replay. Popping the result toast then spoils the ending
+    // in the corner. Hold it, and flush when the reveal completes (or
+    // the viewer closes).
+    if (watchingSeriesId) {
+      pendingToastRef.current = { result, team };
+      return;
+    }
+    displayMatchToast(result, team);
+  }
+
+  function displayMatchToast(result, team) {
     const won = result.winner === team;
     const opponent = result.teamA === team ? result.teamB : result.teamA;
     const score = result.score;
@@ -389,6 +404,13 @@ export default function App() {
       type: won ? 'win' : 'loss',
       mapScores: getMapScoreStrings(result),
     });
+  }
+
+  function flushPendingToast() {
+    const held = pendingToastRef.current;
+    if (!held) return;
+    pendingToastRef.current = null;
+    displayMatchToast(held.result, held.team);
   }
 
   // ── Fast-forward availability ──
@@ -1886,7 +1908,8 @@ export default function App() {
           seriesId={watchingSeriesId}
           onAdvanceMap={watchAdvance}
           onSimSeries={watchSimSeries}
-          onClose={() => setWatchingSeriesId(null)}
+          onSeriesRevealed={flushPendingToast}
+          onClose={() => { setWatchingSeriesId(null); flushPendingToast(); }}
         />
       )}
       {humanLiveEntry && !watchingSeriesId && !gameState.season?.pendingVeto && !inTransition && (

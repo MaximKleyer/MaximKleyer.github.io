@@ -194,7 +194,7 @@ function RoundStrip({ map, upTo, abbrA, abbrB }) {
   );
 }
 
-export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeries, onClose }) {
+export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeries, onSeriesRevealed, onClose }) {
   // Hold the series object itself: when the series completes, the active
   // entry is drained from gameState, but this reference stays valid.
   const seriesRef = useRef(null);
@@ -242,6 +242,19 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
   const latestDone = latest < 0 ? true : revealed >= latestTotal;
   const onLatestTab = mapIdx === 'latest';
   const animating = onLatestTab && !latestDone;
+
+  // The series result is only "seen" once the final map's reveal
+  // finishes — that is when App may release anything it held back to
+  // avoid spoilers (the corner result toast). Effect, not render logic:
+  // it must fire exactly once per completion, after commit.
+  const seriesOverNow = !!series?.winner;
+  const revealedOnce = useRef(false);
+  useEffect(() => {
+    if (seriesOverNow && latestDone && !revealedOnce.current) {
+      revealedOnce.current = true;
+      onSeriesRevealed?.();
+    }
+  }, [seriesOverNow, latestDone]);
 
   // Round ticker — only runs while the user is actually watching the
   // animating map; browsing another tab pauses rather than finishes it.
