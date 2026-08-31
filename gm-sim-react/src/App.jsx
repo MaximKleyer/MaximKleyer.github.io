@@ -1881,6 +1881,7 @@ export default function App() {
       )}
       {watchingSeriesId && (
         <LiveMatch
+          key={watchingSeriesId}
           gameState={gameState}
           seriesId={watchingSeriesId}
           onAdvanceMap={watchAdvance}

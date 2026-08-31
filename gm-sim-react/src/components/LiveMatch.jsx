@@ -10,6 +10,11 @@
  *
  * Controls: speed multiplier, pause, skip map (finish the animation
  * instantly), play next map, sim the rest of the series.
+ *
+ * App mounts this with key={seriesId}: watching a second series in a row
+ * must build a FRESH instance, or the previous series' reveal state
+ * bleeds over and every map snaps in fully revealed instead of
+ * animating.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -215,7 +220,7 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
   // frame both spoiled the new map and — when the new map was shorter
   // than the fully-revealed previous one — read past the round log and
   // white-screened the whole app.
-  if (maps.length - 1 > animatedRef.current) {
+  if (maps.length - 1 !== animatedRef.current) {
     animatedRef.current = maps.length - 1;
     if (mapIdx !== 'latest') setMapIdx('latest');
     setRevealed(0);
