@@ -53,10 +53,17 @@ export default function MatchReport({ result, teamA, teamB }) {
 
   return (
     <div>
-      {/* ── Score header ── */}
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 18, margin: '6px 0 4px', flexWrap: 'wrap' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1rem', fontWeight: 700, color: '#6aa9ff', opacity: winnerIsA ? 1 : 0.65 }}>
-          <TeamLogo team={teamA} size={26} />{teamA?.name}
+      {/* ── Score header — a symmetric grid, because flex centering
+             drifts with unequal team-name widths and the map label ended
+             up visibly off the true center line. ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr auto minmax(110px, auto) auto 1fr',
+        alignItems: 'center', columnGap: 16, margin: '6px 0 4px',
+      }}>
+        <span style={{ justifySelf: 'end', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1rem', fontWeight: 700, color: '#6aa9ff', opacity: winnerIsA ? 1 : 0.65, minWidth: 0 }}>
+          <TeamLogo team={teamA} size={26} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{teamA?.name}</span>
         </span>
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.6rem', fontWeight: 700 }}>
           {map ? map.roundsA : sa}
@@ -73,8 +80,9 @@ export default function MatchReport({ result, teamA, teamB }) {
         <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.6rem', fontWeight: 700 }}>
           {map ? map.roundsB : sb}
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1rem', fontWeight: 700, color: '#ff8c95', opacity: winnerIsA ? 0.65 : 1 }}>
-          {teamB?.name}<TeamLogo team={teamB} size={26} />
+        <span style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1rem', fontWeight: 700, color: '#ff8c95', opacity: winnerIsA ? 0.65 : 1, minWidth: 0 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{teamB?.name}</span>
+          <TeamLogo team={teamB} size={26} />
         </span>
       </div>
 
