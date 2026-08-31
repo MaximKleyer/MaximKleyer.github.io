@@ -243,12 +243,24 @@ export default function Roster({
               <td style={{ textAlign: 'center', opacity: 0.35, cursor: 'grab', userSelect: 'none' }}>⠿</td>
               <td>
                 {godMode ? (
-                  <EditableCell
-                    value={player.tag}
-                    editable
-                    width={80}
-                    onCommit={v => onEditPlayer(player, 'tag', v)}
-                  />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <EditableCell
+                      value={player.tag}
+                      editable
+                      width={80}
+                      onCommit={v => onEditPlayer(player, 'tag', v)}
+                    />
+                    {/* In god mode the tag and name are EDITORS, so they
+                        can't double as the card link — without this the
+                        card was only reachable through the unmarked OVR
+                        cell, which nobody found. */}
+                    <button
+                      className="btn-small"
+                      onClick={() => setViewingPlayer(player)}
+                      title="Open player card (attributes are edited there)"
+                      style={{ padding: '1px 7px', fontSize: '0.72rem', lineHeight: 1.4 }}
+                    >👁</button>
+                  </span>
                 ) : (
                   <strong
                     onClick={() => setViewingPlayer(player)}
