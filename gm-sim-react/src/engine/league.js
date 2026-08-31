@@ -13,7 +13,7 @@ import { REGIONS, REGION_KEYS } from '../data/regions.js';
 import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
-import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1_MAP_ANCHOR_FLOOR } from '../data/maps.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap, computeTeamSalary, getSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
@@ -190,7 +190,12 @@ export function initGame(humanRegion, humanTeamIndex) {
 
   // Tunable rules the player can change mid-save. Kept in one bag so
   // future settings persist without touching persistence again.
-  const settings = { salaryCap: DEFAULT_SALARY_CAP };
+  const settings = {
+    salaryCap: DEFAULT_SALARY_CAP,
+    // Marks that this save's map ratings were generated under the 75
+    // anchor, so the load-time lift for older saves never touches it.
+    mapAnchorFloor: TIER1_MAP_ANCHOR_FLOOR,
+  };
   syncSalaryCap({ settings });
 
   return {

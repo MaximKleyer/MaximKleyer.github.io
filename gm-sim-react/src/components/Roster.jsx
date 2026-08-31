@@ -14,6 +14,7 @@
 
 import { useState, useRef, Fragment } from 'react';
 import Strategy from './Strategy.jsx';
+import PlayerCard from './PlayerCard.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
@@ -53,6 +54,7 @@ export default function Roster({
 }) {
   const [, forceUpdate] = useState(0);
   const [confirmingRelease, setConfirmingRelease] = useState(null); // player or null
+  const [viewingPlayer, setViewingPlayer] = useState(null);           // player card modal
   // Depth-chart drag state. Row order IS the depth chart: the top
   // STARTER_COUNT rows start, everything under the line is a sub.
   //
@@ -96,8 +98,6 @@ export default function Roster({
     forceUpdate(n => n + 1);
     if (onUpdate) onUpdate();
   }
-
-  const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
 
   const usedSalary = computeTeamSalary(team);
   const capRemaining = computeCapRemaining(team);
@@ -193,11 +193,11 @@ export default function Roster({
         <thead>
           <tr>
             <th style={{ width: 24 }}></th>
-            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th>
+            <th title="Click a player's name or OVR to open their full card — attributes, stats, contract.">OVR</th>
             <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
-            <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
+            <th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
             <th>Salary</th><th>Yrs</th><th>Morale</th>
-            <th>K/D</th><th>ACS</th>
             <th></th>
           </tr>
         </thead>
@@ -210,7 +210,7 @@ export default function Roster({
             <Fragment key={player.id}>
             {idx === STARTER_COUNT && (
               <tr className="starter-divider">
-                <td colSpan={18} style={{
+                <td colSpan={17} style={{
                   padding: 0, height: 0, borderTop: '2px solid #ff4655',
                   position: 'relative',
                 }}>
@@ -250,17 +250,29 @@ export default function Roster({
                     onCommit={v => onEditPlayer(player, 'tag', v)}
                   />
                 ) : (
-                  <strong>{player.tag}</strong>
+                  <strong
+                    onClick={() => setViewingPlayer(player)}
+                    style={{ cursor: 'pointer', textDecoration: 'underline dotted rgba(255,255,255,0.35)', textUnderlineOffset: 3 }}
+                    title="View player card"
+                  >{player.tag}</strong>
                 )}
                 {player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}
               </td>
               <td>
-                <EditableCell
-                  value={player.name}
-                  editable={godMode}
-                  width={130}
-                  onCommit={v => onEditPlayer(player, 'name', v)}
-                />
+                {godMode ? (
+                  <EditableCell
+                    value={player.name}
+                    editable
+                    width={130}
+                    onCommit={v => onEditPlayer(player, 'name', v)}
+                  />
+                ) : (
+                  <span
+                    onClick={() => setViewingPlayer(player)}
+                    style={{ cursor: 'pointer' }}
+                    title="View player card"
+                  >{player.name}</span>
+                )}
               </td>
               <td title={nationalityName(player.nationality)}>
                 <NationalitySelect
@@ -278,33 +290,24 @@ export default function Roster({
                   onCommit={v => onEditPlayer(player, 'age', v)}
                 />
               </td>
-              <td>
-                {player.overall}
+              <td
+                onClick={() => setViewingPlayer(player)}
+                style={{ cursor: 'pointer' }}
+                title="View player card"
+              >
+                <strong>{player.overall}</strong>
                 <DeltaIndicator delta={d?.overall} />
               </td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 <RoleTag player={player} />
               </td>
-              <td>
-                <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
-                <DeltaIndicator delta={d?.aim} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.positioning} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'positioning')} />
-                <DeltaIndicator delta={d?.positioning} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.utility} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'utility')} />
-                <DeltaIndicator delta={d?.utility} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.gamesense} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'gamesense')} />
-                <DeltaIndicator delta={d?.gamesense} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.clutch} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'clutch')} />
-                <DeltaIndicator delta={d?.clutch} size="small" />
-              </td>
+              {/* Game stats — attributes live on the player card now. */}
+              <td style={{ opacity: 0.85 }}>{player.stats?.maps || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.kills || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.deaths || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.assists || 0}</td>
+              <td>{player.kd}</td>
+              <td>{player.avgAcs}</td>
 
               {/* ── Phase 7: contract + morale columns ── */}
               <td>
@@ -368,8 +371,6 @@ export default function Roster({
                 </span>
               </td>
 
-              <td>{player.kd}</td>
-              <td>{player.avgAcs}</td>
               <td>
                 <button
                   className="btn-small btn-danger"
@@ -388,6 +389,17 @@ export default function Roster({
           })}
         </tbody>
       </table>
+
+      {viewingPlayer && (
+        <PlayerCard
+          player={viewingPlayer}
+          team={team}
+          isIgl={viewingPlayer.id === team.strategy.iglId}
+          godMode={godMode}
+          onEditPlayer={onEditPlayer}
+          onClose={() => setViewingPlayer(null)}
+        />
+      )}
 
       {/* Buyout confirmation modal */}
       {confirmingRelease && (

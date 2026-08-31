@@ -140,8 +140,11 @@ export function evaluatePoach(gameState, team, player, { movesRemaining = null }
  */
 export function backfillTier2Team(gameState, regionKey, team, departed) {
   // Held below whoever left: a club that loses a player must end up
-  // worse, otherwise poaching is free for everyone involved.
-  const ceiling = Math.min(BACKFILL_CEILING, (departed.overall || 65) - 1);
+  // worse, otherwise poaching is free for everyone involved. The margin
+  // is 3, not 1, because generation adds a role IQ bias AFTER the
+  // stat-range roll (+6 game sense for initiators ≈ +1 overall), which
+  // let a "one below" replacement land at exact parity.
+  const ceiling = Math.min(BACKFILL_CEILING, (departed.overall || 65) - 3);
   const floor = Math.min(BACKFILL_FLOOR, ceiling - 4);
 
   const replacement = generatePlayer({

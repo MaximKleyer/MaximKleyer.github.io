@@ -16,7 +16,7 @@ import { computeTeamSalary, getSalaryCap } from '../src/data/salary.js';
 import { simulateMap, simulateSeries, isTeamAAttacking, getIglBonus, iglLeadershipMultiplier } from '../src/classes/Match.js';
 import { generatePlayer } from '../src/classes/Player.js';
 import { getStageMatches } from '../src/engine/bracket.js';
-import { developPlayer, runMidseasonDevelopment, DEV_WINDOW_SCALE } from '../src/engine/season.js';
+import { developPlayer, runMidseasonDevelopment, DEV_WINDOW_SCALE, cloneWithoutPlayerStats as archiveStrip } from '../src/engine/season.js';
 import { getStageMatches as getIntlStageMatches } from '../src/engine/bracketInternational.js';
 import { getStageMatches as getWorldsStageMatches } from '../src/engine/bracketWorlds.js';
 import {
@@ -777,4 +777,102 @@ test('godMode round-trips through the save', () => {
   assert.equal(roundTrip(gs).godMode, true, 'enabled toggle must survive');
   gs.godMode = false;
   assert.equal(roundTrip(gs).godMode, false, 'disabled state must survive too');
+});
+
+/* ─────────────── Round log for the live viewer ─────────────── */
+
+describe('round log', () => {
+  test('the log reconciles exactly with the final scoreboard', () => {
+    const gs = newGame();
+    const region = gs.regions[gs.humanRegion];
+    const a = humanTeam(gs);
+    const b = region.teams.find(t => !t.isHuman);
+    const result = simulateMap(a, b);
+
+    assert.ok(Array.isArray(result.roundLog), 'map result carries a round log');
+    assert.equal(result.roundLog.length, result.totalRounds, 'one entry per round');
+
+    const lineup = [...result.rosterAIds, ...result.rosterBIds];
+    const kills = new Array(10).fill(0), deaths = new Array(10).fill(0);
+    const assists = new Array(10).fill(0), cs = new Array(10).fill(0);
+    let roundsA = 0, roundsB = 0;
+    for (const r of result.roundLog) {
+      r.w === 'A' ? roundsA++ : roundsB++;
+      assert.ok(['elim', 'spike', 'defuse', 'time'].includes(r.t), `win type ${r.t}`);
+      assert.ok(['A', 'B'].includes(r.atk), 'attacking side recorded');
+      for (const e of r.ev) {
+        kills[e.k]++; deaths[e.d]++;
+        if (e.a != null) assists[e.a]++;
+      }
+      r.cs.forEach((v, i) => { cs[i] += v; });
+    }
+    assert.equal(roundsA, result.roundsA, 'round strip matches the scoreline');
+    assert.equal(roundsB, result.roundsB);
+
+    lineup.forEach((id, i) => {
+      const p = result.playerStats[id];
+      assert.equal(kills[i], p.kills, `${p.tag} kills reconcile`);
+      assert.equal(deaths[i], p.deaths, `${p.tag} deaths reconcile`);
+      assert.equal(assists[i], p.assists, `${p.tag} assists reconcile`);
+      assert.equal(Math.round(cs[i] / result.totalRounds), p.acs, `${p.tag} ACS reconciles`);
+      assert.ok(p.kast >= 0 && p.kast <= 100, 'KAST is a percentage');
+      assert.ok(p.fk + p.fd <= result.totalRounds, 'first duels bounded by rounds');
+    });
+
+    // Exactly one first kill and one first death per contested round.
+    const fkTotal = lineup.reduce((s, id) => s + result.playerStats[id].fk, 0);
+    const fdTotal = lineup.reduce((s, id) => s + result.playerStats[id].fd, 0);
+    assert.equal(fkTotal, fdTotal, 'every opening duel has both sides');
+  });
+
+  test('every logged round is self-consistent: the winner has the survivors', () => {
+    // The IGL swing used to flip a round's winner AFTER simulating it,
+    // shipping ~2-3% of rounds where the strip said you won while all
+    // five of you died in the events. The swing now decides up front and
+    // the fight re-simulates until it matches.
+    const gs = newGame();
+    const region = gs.regions[gs.humanRegion];
+    const a = humanTeam(gs);
+    const b = region.teams.find(t => !t.isHuman);
+    // Crank the IGL gap so the swing fires often.
+    a.strategy.iglId = a.startingFive[0].id;
+    a.startingFive[0].ratings.gamesense = 99;
+    b.strategy.iglId = b.startingFive[0].id;
+    b.startingFive[0].ratings.gamesense = 55;
+
+    for (let m = 0; m < 6; m++) {
+      const result = simulateMap(a, b);
+      for (const r of result.roundLog) {
+        if (r.survivors.length === 0) continue;   // double-elim trade edge
+        const survivorSides = new Set(r.survivors.map(i => (i < 5 ? 'A' : 'B')));
+        assert.ok(survivorSides.has(r.w),
+          `round won by ${r.w} but survivors are ${[...survivorSides]}`);
+      }
+    }
+  });
+
+  test('AI-only matches skip the persisted log but keep the derived stats', () => {
+    const gs = newGame();
+    const [a, b] = gs.regions[gs.humanRegion].teams.filter(t => !t.isHuman);
+    const result = simulateMap(a, b);
+    assert.equal(result.roundLog, undefined,
+      'nobody can watch an AI match — logging them all costs ~860KB a stage');
+    for (const id of [...result.rosterAIds, ...result.rosterBIds]) {
+      const p = result.playerStats[id];
+      assert.ok(typeof p.kast === 'number' && typeof p.fk === 'number',
+        'KAST/FK still derive for AI matches');
+    }
+  });
+
+  test('history archives strip the round log like they strip player stats', () => {
+    const gs = newGame();
+    const region = gs.regions[gs.humanRegion];
+    const a = humanTeam(gs);
+    const b = region.teams.find(t => !t.isHuman);
+    const result = simulateMap(a, b);
+    const cloned = archiveStrip({ result: { maps: [result] } });
+    assert.equal(cloned.result.maps[0].roundLog, undefined, 'roundLog dropped');
+    assert.equal(cloned.result.maps[0].playerStats, undefined, 'playerStats dropped');
+    assert.equal(cloned.result.maps[0].totalRounds, result.totalRounds, 'scoreline kept');
+  });
 });
