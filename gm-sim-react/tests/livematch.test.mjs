@@ -67,7 +67,8 @@ function harness() {
   const btn = label => r.root.findAllByType('button')
     .find(b => (b.children || []).join('').includes(label));
   const text = () => JSON.stringify(r.toJSON());
-  return { series, teamA, teamB, update, btn, text };
+  const drain = () => { gs.season.activeSeries = []; };
+  return { series, teamA, teamB, update, btn, text, drain };
 }
 
 test('a shorter next map neither crashes the render nor skips its animation', () => {
@@ -103,4 +104,30 @@ test('browsing another tab mid-animation neither spoils nor un-gates the flow', 
     'browsing a different tab must not un-gate the next-map control');
   const snapshot = h.text();
   assert.ok(!snapshot.includes('wins the series'), 'no banner while the latest map is unrevealed');
+});
+
+test('a 1-1 series animates its decider instead of auto-completing', () => {
+  // The user-reported shape: two maps split, map 3 arrives WITH the
+  // series winner set and the active entry drained. The decider must
+  // animate from round zero — not snap in fully revealed.
+  const h = harness();
+  const m1 = mkMap(24, null); m1.winner = h.teamA;
+  h.series.maps.push(m1); h.update();
+  TestRenderer.act(() => { h.btn('Skip to map result').props.onClick(); });
+
+  const m2 = mkMap(20, null); m2.winner = h.teamB;
+  h.series.maps.push(m2); h.update();
+  assert.ok(h.btn('Skip to map result'), 'map 2 animates');
+  TestRenderer.act(() => { h.btn('Skip to map result').props.onClick(); });
+  assert.ok(h.btn('Play next map'), 'decider is offered at 1-1');
+
+  const m3 = mkMap(19, null); m3.winner = h.teamB;
+  h.series.maps.push(m3);
+  h.series.winner = h.teamB; h.series.score = [1, 2];
+  h.drain();                       // entry leaves activeSeries on completion
+  h.update();
+
+  assert.ok(h.btn('Skip to map result'), 'map 3 must animate from round zero');
+  assert.ok(!h.text().includes('wins the series'),
+    'the banner must wait for the decider reveal');
 });
