@@ -13,6 +13,7 @@
  */
 
 import { useState } from 'react';
+import MatchReport from './MatchReport.jsx';
 import MatchCard from './MatchCard.jsx';
 import { getCurrentSlot } from '../engine/season.js';
 import { findActiveSeriesForMatch } from '../engine/activeSeries.js';
@@ -35,59 +36,9 @@ const GROUP_KEYS = ['A', 'B', 'C', 'D'];
 /* ─────────────── Shared stats detail (mirrors Schedule/International) ─────────────── */
 
 function MatchDetail({ result, teamA, teamB }) {
-  const [selectedMap, setSelectedMap] = useState(0);
-  if (!result?.maps?.length) return null;
-  const map = result.maps[selectedMap];
-  if (!map) return null;
-  const aIds = map.rosterAIds || [];
-  const bIds = map.rosterBIds || [];
-  const aStats = aIds.map(id => map.playerStats?.[id]).filter(Boolean).sort((a, b) => b.acs - a.acs);
-  const bStats = bIds.map(id => map.playerStats?.[id]).filter(Boolean).sort((a, b) => b.acs - a.acs);
   return (
     <div className="match-detail">
-      <div className="map-score-row">
-        {result.maps.map((m, i) => (
-          <button
-            key={i}
-            className={`map-pill ${selectedMap === i ? 'active' : ''} ${m.winner === teamA ? 'team-a-won' : 'team-b-won'}`}
-            onClick={(e) => { e.stopPropagation(); setSelectedMap(i); }}
-          >
-            <span className="map-pill-label">{m.mapId ? mapName(m.mapId) : `Map ${i + 1}`}</span>
-            <span className="map-pill-score">{Math.max(m.roundsA, m.roundsB)}-{Math.min(m.roundsA, m.roundsB)}</span>
-            <span className="map-pill-winner">{m.winner?.abbr}</span>
-          </button>
-        ))}
-      </div>
-      <div className="map-stats-grid">
-        <StatsTable stats={aStats} teamName={teamA?.name} teamColor={teamA?.color} />
-        <StatsTable stats={bStats} teamName={teamB?.name} teamColor={teamB?.color} />
-      </div>
-    </div>
-  );
-}
-
-function StatsTable({ stats, teamName, teamColor }) {
-  return (
-    <div className="map-stats-team">
-      <div className="map-stats-team-header">
-        <span className="map-stats-color" style={{ background: teamColor || '#333' }} />
-        <span>{teamName || 'TBD'}</span>
-      </div>
-      <table className="map-stats-table">
-        <thead><tr><th>Player</th><th>Role</th><th>K</th><th>D</th><th>A</th><th>ACS</th></tr></thead>
-        <tbody>
-          {stats.map(s => (
-            <tr key={s.id || s.tag}>
-              <td><strong>{s.tag}</strong></td>
-              <td>{s.role}</td>
-              <td>{s.kills}</td>
-              <td>{s.deaths}</td>
-              <td>{s.assists}</td>
-              <td>{s.acs}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <MatchReport result={result} teamA={teamA} teamB={teamB} />
     </div>
   );
 }
