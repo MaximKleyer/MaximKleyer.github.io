@@ -207,7 +207,6 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [sideFilter, setSideFilter] = useState('all');
-  const animatedRef = useRef(-1);                     // maps.length last animated
 
   const maps = series?.maps || [];
   const latest = maps.length - 1;
@@ -215,13 +214,22 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
   const map = typeof activeIdx === 'number' && activeIdx >= 0 ? maps[activeIdx] : null;
 
   // A new map appeared → jump to it and restart the animation. This runs
-  // DURING render (React's sanctioned derived-state reset), not in an
-  // effect: an effect fires after the first commit, and that one stale
-  // frame both spoiled the new map and — when the new map was shorter
-  // than the fully-revealed previous one — read past the round log and
+  // DURING render (React's derived-state reset), not in an effect: an
+  // effect fires after the first commit, and that one stale frame both
+  // spoiled the new map and — when the new map was shorter than the
+  // fully-revealed previous one — read past the round log and
   // white-screened the whole app.
-  if (maps.length - 1 !== animatedRef.current) {
-    animatedRef.current = maps.length - 1;
+  //
+  // The guard MUST be state, never a ref. An earlier version tracked the
+  // animated map count in a ref, and in dev StrictMode react-dom can
+  // discard a render after the ref mutation while also discarding its
+  // queued setState — the guard then reads "already reset" forever, the
+  // reveal counter keeps the previous map's value, and every later map
+  // snaps in fully revealed. State comparison is replayed with the
+  // render, so a discarded reset simply re-issues.
+  const [animatedLen, setAnimatedLen] = useState(maps.length);
+  if (maps.length !== animatedLen) {
+    setAnimatedLen(maps.length);
     if (mapIdx !== 'latest') setMapIdx('latest');
     setRevealed(0);
     if (!playing) setPlaying(true);
