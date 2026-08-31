@@ -162,10 +162,17 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
           </div>
         </div>
 
-        {/* ── Score line ── */}
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 18, margin: '14px 0 4px', flexWrap: 'wrap' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#6aa9ff' }}>
-            <TeamLogo team={series.teamA} size={28} />{series.teamA?.name}
+        {/* ── Score line — symmetric grid: flex centering drifted with
+               unequal team-name widths, leaving the map label visibly
+               off center. ── */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto minmax(110px, auto) auto 1fr',
+          alignItems: 'center', columnGap: 16, margin: '14px 0 4px',
+        }}>
+          <span style={{ justifySelf: 'end', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#6aa9ff', minWidth: 0 }}>
+            <TeamLogo team={series.teamA} size={28} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{series.teamA?.name}</span>
           </span>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.8rem', fontWeight: 700 }}>
             {mapIdx === 'all' ? winsA : shownRoundsA}
@@ -181,8 +188,9 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '1.8rem', fontWeight: 700 }}>
             {mapIdx === 'all' ? winsB : shownRoundsB}
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#ff8c95' }}>
-            {series.teamB?.name}<TeamLogo team={series.teamB} size={28} />
+          <span style={{ justifySelf: 'start', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700, color: '#ff8c95', minWidth: 0 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{series.teamB?.name}</span>
+            <TeamLogo team={series.teamB} size={28} />
           </span>
         </div>
 

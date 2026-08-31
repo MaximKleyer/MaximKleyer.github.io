@@ -160,8 +160,17 @@ const dash = <span style={{ opacity: 0.35 }}>—</span>;
 
 /** One team's VLR-style stat table. */
 export function StatTable({ rows }) {
+  // table-layout fixed with a shared colgroup: the two team tables (and
+  // the live viewer's) render as separate <table>s, and auto layout
+  // sized their columns independently — so one team's ACS column sat a
+  // few pixels off the other's. Fixed widths make every table line up.
+  const statCol = `${(78 / 11).toFixed(3)}%`;
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 14, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem' }}>
+    <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', marginBottom: 14, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem' }}>
+      <colgroup>
+        <col style={{ width: '22%' }} />
+        {Array.from({ length: 11 }, (_, i) => <col key={i} style={{ width: statCol }} />)}
+      </colgroup>
       <thead>
         <tr style={{ fontSize: '0.62rem', letterSpacing: '0.06em', opacity: 0.55 }}>
           <th style={{ textAlign: 'left', padding: '4px 8px' }}></th>
@@ -172,7 +181,7 @@ export function StatTable({ rows }) {
       <tbody>
         {rows.map(row => (
           <tr key={row.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <td style={{ textAlign: 'left', padding: '6px 8px' }}>
+            <td style={{ textAlign: 'left', padding: '6px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               <strong style={{ color: row.isA ? '#6aa9ff' : '#ff8c95' }}>{row.tag}</strong>
               <span style={{ opacity: 0.45, marginLeft: 8, fontSize: '0.85em' }}>{row.teamAbbr}</span>
             </td>
