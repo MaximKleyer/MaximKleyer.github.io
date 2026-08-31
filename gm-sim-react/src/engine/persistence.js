@@ -41,7 +41,7 @@
 import { Team } from '../classes/Team.js';
 import { Player, registerTag } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1_MAP_ANCHOR_FLOOR } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { inferRoleFromStats } from '../data/roles.js';
@@ -361,21 +361,24 @@ function deserialize(json) {
       region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
     }
   }
+  // Saves written before the 75 anchor carry ratings centred on the old
+  // anchor (raw team overall). Re-centre them ONCE: shift every side by
+  // the same amount, so the team's relative spread — its standout maps,
+  // its problem maps, everything training earned — is preserved exactly,
+  // and only ever upward. The settings marker makes this genuinely
+  // one-time: without it the lift re-fired on fresh saves whose
+  // generation noise sat a hair under the anchor.
+  const needsAnchorLift = (data.settings.mapAnchorFloor || 0) < TIER1_MAP_ANCHOR_FLOOR;
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
         team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
         continue;
       }
-      // Saves written before the 75 anchor carry ratings centred on the
-      // old anchor (raw team overall). Re-centre them ONCE: shift every
-      // side by the same amount, so the team's relative spread — its
-      // standout maps, its problem maps, everything training earned —
-      // is preserved exactly. Only ever shifts UP (a mean above target
-      // is left alone), and the 2-point tolerance makes reloads no-ops.
-      liftMapRatingsToAnchor(team);
+      if (needsAnchorLift) liftMapRatingsToAnchor(team);
     }
   }
+  data.settings.mapAnchorFloor = TIER1_MAP_ANCHOR_FLOOR;
   // Legacy status migration: very old saves used 'complete' for end-of-season,
   // Phase 6c renamed it to 'season-complete'. Translate so the new flow works.
   if (data.season?.status === 'complete') {

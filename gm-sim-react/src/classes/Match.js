@@ -137,13 +137,21 @@ function checkAssist(killer, aliveAllies) {
 
 const KILL_BONUS = { 5: 150, 4: 130, 3: 110, 2: 90, 1: 70 };
 
-function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assignMapB, sideMultA = 1, sideMultB = 1) {
+function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assignMapB, sideMultA = 1, sideMultB = 1, recorder = null) {
   const aliveA = [...teamAPlayers];
   const aliveB = [...teamBPlayers];
   const roundKills = {}, roundCS = {};
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
     roundKills[p.id] = 0; roundCS[p.id] = 0;
   }
+  // Kill events for the live viewer, referenced by LINEUP INDEX
+  // (0-4 team A, 5-9 team B) — ids are 36-char UUIDs and a full series
+  // of them would triple the save's per-map footprint.
+  const ev = [];
+  const idx = p => {
+    const i = teamAPlayers.indexOf(p);
+    return i >= 0 ? i : 5 + teamBPlayers.indexOf(p);
+  };
 
   while (aliveA.length > 0 && aliveB.length > 0) {
     const fA = pickFighter(aliveA, assignMapA);
@@ -168,6 +176,7 @@ function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assig
 
     const asst = checkAssist(killer, kAlive);
     if (asst) { roundStats[asst.id].assists++; roundCS[asst.id] += 25; }
+    ev.push({ k: idx(killer), d: idx(victim), a: asst ? idx(asst) : null });
 
     vAlive.splice(vAlive.indexOf(victim), 1);
 
@@ -180,6 +189,7 @@ function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assig
       roundCS[trader.id] += td + tb;
       const ta = checkAssist(trader, vAlive);
       if (ta) { roundStats[ta.id].assists++; roundCS[ta.id] += 25; }
+      ev.push({ k: idx(trader), d: idx(killer), a: ta ? idx(ta) : null });
       kAlive.splice(kAlive.indexOf(killer), 1);
     }
   }
@@ -196,7 +206,15 @@ function simulateRound(teamAPlayers, teamBPlayers, roundStats, assignMapA, assig
   for (const p of [...teamAPlayers, ...teamBPlayers]) {
     roundStats[p.id].combatScore += roundCS[p.id];
   }
-  return aliveA.length > 0 ? 'A' : 'B';
+  const roundWinner = aliveA.length > 0 ? 'A' : 'B';
+  if (recorder) {
+    // Combat-score deltas by lineup index — the viewer replays these to
+    // keep its live scoreboard exactly on the stored final numbers.
+    const cs = [...teamAPlayers, ...teamBPlayers].map(p => roundCS[p.id]);
+    const survivors = (aliveA.length > 0 ? aliveA : aliveB).map(p => idx(p));
+    recorder({ w: roundWinner, ev, cs, survivors });
+  }
+  return roundWinner;
 }
 
 /**
@@ -266,6 +284,25 @@ export function simulateMap(teamA, teamB, plan = null) {
   // half-by-half scorelines.
   const roundSides = [];
 
+  // Per-round log for the live viewer. Each entry:
+  //   { w, atk, t, ev, cs, survivors }
+  //   w         round winner ('A'|'B')
+  //   atk       attacking side that round
+  //   t         presentation win type: 'elim' | 'spike' | 'defuse' | 'time'
+  //   ev        kill events [{k, d, a}] by lineup index (0-4 A, 5-9 B)
+  //   cs        combat-score deltas by lineup index
+  //   survivors lineup indexes alive at round end
+  const roundLog = [];
+
+  // The duel sim ends every round by elimination; the win TYPE is
+  // presentation flavor synthesized at generation so the round strip can
+  // show spikes and defuses the way a real match sheet does.
+  function synthWinType(winnerIsAttacking) {
+    const r = Math.random();
+    if (winnerIsAttacking) return r < 0.62 ? 'elim' : 'spike';
+    return r < 0.66 ? 'elim' : r < 0.88 ? 'defuse' : 'time';
+  }
+
   function playRound() {
     const roundIndex = roundsA + roundsB;
     const aAttacking = isTeamAAttacking(roundIndex, firstHalfAttacker);
@@ -275,13 +312,47 @@ export function simulateMap(teamA, teamB, plan = null) {
     const sideMultB = (aAttacking ? multB.defense : multB.attack) * leadB;
     roundSides.push(aAttacking ? 'A-atk' : 'B-atk');
 
+    // Each attempt simulates into a fresh buffer so a rejected round
+    // leaves no trace in the cumulative stats.
+    const attempt = () => {
+      const temp = {};
+      for (const p of [...lineupA, ...lineupB]) {
+        temp[p.id] = { kills: 0, deaths: 0, assists: 0, combatScore: 0 };
+      }
+      let captured = null;
+      const winner = simulateRound(
+        lineupA, lineupB, temp, assignMapA, assignMapB, sideMultA, sideMultB,
+        e => { captured = e; }
+      );
+      return { winner, temp, captured };
+    };
+
+    // The IGL swing decides UP FRONT whether the shot-caller steals this
+    // round; the fight is then re-simulated until it produces that
+    // outcome (expected ~2 tries). Flipping the winner AFTER one sim, as
+    // this used to, shipped self-contradictory logs ~2-3% of rounds: the
+    // strip said you won a round in which all five of you died.
     const iglDiff = iglBonusA - iglBonusB;
     const iglSwing = iglDiff * 0.01;
-    if (Math.random() < Math.abs(iglSwing)) {
-      simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
-      return iglSwing > 0 ? 'A' : 'B';
+    let forced = null;
+    if (Math.random() < Math.abs(iglSwing)) forced = iglSwing > 0 ? 'A' : 'B';
+
+    let result = attempt();
+    for (let tries = 0; forced && result.winner !== forced && tries < 6; tries++) {
+      result = attempt();
     }
-    return simulateRound(lineupA, lineupB, roundStats, assignMapA, assignMapB, sideMultA, sideMultB);
+
+    for (const p of [...lineupA, ...lineupB]) {
+      const t = result.temp[p.id];
+      roundStats[p.id].kills += t.kills;
+      roundStats[p.id].deaths += t.deaths;
+      roundStats[p.id].assists += t.assists;
+      roundStats[p.id].combatScore += t.combatScore;
+    }
+    const entry = { ...result.captured, atk: aAttacking ? 'A' : 'B' };
+    entry.t = synthWinType((entry.w === 'A') === aAttacking);
+    roundLog.push(entry);
+    return result.winner;
   }
 
   const OT_TRIGGER = ROUNDS_TO_WIN - 1; // 12
@@ -319,8 +390,31 @@ export function simulateMap(teamA, teamB, plan = null) {
     }
   }
 
+  // FK/FD and KAST come straight off the round log: the first event of a
+  // round is its opening duel, and KAST counts rounds with a kill, an
+  // assist, or survival (trades are folded into kills already).
+  const lineup = [...lineupA, ...lineupB];
+  const fk = new Array(10).fill(0), fd = new Array(10).fill(0);
+  const kastRounds = new Array(10).fill(0);
+  for (const r of roundLog) {
+    if (r.ev.length > 0) { fk[r.ev[0].k]++; fd[r.ev[0].d]++; }
+    const contributed = new Set(r.survivors);
+    for (let ei = 0; ei < r.ev.length; ei++) {
+      const e = r.ev[ei];
+      contributed.add(e.k);
+      if (e.a != null) contributed.add(e.a);
+      // The T in KAST: a trade event immediately follows the kill it
+      // trades, and its victim is that kill's author — so the original
+      // victim's death was avenged and counts as a contribution.
+      const next = r.ev[ei + 1];
+      if (next && next.d === e.k) contributed.add(e.d);
+    }
+    for (const i of contributed) kastRounds[i]++;
+  }
+
   for (const player of [...lineupA, ...lineupB]) {
     const rs = roundStats[player.id];
+    const li = lineup.indexOf(player);
     const acs = Math.round(rs.combatScore / totalRounds);
     playerStats[player.id] = {
       id: player.id,
@@ -329,6 +423,8 @@ export function simulateMap(teamA, teamB, plan = null) {
       role: roleByPlayerId[player.id] || '—',
       teamAbbr: rosterAIds.includes(player.id) ? teamA.abbr : teamB.abbr,
       kills: rs.kills, deaths: rs.deaths, assists: rs.assists, acs,
+      fk: fk[li], fd: fd[li],
+      kast: Math.round(100 * kastRounds[li] / totalRounds),
     };
     player.stats.kills += rs.kills;
     player.stats.deaths += rs.deaths;
@@ -350,6 +446,12 @@ export function simulateMap(teamA, teamB, plan = null) {
     sidePickedBy: plan?.sidePickedBy ?? null,
     wentToOvertime: totalRounds > REGULATION_ROUNDS,
     roundSides,
+    // Per-round detail for the live viewer — kept ONLY for matches the
+    // human plays. It measures ~6KB per map, and the league plays ~66 AI
+    // series a stage that nobody can watch; logging them all measured
+    // out to ~860KB of save growth per stage. Stripped from history
+    // archives alongside playerStats regardless.
+    roundLog: (teamA.isHuman || teamB.isHuman) ? roundLog : undefined,
   };
 }
 

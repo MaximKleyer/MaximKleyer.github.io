@@ -528,13 +528,13 @@ function snapshotAllBrackets(gameState) {
  * intact — cloning a Team would break identity comparisons and the
  * __ref machinery in persistence.js.
  */
-function cloneWithoutPlayerStats(node) {
+export function cloneWithoutPlayerStats(node) {
   if (node === null || typeof node !== 'object') return node;
   if (node instanceof Team) return node;
   if (Array.isArray(node)) return node.map(cloneWithoutPlayerStats);
   const out = {};
   for (const [k, v] of Object.entries(node)) {
-    if (k === 'playerStats') continue;
+    if (k === 'playerStats' || k === 'roundLog') continue;
     out[k] = cloneWithoutPlayerStats(v);
   }
   return out;
