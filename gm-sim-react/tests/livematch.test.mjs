@@ -51,7 +51,7 @@ function mkMap(rounds, winner) {
   };
 }
 
-function harness() {
+function harness(extraProps = {}) {
   const teamA = { abbr: 'AAA', name: 'Team A', roster: [], isHuman: true };
   const teamB = { abbr: 'BBB', name: 'Team B', roster: [] };
   const series = { teamA, teamB, bestOf: 3, maps: [], winsA: 0, winsB: 0, winner: null, score: null, mapPlan: [] };
@@ -60,6 +60,7 @@ function harness() {
     React.createElement(LiveMatch, {
       gameState: gs, seriesId: 's1',
       onAdvanceMap: () => {}, onSimSeries: () => {}, onClose: () => {},
+      ...extraProps,
     }));
   let r;
   TestRenderer.act(() => { r = TestRenderer.create(el()); });
@@ -130,4 +131,31 @@ test('a 1-1 series animates its decider instead of auto-completing', () => {
   assert.ok(h.btn('Skip to map result'), 'map 3 must animate from round zero');
   assert.ok(!h.text().includes('wins the series'),
     'the banner must wait for the decider reveal');
+});
+
+
+test('the reveal-complete signal waits for the final map animation', () => {
+  // The result toast is held back while watching — it must release only
+  // once the last map's reveal finishes, never while the engine-complete
+  // series is still animating.
+  let revealed = 0;
+  const h = harness({ onSeriesRevealed: () => { revealed++; } });
+
+  const m1 = mkMap(22, null); m1.winner = h.teamA;
+  h.series.maps.push(m1); h.update();
+  assert.equal(revealed, 0, 'nothing to reveal while the series is live');
+
+  const m2 = mkMap(20, null); m2.winner = h.teamA;
+  h.series.maps.push(m2);
+  h.series.winner = h.teamA; h.series.score = [2, 0];
+  h.drain();
+  h.update();
+  assert.equal(revealed, 0,
+    'series is engine-complete but the final map is still animating — hold the toast');
+
+  TestRenderer.act(() => { h.btn('Skip to map result').props.onClick(); });
+  assert.equal(revealed, 1, 'reveal finished — release exactly once');
+
+  h.update();
+  assert.equal(revealed, 1, 'later renders must not re-fire the signal');
 });
