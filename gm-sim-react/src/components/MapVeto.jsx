@@ -7,7 +7,10 @@
  * veto and where it stands.
  *
  * Escape hatches, because a full group stage is a lot of series:
- *   • "Auto-pick & Sim"        — keep the CPU's plan for THIS series
+ *   • "Auto-pick"              — fill in the CPU's plan for THIS series
+ *                                and show it on the board for review
+ *   • "Sim Series"             — start the series with the current plan
+ *                                (auto-completing anything unresolved)
  *   • "Don't ask again ..."    — stop prompting for the rest of the season
  *
  * "Watch live when it starts" hands the resolved series to the live
@@ -125,8 +128,19 @@ export default function MapVeto({ pending, humanTeam, oppTeam, onResolve, onSkip
     afterHumanAction();
   }
 
+  // Fill in the CPU's plan but DON'T start the series: the resolved
+  // board and timeline stay on screen so the plan can be reviewed (and
+  // "watch live" toggled) before committing.
   function autoPick() {
     autoCompleteVeto(veto, teamForSide);
+    rerender();
+  }
+
+  // Start the series with whatever the plan currently is. Mid-veto this
+  // behaves like the old combined button: the CPU completes the
+  // remaining steps and the series runs.
+  function simSeries() {
+    if (!veto.complete) autoCompleteVeto(veto, teamForSide);
     onResolve(vetoToMapPlan(veto), { watchLive });
   }
 
@@ -134,7 +148,9 @@ export default function MapVeto({ pending, humanTeam, oppTeam, onResolve, onSkip
   const actionColor = step?.type === 'ban' ? BAN : PICK;
 
   let prompt;
-  if (awaitingSide) {
+  if (veto.complete) {
+    prompt = 'Veto complete — review the plan, then Sim Series';
+  } else if (awaitingSide) {
     prompt = `${oppTeam?.abbr} picked ${mapName(veto.pendingSide.mapId)} — choose your starting side`;
   } else if (myTurn) {
     prompt = `Your turn to ${actionWord} a map`;
@@ -178,7 +194,7 @@ export default function MapVeto({ pending, humanTeam, oppTeam, onResolve, onSkip
           ))}
         </div>
 
-        <p style={{ margin: '4px 0 12px', fontWeight: 600, color: myTurn || awaitingSide ? actionColor : 'inherit' }}>
+        <p style={{ margin: '4px 0 12px', fontWeight: 600, color: veto.complete ? PICK : myTurn || awaitingSide ? actionColor : 'inherit' }}>
           {prompt}
         </p>
 
@@ -282,15 +298,28 @@ export default function MapVeto({ pending, humanTeam, oppTeam, onResolve, onSkip
         {/* ── Escape hatches ── */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
-            onClick={autoPick}
+            onClick={simSeries}
             style={{
               padding: '10px 18px', cursor: 'pointer', fontWeight: 600,
               background: 'rgba(255,70,85,0.85)', border: '1px solid #ff4655',
               borderRadius: 4, color: '#fff',
             }}
           >
-            Auto-pick &amp; Sim Series
+            Sim Series
           </button>
+          {!veto.complete && (
+            <button
+              onClick={autoPick}
+              title="Let the CPU finish the veto, then review the plan before simming"
+              style={{
+                padding: '10px 18px', cursor: 'pointer', fontWeight: 600,
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.25)',
+                borderRadius: 4, color: 'inherit',
+              }}
+            >
+              Auto-pick
+            </button>
+          )}
           <label style={{ fontSize: '0.8em', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: watchLive ? PICK : 'inherit' }}>
             <input type="checkbox" checked={watchLive} onChange={e => setWatchLive(e.target.checked)} />
             Watch live when it starts
