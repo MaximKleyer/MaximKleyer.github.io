@@ -340,6 +340,65 @@ describe('live season', () => {
     assert.ok(q.rounds.every(r => r.every(m => m.winner)), 'unresolved qualifier match after resume');
   });
 
+  test('bracket records apply on the live path and reset with a fresh circuit', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    simVctSeason(gs);
+    // Someone in the human's region played bracket matches — records exist.
+    const played = [...gs.regions.americas.teams,
+      ...Object.values(gs.regions.americas.subRegions).flatMap(s => s.teams)]
+      .reduce((s, t) => s + t.record.wins + t.record.losses, 0);
+    assert.ok(played > 0, 'no bracket records accumulated in the human region');
+    // A new circuit levels everyone.
+    initVctCircuit(gs);
+    for (const rk of REGION_KEYS) {
+      const teams = [...gs.regions[rk].teams,
+        ...Object.values(gs.regions[rk].subRegions).flatMap(s => s.teams)];
+      assert.ok(teams.every(t => t.record.wins === 0 && t.record.losses === 0
+        && t.record.roundWins === 0), `${rk} records not reset`);
+    }
+  });
+
+  test('human match detail is pruned once a slot is left behind', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    simVctSeason(gs);
+    // Every slot before the last one must hold no per-map player detail
+    // anywhere — the one-slot detail budget.
+    const offending = [];
+    const checkResult = (r, where) => {
+      for (const map of r?.maps || []) {
+        if (map.playerStats || map.roundLog) offending.push(where);
+      }
+    };
+    for (let i = 0; i < VCT_SLOTS.length - 1; i++) {
+      const slot = VCT_SLOTS[i];
+      const stored = gs.circuit.events[slot.key];
+      if (!stored) continue;
+      if (slot.type === 'quals') {
+        for (const region of Object.values(stored)) {
+          for (const sub of Object.values(region)) {
+            for (const round of sub.rounds || []) {
+              for (const m of round) checkResult(m.result, slot.key);
+            }
+          }
+        }
+      } else {
+        const events = slot.type === 'regional' ? Object.values(stored) : [stored];
+        for (const ev of events) {
+          for (const round of ev?.swiss?.rounds || []) {
+            for (const m of round.matches || []) checkResult(m.seriesResult, slot.key);
+          }
+          for (const v of Object.values(ev?.bracket || {})) {
+            for (const m of Array.isArray(v) ? v : [v]) checkResult(m?.result, slot.key);
+          }
+        }
+      }
+    }
+    assert.deepEqual([...new Set(offending)], [],
+      'stale per-map detail survived in past slots');
+  });
+
   test('a hopeless human is eliminated and the world moves on without extra ceremony', () => {
     const gs = newOpenGame();
     const human = getVctHumanTeam(gs);
