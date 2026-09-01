@@ -68,8 +68,12 @@ export const NATIONALITIES = {
  * rosters mix a handful of nationalities per team for flavor.
  */
 export const REGION_NATIONALITY_POOL = {
+  // US carries the heaviest weight by a distance: the region was
+  // reading American-light (few US names in the FA pool, English clubs
+  // drifting mixed), and EMEA — not Americas — is supposed to be the
+  // melting-pot region.
   americas: [
-    'US','US','US','US','US',
+    'US','US','US','US','US','US','US',
     'CA','CA',
     'BR','BR','BR','BR',
     'MX','MX',
@@ -138,6 +142,23 @@ export function flagFor(code) {
  */
 export function nationalityName(code) {
   return NATIONALITIES[code]?.name || code || '—';
+}
+
+/**
+ * The single nationality a group shares, or null if it holds more than
+ * one (or none). A FULL national squad — every player one country — is
+ * a protected identity: the preseason market refuses to break one with
+ * a foreign signing, so the league's guaranteed all-American /
+ * all-Korean / all-Turkish sides survive to the first match.
+ */
+export function uniformNationality(players) {
+  let nat = null;
+  for (const p of players || []) {
+    if (!p?.nationality) return null;
+    if (nat === null) nat = p.nationality;
+    else if (p.nationality !== nat) return null;
+  }
+  return nat;
 }
 
 /**
