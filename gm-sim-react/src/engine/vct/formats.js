@@ -40,12 +40,17 @@ import { initTier2Bracket } from '../tier2.js';
 
 /* ─────────────── Shared helpers ─────────────── */
 
-/** Drop per-map player detail from every match result in a bracket. */
-export function stripEventDetail(bracket) {
+/**
+ * Drop per-map player detail from every match result in a bracket.
+ * Matches involving `keepTeam` (the human) keep their detail — that is
+ * what the match report renders later.
+ */
+export function stripEventDetail(bracket, keepTeam = null) {
   if (!bracket) return;
   for (const value of Object.values(bracket)) {
     const matches = Array.isArray(value) ? value : [value];
     for (const m of matches) {
+      if (keepTeam && (m?.teamA === keepTeam || m?.teamB === keepTeam)) continue;
       for (const map of m?.result?.maps || []) { delete map.playerStats; delete map.roundLog; }
     }
   }
