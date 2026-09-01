@@ -21,7 +21,11 @@ import Settings from './components/Settings.jsx';
 import Tier2 from './components/Tier2.jsx';
 import { executePoach, evaluatePoach } from './engine/poaching.js';
 import { syncSalaryCap } from './data/salary.js';
-import { addLanguage, nativeLanguageOf } from './data/languages.js';
+import { applyPlayerEdit } from './engine/editPlayer.js';
+import VctApp from './components/vct/VctApp.jsx';
+import VctSetup from './components/vct/VctSetup.jsx';
+import { initVctCircuit } from './engine/vct/circuit.js';
+import { ensureVctSeason } from './engine/vct/live.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runReactiveAISignings } from './engine/offseason.js';
@@ -164,6 +168,8 @@ export default function App() {
   const [gameState, setGameState] = useState(() => loadGameState());
   const [started, setStarted] = useState(() => gameState !== null);
   const [currentView, setCurrentView] = useState('dashboard');
+  // Which game the next save will be: null = mode-select screen.
+  const [newGameMode, setNewGameMode] = useState(null);
   const [toast, setToast] = useState(null);
   const [saveFailed, setSaveFailed] = useState(false);
   // Series id the live viewer is following, or null.
@@ -208,6 +214,9 @@ export default function App() {
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
       if (!gameState || !started) return;
+      // The VCT 2027 app registers its own shortcuts; the franchise
+      // handlers below would corrupt a VCT save.
+      if (gameState.mode === 'vct2027') return;
       // Never let a keypress skip a modal — the veto, a stage
       // transition, or the live viewer, whose own buttons are the only
       // sanctioned way to advance while it is open (a stray Space here
@@ -259,6 +268,7 @@ export default function App() {
     setStarted(false);
     setViewRegion(null);
     setCurrentView('dashboard');
+    setNewGameMode(null);
   }
 
   // ── God Mode ──
@@ -286,70 +296,84 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
-  // Single entry point for all player edits from the UI. Mutates the
-  // player in-place, recomputes overall from ratings, triggers re-render.
-  //
-  // field: 'name' | 'tag' | 'age' | 'aim' | 'positioning' | 'utility' | 'gamesense' | 'clutch'
-  // value: string or number (caller ensures correct type)
+  // Single entry point for all player edits from the UI. The rules live
+  // in engine/editPlayer.js, shared with the VCT 2027 app.
   function handleEditPlayer(player, field, value) {
-    if (!gameState.godMode) return; // defensive guard
-
-    if (field === 'name' || field === 'tag') {
-      player[field] = String(value);
-    } else if (field === 'nationality') {
-      // Validate against the known nationality map so bad codes don't
-      // break the flag rendering. If invalid, silently drop the edit.
-      const code = String(value).toUpperCase();
-      // Lazy import avoided — we already have the map via the dropdown's
-      // generated options, so we just accept any non-empty string and
-      // rely on the UI to only offer valid codes. The flag helpers fall
-      // back to a placeholder emoji for unknown codes anyway.
-      if (code) {
-        player.nationality = code;
-        // A player always speaks their nationality's language — the
-        // invariant survives god-mode edits too. Old languages are
-        // kept: changing a flag doesn't un-learn anything.
-        addLanguage(player, nativeLanguageOf(code));
-      }
-    } else if (field === 'age') {
-      const n = Math.max(16, Math.min(40, parseInt(value, 10) || player.age));
-      player.age = n;
-    } else if (['aim', 'positioning', 'utility', 'gamesense', 'clutch'].includes(field)) {
-      const n = Math.max(1, Math.min(99, parseInt(value, 10) || 0));
-      player.ratings[field] = n;
-      player.overall = player.calcOverall();
-    } else if (field === 'salary') {
-      // Phase 7b: God Mode contract salary editing. Stored in dollars
-      // (the editable cell already converts $K → $).
-      const n = Math.max(0, Math.round(parseInt(value, 10) || 0));
-      if (player.contract) {
-        player.contract.salary = n;
-      } else if (n > 0) {
-        // Edge case: if a player has no contract and god-mode adds a
-        // salary, infer a 1-year contract.
-        player.contract = {
-          salary: n,
-          yearsRemaining: 1,
-          signedYear: gameState.seasonNumber || 2025,
-        };
-      }
-    } else if (field === 'yearsRemaining') {
-      // Phase 7b: God Mode contract length editing. 0-3 inclusive; 0
-      // means contract expires this offseason (will go to UFA).
-      const n = Math.max(0, Math.min(3, parseInt(value, 10) || 0));
-      if (player.contract) {
-        player.contract.yearsRemaining = n;
-      }
-      // No defaulting — if the player has no contract, we ignore the
-      // edit. They have to be on a roster to have a contract.
-    } else {
-      return; // unknown field, ignore
+    if (applyPlayerEdit(gameState, player, field, value)) {
+      setGameState(prev => ({ ...prev }));
     }
-    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── VCT 2027 new-game path ──
+  function handleVctStart(world) {
+    initVctCircuit(world);
+    ensureVctSeason(world);
+    setGameState(world);
+    setStarted(true);
+    setNewGameMode(null);
   }
 
   if (!started || !gameState) {
-    return <TeamSelect onSelect={handleTeamSelect} />;
+    if (newGameMode === 'franchise') {
+      return (
+        <div>
+          <button onClick={() => setNewGameMode(null)} style={{
+            position: 'fixed', top: 14, left: 14, zIndex: 10,
+            padding: '6px 12px', cursor: 'pointer', borderRadius: 4,
+            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.2)',
+            color: 'inherit',
+          }}>← Mode select</button>
+          <TeamSelect onSelect={handleTeamSelect} />
+        </div>
+      );
+    }
+    if (newGameMode === 'vct2027') {
+      return <VctSetup onStart={handleVctStart} onBack={() => setNewGameMode(null)} />;
+    }
+    // Mode select: two very different games share this save slot.
+    const modeCard = {
+      flex: 1, padding: '22px 20px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.14)',
+      color: 'inherit',
+    };
+    return (
+      <div style={{ maxWidth: 860, margin: '80px auto', padding: '0 20px' }}>
+        <h1 style={{ letterSpacing: '0.06em' }}>VALORANT GM</h1>
+        <p className="muted">Two eras. One save slot. Pick your league.</p>
+        <div style={{ display: 'flex', gap: 14, marginTop: 20, flexWrap: 'wrap' }}>
+          <button onClick={() => setNewGameMode('franchise')} style={modeCard}>
+            <h2 style={{ margin: '0 0 6px' }}>Franchise League</h2>
+            <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: 0 }}>
+              The classic circuit: 12 partnered teams per region, group stages into
+              brackets, tier-2 scouting and poaching, internationals and Worlds.
+            </p>
+          </button>
+          <button onClick={() => setNewGameMode('vct2027')} style={modeCard}>
+            <h2 style={{ margin: '0 0 6px' }}>VCT 2027 <span style={{
+              fontSize: '0.6rem', verticalAlign: 'middle', letterSpacing: '0.1em',
+              padding: '2px 7px', borderRadius: 3, marginLeft: 6,
+              background: 'rgba(255,70,85,0.18)', color: '#ff8c95',
+            }}>NEW</span></h2>
+            <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: 0 }}>
+              Everything is a tournament: 8 partners per region, open qualifiers for
+              everyone, Kickoff → Masters → Cups → Champions. Start as a partner —
+              or grind up from a 32-team open bracket.
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── VCT 2027 mode: a different app entirely ──
+  if (gameState.mode === 'vct2027') {
+    return (
+      <VctApp
+        gameState={gameState}
+        setGameState={setGameState}
+        onDeleteSave={handleDeleteSave}
+      />
+    );
   }
 
   const humanTeam = getHumanTeam(gameState);
