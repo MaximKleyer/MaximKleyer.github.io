@@ -118,6 +118,67 @@ describe('fresh league coherence', () => {
   });
 });
 
+/* ─────────────── Regional identity quotas ─────────────── */
+
+describe('regional identity quotas', () => {
+  const fullOf = (gs, rk, nat) => gs.regions[rk].teams
+    .filter(t => t.startingFive.every(p => p.nationality === nat));
+
+  test('a fresh league honors every guaranteed national squad', () => {
+    const gs = newGame();
+    const counts = {
+      'americas US': fullOf(gs, 'americas', 'US').length,
+      'americas BR': fullOf(gs, 'americas', 'BR').length,
+      'emea TR':     fullOf(gs, 'emea', 'TR').length,
+      'pacific KR':  fullOf(gs, 'pacific', 'KR').length,
+      'pacific TH':  fullOf(gs, 'pacific', 'TH').length,
+      'pacific JP':  fullOf(gs, 'pacific', 'JP').length,
+      'china CN':    fullOf(gs, 'china', 'CN').length,
+    };
+    assert.ok(counts['americas US'] >= 2, `full-US teams: ${counts['americas US']}`);
+    assert.ok(counts['americas BR'] >= 1, `full-BR teams: ${counts['americas BR']}`);
+    assert.ok(counts['emea TR'] >= 2,     `full-TR teams: ${counts['emea TR']}`);
+    assert.ok(counts['pacific KR'] >= 4,  `full-KR teams: ${counts['pacific KR']}`);
+    assert.ok(counts['pacific TH'] >= 2,  `full-TH teams: ${counts['pacific TH']}`);
+    assert.ok(counts['pacific JP'] >= 1,  `full-JP teams: ${counts['pacific JP']}`);
+    assert.ok(counts['china CN'] >= 7,    `full-CN teams: ${counts['china CN']}`);
+  });
+
+  test('china is majority Chinese-dominated (3+ CN in every counted five)', () => {
+    const gs = newGame();
+    const dominated = gs.regions.china.teams.filter(t =>
+      t.startingFive.filter(p => p.nationality === 'CN').length >= 3).length;
+    assert.ok(dominated >= 7, `only ${dominated}/12 china teams are CN-dominated`);
+  });
+
+  test('EMEA mixed rosters all run English comms', () => {
+    const gs = newGame();
+    for (const t of gs.regions.emea.teams) {
+      if (teamNationality(t).mixed) {
+        assert.equal(commLanguage(t.startingFive).lang, 'en',
+          `${t.abbr} is mixed but does not run English`);
+      }
+    }
+  });
+
+  test('the preseason market never breaks a full national squad', () => {
+    const gs = newGame();
+    const monoBefore = new Map();
+    for (const rk of REGION_KEYS) {
+      for (const t of gs.regions[rk].teams) {
+        const nats = new Set(t.roster.map(p => p.nationality));
+        if (nats.size === 1) monoBefore.set(t, [...nats][0]);
+      }
+    }
+    assert.ok(monoBefore.size > 0, 'no mono-national teams generated at all');
+    clearFreeAgentMarket(gs);
+    for (const [t, nat] of monoBefore) {
+      assert.ok(t.roster.every(p => p.nationality === nat),
+        `${t.abbr} lost its full-${nat} identity in the preseason market`);
+    }
+  });
+});
+
 /* ─────────────── Team nationality ─────────────── */
 
 describe('team nationality', () => {

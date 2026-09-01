@@ -14,7 +14,8 @@ import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
 import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1_MAP_ANCHOR_FLOOR } from '../data/maps.js';
-import { randomTeamLanguage, commLanguage, fitsTeamLanguage } from '../data/languages.js';
+import { rollTeamIdentities, commLanguage, fitsTeamLanguage } from '../data/languages.js';
+import { uniformNationality } from '../data/nationalities.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap, computeTeamSalary, getSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
@@ -36,9 +37,11 @@ import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
  * Flex players are skipped: they are capped low by design, so re-rolling
  * one cannot lift a team and would just burn the guard.
  */
-function topUpRoster(team, regionKey, teamLanguage = null) {
-  // Replacements join the same locker room — they speak its language.
-  const lang = teamLanguage || commLanguage(team.roster).lang;
+function topUpRoster(team, regionKey, identity = null) {
+  // Replacements join the same locker room — they speak its language,
+  // and on a national-identity club they carry its passport too.
+  const lang = identity?.language || commLanguage(team.roster).lang;
+  const nat = identity?.nationality || undefined;
   let guard = 0;
   while (team.overallRating < TIER1_MIN_TEAM_OVR && guard < 6) {
     const candidates = team.roster
@@ -51,6 +54,7 @@ function topUpRoster(team, regionKey, teamLanguage = null) {
     const replacement = generatePlayer({
       regionKey,
       teamLanguage: lang,
+      nationality: nat,
       primaryRole: out.primaryRole,
       secondaryRole: out.secondaryRole,
       ratingFloor: 50 + guard * 4,
@@ -80,6 +84,11 @@ export function initGame(humanRegion, humanTeamIndex) {
   const regions = {};
   const compKeys = Object.keys(COMPOSITIONS);
 
+  // Generation-time only: which identity each fresh team was dealt, so
+  // the floor passes below can respect it. Never stored on the team —
+  // after generation, identity is simply whatever the roster is.
+  const identityByTeam = new Map();
+
   for (const regionKey of REGION_KEYS) {
     const regionDef = REGIONS[regionKey];
     const isHumanRegion = regionKey === humanRegion;
@@ -95,18 +104,27 @@ export function initGame(humanRegion, humanTeamIndex) {
     // one, so rolling roles independently regularly left a squad missing
     // a role entirely and permanently stuck with an off-role penalty.
     // assignRosterRoles guarantees one of each plus a duplicate.
-    for (const team of teams) {
-      // Each club forms around a comms language (see data/languages.js):
-      // nationalities are drawn toward countries that speak it, so a
-      // Portuguese club comes out Brazilian and an English club mostly
-      // US/CA — instead of every roster being a five-country melting pot.
-      const teamLanguage = randomTeamLanguage(regionKey);
+    // Each club is dealt an IDENTITY (see REGION_IDENTITY_QUOTAS):
+    // either a full national squad — the guaranteed all-American /
+    // all-Korean / all-Turkish sides each region owes its fiction — or
+    // a language club whose nationalities are drawn toward countries
+    // that speak its comms language. Shuffled, so which org carries
+    // which identity changes save to save.
+    const identities = rollTeamIdentities(regionKey, teams.length);
+    teams.forEach((team, idx) => {
+      const identity = identities[idx];
+      identityByTeam.set(team, identity);
       const roles = assignRosterRoles(5);
       while (team.roster.length < 5) {
-        team.roster.push(generatePlayer({ regionKey, teamLanguage, ...roles[team.roster.length] }));
+        team.roster.push(generatePlayer({
+          regionKey,
+          teamLanguage: identity.language,
+          nationality: identity.nationality || undefined,
+          ...roles[team.roster.length],
+        }));
       }
-      topUpRoster(team, regionKey, teamLanguage);
-    }
+      topUpRoster(team, regionKey, identity);
+    });
 
     // Auto-assign strategy
     for (const team of teams) {
@@ -173,15 +191,18 @@ export function initGame(humanRegion, humanTeamIndex) {
 
   // Bring every tier-1 side up to a professional standard before the
   // save starts, using the free agents already generated.
-  upgradeTeamsToFloor(regions, REGION_KEYS);
+  upgradeTeamsToFloor(regions, REGION_KEYS, TIER1_MIN_TEAM_OVR, identityByTeam);
 
-  // The floor pass now refuses free agents who can't speak a club's
-  // language, so a club whose pool has no compatible upgrades could
-  // still be below the floor. Generation has no such shortage — top up
-  // directly, in the club's own language.
+  // The floor pass refuses free agents who can't speak a club's
+  // language (or, on a national club, don't carry its passport), so a
+  // club whose pool has no compatible upgrades could still be below the
+  // floor. Generation has no such shortage — top up directly, in the
+  // club's own identity.
   for (const regionKey of REGION_KEYS) {
     for (const team of regions[regionKey].teams) {
-      if (team.overallRating < TIER1_MIN_TEAM_OVR) topUpRoster(team, regionKey);
+      if (team.overallRating < TIER1_MIN_TEAM_OVR) {
+        topUpRoster(team, regionKey, identityByTeam.get(team));
+      }
     }
   }
 
@@ -377,12 +398,16 @@ export function generateSchedule(teams) {
  */
 export const TIER1_MIN_TEAM_OVR = 70;
 
-export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_OVR) {
+export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_OVR, identityByTeam = null) {
   for (const regionKey of regionKeys) {
     const region = regions[regionKey];
     if (!region) continue;
 
     for (const team of region.teams) {
+      // A full national squad only upgrades with compatriots — the
+      // guaranteed all-American/all-Korean sides must not be diluted by
+      // the very pass meant to make them respectable.
+      const idNat = identityByTeam?.get(team)?.nationality || null;
       let guard = 0;
       while (team.overallRating < floor && guard++ < 10) {
         // Every (rostered player, free agent) pair, best gain first.
@@ -400,6 +425,7 @@ export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_
             // No signing that can't talk to the room — the same rule
             // every AI window follows, from day one.
             if (!fitsTeamLanguage(team.roster, fa)) continue;
+            if (idNat && fa.nationality !== idNat) continue;
             best = { out, fa, gain };
           }
         }
@@ -492,6 +518,13 @@ export function clearFreeAgentMarket(gameState) {
           if (gain < MARKET_UPGRADE_MARGIN) continue;
           if (!swapKeepsSpread(team.roster, weakest, fa)) continue;
           if (!fitsTeamLanguage(team.roster, fa)) continue;
+          // The market must not undo a full national squad on day one:
+          // the region's guaranteed all-American / all-Korean sides
+          // shop domestically here. (Later seasons can still import —
+          // organically, one signing at a time — where the language
+          // allows it.)
+          const mono = uniformNationality(team.roster);
+          if (mono && fa.nationality !== mono) continue;
 
           const salary = marketContractFor(fa, season).salary;
           const after = computeTeamSalary(team) - (weakest.contract?.salary || 0) + salary;

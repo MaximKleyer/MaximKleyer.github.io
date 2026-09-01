@@ -214,6 +214,10 @@ export class Player {
  *
  * Accepts an options object:
  *   regionKey     — used to pick a region-appropriate nationality
+ *   nationality   — explicit nationality (e.g. 'US'). Used by NATIONAL
+ *                   team identities — a full-Korean club generates
+ *                   Koreans, not weighted-pool luck. Overrides the
+ *                   region/language pick entirely.
  *   teamLanguage  — the comms language of the club this player is being
  *                   generated FOR. Weights the nationality pick toward
  *                   countries that speak it and guarantees the player
@@ -239,14 +243,15 @@ export function generatePlayer(options = {}) {
   // still finds a valid pool. A team language anchors the pick toward
   // countries that speak it — this is what makes a Portuguese-comms club
   // come out Brazilian instead of a five-country melting pot.
-  const nationality = options.regionKey
-    ? (options.teamLanguage
-        ? pickNationalityForLanguage(
-            REGION_NATIONALITY_POOL[options.regionKey] || ['US'],
-            options.teamLanguage,
-          )
-        : randomNationalityForRegion(options.regionKey))
-    : 'US';
+  const nationality = options.nationality
+    || (options.regionKey
+      ? (options.teamLanguage
+          ? pickNationalityForLanguage(
+              REGION_NATIONALITY_POOL[options.regionKey] || ['US'],
+              options.teamLanguage,
+            )
+          : randomNationalityForRegion(options.regionKey))
+      : 'US');
 
   // Native language plus rolled extras; the club's comms language is
   // guaranteed on top (the rare import who learned it before arriving).
