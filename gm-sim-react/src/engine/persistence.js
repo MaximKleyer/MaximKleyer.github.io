@@ -134,6 +134,14 @@ function serialize(gameState) {
     for (const t of region.tier2?.teams || []) {
       teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
     }
+    // VCT 2027 open-scene clubs (regions[rk].subRegions[k].teams). Keyed
+    // at tier 2 — a VCT save has no tier-2 division, and club abbrs are
+    // unique region-wide, so the key space cannot collide.
+    for (const sub of Object.values(region.subRegions || {})) {
+      for (const t of sub.teams || []) {
+        teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
+      }
+    }
   }
 
   // Match identity map. In-flight series entries hold DIRECT references
@@ -181,6 +189,15 @@ function serialize(gameState) {
     // The toggle promises it survives refresh; the explicit field list
     // was silently dropping it.
     godMode: gameState.godMode === true,
+    // ── VCT 2027 mode ──
+    // `mode` is the switch every loader branch keys on; absent (older
+    // saves and franchise games) means franchise. The VCT circuit state
+    // and human identity ride along; undefined fields drop out of JSON
+    // so franchise saves are byte-identical to before.
+    mode: gameState.mode,
+    circuit: gameState.circuit,
+    humanTeamAbbr: gameState.humanTeamAbbr,
+    humanSubRegion: gameState.humanSubRegion,
   };
 
   return JSON.stringify(ordered, (key, value) => {
@@ -212,6 +229,8 @@ function serialize(gameState) {
         region: ident.region,
         tier: ident.tier,
         parentAbbr: value.parentAbbr,
+        // VCT 2027: which sub-region qualifier an open club belongs to.
+        subRegion: value.subRegion,
         name: value.name,
         abbr: value.abbr,
         color: value.color,
@@ -293,6 +312,13 @@ function deserialize(json) {
       region.tier2.teams = region.tier2.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
     }
 
+    // VCT 2027 open-scene clubs.
+    for (const sub of Object.values(region.subRegions || {})) {
+      if (Array.isArray(sub.teams)) {
+        sub.teams = sub.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
+      }
+    }
+
     if (Array.isArray(region.freeAgents)) {
       region.freeAgents = region.freeAgents.map(pd => rehydratePlayer(pd));
     }
@@ -319,6 +345,9 @@ function deserialize(json) {
     if (!region) continue;
     for (const t of region.teams || []) for (const pl of t.roster) registerTag(pl.tag);
     for (const t of region.tier2?.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const sub of Object.values(region.subRegions || {})) {
+      for (const t of sub.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    }
     for (const pl of region.freeAgents || []) registerTag(pl.tag);
   }
 
@@ -355,12 +384,17 @@ function deserialize(json) {
 
   // Saves written before tier 2 existed have no second division. Generate
   // one rather than leaving the region permanently empty — without this
-  // an existing save can never see the tier-2 scene at all.
-  for (const rk of REGION_KEYS) {
-    const region = data.regions?.[rk];
-    if (!region) continue;
-    if (!region.tier2?.teams?.length) {
-      region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+  // an existing save can never see the tier-2 scene at all. VCT 2027
+  // saves are exempt: that mode has no tier-2 division by design (one
+  // unified competition), and inventing one here would bolt 64 phantom
+  // teams onto every VCT save.
+  if (data.mode !== 'vct2027') {
+    for (const rk of REGION_KEYS) {
+      const region = data.regions?.[rk];
+      if (!region) continue;
+      if (!region.tier2?.teams?.length) {
+        region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+      }
     }
   }
   // Saves written before the 75 anchor carry ratings centred on the old
@@ -418,6 +452,7 @@ function ensureTeamCommunication(data) {
     const allTeams = [
       ...(region.teams || []),
       ...(region.tier2?.teams || []),
+      ...Object.values(region.subRegions || {}).flatMap(s => s.teams || []),
     ];
     for (const team of allTeams) {
       const roster = team?.roster || [];
@@ -471,6 +506,7 @@ function rehydrateTeam(td, regionKey, teamMap, tier = 1) {
 
   team.tier = td.tier ?? tier;
   team.parentAbbr = td.parentAbbr ?? null;
+  team.subRegion = td.subRegion ?? null;
   // Key by tier as well as abbr: a tier-2 academy could otherwise be
   // confused with its tier-1 parent when refs are resolved.
   teamMap.set(`${regionKey}:${team.tier}:${team.abbr}`, team);

@@ -44,6 +44,8 @@ export const LANGUAGES = {
   ar:  'Arabic',
   ko:  'Korean',
   ja:  'Japanese',
+  hi:  'Hindi',
+  ur:  'Urdu',
   th:  'Thai',
   vi:  'Vietnamese',
   fil: 'Filipino',
@@ -69,6 +71,7 @@ export const NATIVE_LANGUAGE = {
   DK: 'da', NL: 'nl', RU: 'ru', UA: 'uk', IT: 'it', NO: 'no',
   MA: 'ar', EG: 'ar', SA: 'ar',
   KR: 'ko', JP: 'ja', TH: 'th', VN: 'vi', PH: 'fil', ID: 'id', MY: 'ms',
+  IN: 'hi', PK: 'ur',
   CN: 'zh', HK: 'zh', TW: 'zh',
 };
 
@@ -114,6 +117,10 @@ export const EXTRA_LANGUAGE_CHANCES = {
   VN: [['en', 0.25]],
   PH: [['en', 0.95]],
   ID: [['en', 0.35]],
+  // South Asia: English is the scene's working language, and spoken
+  // Hindi-Urdu are close enough that the two countries can share a room.
+  IN: [['en', 0.90]],
+  PK: [['en', 0.70], ['hi', 0.60]],
   MY: [['en', 0.75], ['zh', 0.30]],
   SG: [['zh', 0.50], ['ms', 0.15]],
   CN: [['en', 0.12]],

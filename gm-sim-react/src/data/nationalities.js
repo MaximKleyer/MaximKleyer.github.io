@@ -47,6 +47,9 @@ export const NATIONALITIES = {
   // Pacific
   KR: { name: 'S. Korea',    flag: '🇰🇷' },
   JP: { name: 'Japan',       flag: '🇯🇵' },
+  // South Asia — used by the VCT 2027 mode's South Asia qualifier.
+  IN: { name: 'India',       flag: '🇮🇳' },
+  PK: { name: 'Pakistan',    flag: '🇵🇰' },
   TH: { name: 'Thailand',    flag: '🇹🇭' },
   VN: { name: 'Vietnam',     flag: '🇻🇳' },
   PH: { name: 'Philippines', flag: '🇵🇭' },
