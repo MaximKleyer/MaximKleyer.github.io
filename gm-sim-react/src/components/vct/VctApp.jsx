@@ -208,6 +208,7 @@ export default function VctApp({ gameState, setGameState, onDeleteSave }) {
           team={human}
           canSign={false}
           windowClosed
+          closedNote="Signing isn't open in VCT 2027 yet — roster moves between events arrive with the economy update. For now the board is a scouting view."
           onSign={() => {}}
           godMode={!!gameState.godMode}
           onEditPlayer={handleEditPlayer}
@@ -281,7 +282,13 @@ export default function VctApp({ gameState, setGameState, onDeleteSave }) {
         />
       )}
 
-      {pendingVeto && (
+      {/* Held while the live viewer is open: the tick that drains a
+          watched series can seed the human's NEXT match (and its veto)
+          in the same call, and the veto modal sits above the viewer —
+          it was covering the still-animating decider and naming the
+          next opponent before the reveal finished. Closing the viewer
+          releases it, same rule as the franchise champions screen. */}
+      {pendingVeto && !watchingSeriesId && (
         <MapVeto
           pending={pendingVeto}
           humanTeam={human}

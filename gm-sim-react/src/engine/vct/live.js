@@ -64,6 +64,33 @@ export function ensureVctSeason(gameState) {
 
 const humanIn = (teams, human) => !!human && teams.includes(human);
 
+/**
+ * Mirror of the bracket engines' private processMatchResult: bracket
+ * matches update team records on the bulk path (playMatch), so the live
+ * path must too, or a season's records depend on which path resolved
+ * each event. Swiss and qualifier matches update records on neither
+ * path — that asymmetry is deliberate and shared.
+ */
+function applyRecord(result) {
+  if (!result) return;
+  const { winner, loser, maps, score } = result;
+  winner.record.wins++;
+  loser.record.losses++;
+  const wm = Math.max(score[0], score[1]);
+  const lm = Math.min(score[0], score[1]);
+  winner.record.mapWins += wm;
+  winner.record.mapLosses += lm;
+  loser.record.mapWins += lm;
+  loser.record.mapLosses += wm;
+  for (const map of maps) {
+    const aWon = result.teamA === winner;
+    winner.record.roundWins += aWon ? map.roundsA : map.roundsB;
+    winner.record.roundLosses += aWon ? map.roundsB : map.roundsA;
+    loser.record.roundWins += aWon ? map.roundsB : map.roundsA;
+    loser.record.roundLosses += aWon ? map.roundsA : map.roundsB;
+  }
+}
+
 /* ─────────────── Completion routing ─────────────── */
 
 /**
@@ -99,16 +126,55 @@ function routeVctCompletion(gameState, entry) {
     // routeBracketStage reads match.result directly — same contract as
     // the franchise international flow.
     m.result = result;
+    applyRecord(result);
   }
 }
 
 /* ─────────────── Cursor construction ─────────────── */
+
+/** Strip per-map player detail from one stored series result. */
+function stripResultDetail(result) {
+  for (const map of result?.maps || []) { delete map.playerStats; delete map.roundLog; }
+}
+
+/**
+ * Prune the HUMAN's full match detail from every slot before the one
+ * being opened. The live path keeps human matches un-stripped so the
+ * match report works during an event — but a whole season of Bo3 round
+ * logs measured ~1.7MB of pure save weight. One slot of detail is the
+ * budget, same spirit as the franchise archives.
+ */
+function pruneOldSlotDetail(circuit, beforeIndex) {
+  for (let i = 0; i < beforeIndex; i++) {
+    const slot = VCT_SLOTS[i];
+    const stored = circuit.events[slot.key];
+    if (!stored) continue;
+    if (slot.type === 'quals') {
+      for (const region of Object.values(stored)) {
+        for (const sub of Object.values(region)) {
+          for (const round of sub.rounds || []) {
+            for (const m of round) stripResultDetail(m.result);
+          }
+        }
+      }
+    } else {
+      const events = slot.type === 'regional' ? Object.values(stored) : [stored];
+      for (const event of events) {
+        for (const round of event?.swiss?.rounds || []) {
+          for (const m of round.matches || []) stripResultDetail(m.seriesResult);
+        }
+        stripEventDetail(event?.bracket);
+      }
+    }
+  }
+}
 
 function openSlot(gameState) {
   const circuit = gameState.circuit;
   const slot = VCT_SLOTS[circuit.slotIndex + 1];
   if (!slot) { circuit.status = 'season-complete'; return null; }
   circuit.slotIndex += 1;
+  pruneOldSlotDetail(circuit, circuit.slotIndex);
   const human = getVctHumanTeam(gameState);
 
   if (slot.type === 'quals') {
@@ -334,7 +400,12 @@ function stepEvent(gameState) {
 
     for (const s of unplayed) {
       if (s === humanEntry) continue;
-      s.match.result = simulateSeries(s.match.teamA, s.match.teamB, s.bestOf);
+      // grandFinal rides through to the auto-veto: the UB finalist gets
+      // the format's double ban, exactly as the bulk path's playMatch
+      // resolves the same match.
+      s.match.result = simulateSeries(
+        s.match.teamA, s.match.teamB, s.bestOf, null, { grandFinal: !!s.grandFinal });
+      applyRecord(s.match.result);
     }
 
     if (humanEntry) {
