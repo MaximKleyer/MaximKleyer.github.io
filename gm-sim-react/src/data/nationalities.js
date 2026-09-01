@@ -139,3 +139,39 @@ export function flagFor(code) {
 export function nationalityName(code) {
   return NATIONALITIES[code]?.name || code || '—';
 }
+
+/**
+ * A team's nationality, derived from the players who represent it.
+ *
+ * Computed over the STARTING five (the roster if fewer than five exist):
+ * the fielded lineup is the team the world sees, and a nationality that
+ * only lives on the bench should not fly the flag.
+ *
+ * Rule: a strict majority (more than half) of one nationality classifies
+ * the team as that country — three Americans and two Brazilians is an
+ * American team. No majority (e.g. 2 US / 1 CA / 1 CL / 1 BR) means the
+ * team is MIXED and shows an international mark instead of any flag.
+ *
+ * Returns { code, mixed, counts }: `code` is the majority nationality or
+ * null when mixed/empty; `counts` maps nationality → player count for
+ * tooltips and future features that care about the full split.
+ */
+export function teamNationality(team) {
+  const pool = (typeof team?.startingFive !== 'undefined' && team.startingFive.length > 0)
+    ? team.startingFive
+    : (team?.roster || []);
+  const counts = {};
+  for (const p of pool) {
+    if (!p?.nationality) continue;
+    counts[p.nationality] = (counts[p.nationality] || 0) + 1;
+  }
+  const total = Object.values(counts).reduce((s, n) => s + n, 0);
+  if (total === 0) return { code: null, mixed: false, counts };
+
+  let top = null, topCount = 0;
+  for (const [code, n] of Object.entries(counts)) {
+    if (n > topCount) { top = code; topCount = n; }
+  }
+  if (topCount * 2 > total) return { code: top, mixed: false, counts };
+  return { code: null, mixed: true, counts };
+}

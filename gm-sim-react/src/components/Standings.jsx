@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import TeamLogo from './TeamLogo.jsx';
+import TeamFlag from './TeamFlag.jsx';
 import { getGroupStandings } from '../engine/standings.js';
 import { COMPOSITIONS, SUBTYPES } from '../data/strategy.js';
 import RegionSelector from './RegionSelector.jsx';
@@ -52,6 +53,7 @@ export default function Standings({
           <td className="standings-team-col">
             <TeamLogo abbr={abbr} color={isFrozen ? entry.color : team.color} name={isFrozen ? entry.name : team.name} size={18} />{' '}
             {isFrozen ? entry.name : team.name} ({abbr})
+            {team && <>{' '}<TeamFlag team={team} style={{ fontSize: '0.85em' }} /></>}
             <span className="expand-arrow">{isExpanded ? ' ▲' : ' ▼'}</span>
           </td>
           <td>{rec.wins}</td><td>{rec.losses}</td>

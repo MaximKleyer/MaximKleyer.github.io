@@ -158,3 +158,14 @@ export const IGL_BASELINE = 60; // no bonus below this IQ
 // gap from 75% into 86% series wins. At this value the same matchup
 // lands ~79% — leadership is felt, the round-win swing stays the star.
 export const IGL_LEADERSHIP_PER_IQ = 0.00015;
+
+// ── Communication ──
+// A fielded five that shares a language plays at full strength. Every
+// player OUTSIDE the comms loop (nobody-language in common with the
+// largest group — see data/languages.js commUncovered) costs the whole
+// team a small per-duel multiplier: calls go unheard, trades go dry.
+// Same channel as IGL leadership, so the same compounding caution
+// applies — see the note above before touching this number. AI clubs
+// never field an uncovered five; this exists so a human melting-pot
+// roster pays a real price until the imports learn the language.
+export const COMM_PENALTY_PER_UNCOVERED = 0.003;

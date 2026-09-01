@@ -39,6 +39,7 @@ import { ROSTER_MIN, ROSTER_MAX } from '../data/constants.js';
 import { computeTeamSalary, getSalaryCap, adjustMorale } from '../data/salary.js';
 import { generatePlayer } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
+import { commLanguage } from '../data/languages.js';
 
 /**
  * Expected combat score for a player of a given rating.
@@ -149,6 +150,9 @@ export function backfillTier2Team(gameState, regionKey, team, departed) {
 
   const replacement = generatePlayer({
     regionKey,
+    // The replacement joins the room the departed player left — the
+    // remaining four define what language it runs in.
+    teamLanguage: commLanguage(team.roster).lang,
     // Same roles as whoever left: tier-2 squads guarantee one of each
     // role, so three of five players are sole holders — a random-role
     // replacement broke the club's coverage about half the time and

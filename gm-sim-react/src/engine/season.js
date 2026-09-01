@@ -43,6 +43,7 @@ import {
   calculateBaseSalary, calculateBuyout, computeTeamSalary, resolveOffer,
   adjustMorale, getSalaryCap,
 } from '../data/salary.js';
+import { commLanguage, speaks, addLanguage, fitsTeamLanguage } from '../data/languages.js';
 
 /* ─────────────── Circuit definition ─────────────── */
 
@@ -586,6 +587,7 @@ export function runMidseasonDevelopment(gameState, completedStageNum) {
           stats: player.stageStats?.[completedStageNum] || null,
         });
       }
+      runLanguageLearning(team);
     }
     // Free agents played nothing this stage; they still move on the age
     // curve alone, same as the offseason treats them.
@@ -593,6 +595,33 @@ export function runMidseasonDevelopment(gameState, completedStageNum) {
       developPlayer(player, { scale: DEV_WINDOW_SCALE });
     }
   }
+}
+
+/**
+ * Imports learn the room's language.
+ *
+ * Players can speak any number of languages, and a player who joins a
+ * team whose comms language they don't speak picks it up over time —
+ * checked once per development window (two mid-season, one offseason),
+ * so most imports integrate within about a season. This is the human
+ * manager's path out of the communication penalty: sign whoever you
+ * like, carry the penalty while the room can't talk, and it fades as
+ * they learn. AI clubs never sign outside their language, so for them
+ * this is a no-op.
+ */
+export const LANGUAGE_LEARN_CHANCE = 0.4;
+
+export function runLanguageLearning(team) {
+  const { lang } = commLanguage(team.roster);
+  if (!lang) return 0;
+  let learned = 0;
+  for (const player of team.roster) {
+    if (speaks(player, lang)) continue;
+    if (Math.random() < LANGUAGE_LEARN_CHANCE) {
+      if (addLanguage(player, lang)) learned++;
+    }
+  }
+  return learned;
 }
 
 export function beginNextSlot(gameState) {
@@ -1454,6 +1483,8 @@ export function beginNewSeason(gameState) {
         offseasonSummary.developedCount++;
         allMovers.push(player);
       }
+      // The offseason is the third language-learning window of the year.
+      runLanguageLearning(team);
     }
     for (const player of region.freeAgents) {
       developPlayer(player, { scale: DEV_WINDOW_SCALE });
@@ -1727,15 +1758,23 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
         const headroom = getSalaryCap() - currentSalary;
 
         // Look for the best-OVR FA whose base salary fits headroom.
+        // Two passes: language-compatible candidates first, anyone second.
+        // This path exists to stop a roster from bricking the schedule,
+        // so unlike the ordinary windows the language rule bends here —
+        // but only after every compatible option is exhausted.
         let bestIdx = -1;
         let bestOvr = -1;
-        for (let i = 0; i < region.freeAgents.length; i++) {
-          const fa = region.freeAgents[i];
-          const cost = calculateBaseSalary(fa.overall);
-          if (cost <= headroom && fa.overall > bestOvr) {
-            bestIdx = i;
-            bestOvr = fa.overall;
+        for (const requireLanguage of [true, false]) {
+          for (let i = 0; i < region.freeAgents.length; i++) {
+            const fa = region.freeAgents[i];
+            if (requireLanguage && !fitsTeamLanguage(team.roster, fa)) continue;
+            const cost = calculateBaseSalary(fa.overall);
+            if (cost <= headroom && fa.overall > bestOvr) {
+              bestIdx = i;
+              bestOvr = fa.overall;
+            }
           }
+          if (bestIdx !== -1) break;
         }
 
         // Fallback: nothing fits → take the cheapest available so the

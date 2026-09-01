@@ -45,6 +45,7 @@ import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { inferRoleFromStats } from '../data/roles.js';
+import { rollLanguages, commLanguage, addLanguage } from '../data/languages.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -245,6 +246,7 @@ function serialize(gameState) {
         tag: value.tag,
         age: value.age,
         nationality: value.nationality,
+        languages: value.languages,
         ratings: value.ratings,
         overall: value.overall,
         stats: value.stats,
@@ -391,7 +393,46 @@ function deserialize(json) {
   // deadCapHits arrays. Free agents get morale but no contract.
   ensureContracts(data);
 
+  // Pass 5: language migration for saves that predate languages. Every
+  // backfilled roster is grandfathered into coherence.
+  ensureTeamCommunication(data);
+
   return data;
+}
+
+/**
+ * Saves written before languages existed hold rosters that were rolled
+ * as nationality melting pots. Those teams have been playing together
+ * all along, so the fiction is that they already share a room language:
+ * whichever language the backfilled roster covers best is taught to
+ * every backfilled player who lacks it. Applied ONLY to players marked
+ * `_langBackfilled` by rehydratePlayer — players signed after languages
+ * shipped keep exactly what they speak, so a human's future incoherent
+ * signings are never quietly repaired on reload.
+ */
+function ensureTeamCommunication(data) {
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+
+    const allTeams = [
+      ...(region.teams || []),
+      ...(region.tier2?.teams || []),
+    ];
+    for (const team of allTeams) {
+      const roster = team?.roster || [];
+      if (roster.some(p => p?._langBackfilled)) {
+        const { lang } = commLanguage(roster);
+        if (lang) {
+          for (const p of roster) {
+            if (p?._langBackfilled) addLanguage(p, lang);
+          }
+        }
+      }
+      for (const p of roster) if (p) delete p._langBackfilled;
+    }
+    for (const p of region.freeAgents || []) if (p) delete p._langBackfilled;
+  }
 }
 
 /**
@@ -450,9 +491,19 @@ function rehydratePlayer(pd) {
     pd.name,
     pd.tag,
     pd.ratings || {},
-    { age: pd.age, nationality: pd.nationality }
+    // The constructor re-asserts the native-language invariant on
+    // whatever language list the save carries.
+    { age: pd.age, nationality: pd.nationality, languages: pd.languages }
   );
   player.id = pd.id;
+  if (!Array.isArray(pd.languages) || pd.languages.length === 0) {
+    // Save predates languages. Roll the nationality's usual spread, and
+    // mark the player so ensureTeamCommunication() can grandfather their
+    // team into coherence — these rosters have been playing together,
+    // so whatever room they share, they already talk in it.
+    player.languages = rollLanguages(player.nationality);
+    player._langBackfilled = true;
+  }
   if (pd.stats) player.stats = { ...pd.stats };
   if (pd.stageStats) player.stageStats = { ...pd.stageStats };
 
