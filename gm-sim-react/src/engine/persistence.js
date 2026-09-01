@@ -192,8 +192,8 @@ function serialize(gameState) {
     // ── VCT 2027 mode ──
     // `mode` is the switch every loader branch keys on; absent (older
     // saves and franchise games) means franchise. The VCT circuit state
-    // and human identity ride along; undefined fields drop out of JSON
-    // so franchise saves are byte-identical to before.
+    // and human identity ride along; undefined fields drop out of JSON,
+    // so none of these four appear in a franchise save.
     mode: gameState.mode,
     circuit: gameState.circuit,
     humanTeamAbbr: gameState.humanTeamAbbr,
@@ -230,7 +230,11 @@ function serialize(gameState) {
         tier: ident.tier,
         parentAbbr: value.parentAbbr,
         // VCT 2027: which sub-region qualifier an open club belongs to.
-        subRegion: value.subRegion,
+        // Emitted only when set — every franchise team (and every VCT
+        // partner) carries null, and writing `"subRegion":null` into
+        // each of a franchise save's ~170 team bodies would be pure
+        // weight. The loader defaults a missing field to null.
+        ...(value.subRegion != null ? { subRegion: value.subRegion } : {}),
         name: value.name,
         abbr: value.abbr,
         color: value.color,

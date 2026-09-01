@@ -39,6 +39,13 @@ export const VCT_SLOTS = [
 ];
 
 export function initVctCircuit(gameState) {
+  // Records accumulate from bracket matches across the season (both the
+  // bulk and live paths apply them); a fresh circuit starts them level.
+  for (const rk of REGION_KEYS) {
+    for (const t of allVctRegionTeams(gameState.regions[rk])) {
+      t.record = { wins: 0, losses: 0, mapWins: 0, mapLosses: 0, roundWins: 0, roundLosses: 0 };
+    }
+  }
   gameState.circuit = {
     slotIndex: -1,          // nothing played yet; next advance runs slot 0
     status: 'idle',         // 'idle' | 'season-complete'

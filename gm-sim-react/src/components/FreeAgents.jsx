@@ -52,6 +52,7 @@ export default function FreeAgents({
   freeAgents, canSign, onSign,
   team = null,         // the human team — used for comms-fit indicators
   windowClosed = false,
+  closedNote = null,   // override the closed-window banner text (VCT mode)
   godMode = false, onEditPlayer,
   midseasonInfo = null,
   capRemaining = null, // Phase 7b: how much cap the human team has left
@@ -164,8 +165,8 @@ export default function FreeAgents({
           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',
           opacity: 0.75,
         }}>
-          The signing window is closed. Free agents can be signed during the preseason,
-          the mid-season windows between stages, and the offseason.
+          {closedNote || 'The signing window is closed. Free agents can be signed during '
+            + 'the preseason, the mid-season windows between stages, and the offseason.'}
         </p>
       )}
       {midseasonInfo && (

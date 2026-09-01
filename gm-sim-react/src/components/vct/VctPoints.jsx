@@ -46,8 +46,17 @@ export default function VctPoints({ gameState }) {
           </tr>
         </thead>
         <tbody>
-          {table.filter(r => r.points > 0 || !r.team.subRegion).map((r, i) => {
-            const inChampions = i < CHAMPIONS_SLOTS_PER_REGION;
+          {/* Rank and the Champions cutline come from the UNFILTERED
+              table — the same ordering championsField seeds from — so
+              this view can never disagree with the dashboard or the
+              actual seeding. The filter only trims zero-point filler
+              clubs from display, and never the human's own team. */}
+          {table
+            .map((r, rank) => ({ ...r, rank }))
+            .filter(r => r.points > 0 || !r.team.subRegion || r.team.isHuman)
+            .map(r => {
+            const inChampions = r.rank < CHAMPIONS_SLOTS_PER_REGION;
+            const i = r.rank;
             return (
               <tr key={r.team.abbr} className={r.team.isHuman ? 'highlight' : ''} style={{
                 borderLeft: inChampions ? '3px solid #3ec488' : '3px solid transparent',
