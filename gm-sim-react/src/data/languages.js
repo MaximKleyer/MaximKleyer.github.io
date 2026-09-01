@@ -187,6 +187,97 @@ export function randomTeamLanguage(regionKey) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/**
+ * Tier-1 team identities — the guaranteed shape of each fresh league.
+ *
+ * Pure language-weighted generation produced coherent rosters but far
+ * too few FULL national squads: Americas came out short on all-American
+ * and all-Brazilian sides, and nothing guaranteed the Korean core of
+ * Pacific. Each region now rolls a quota of NATIONAL identities (all
+ * five players one nationality) with the rest drawn from a residual
+ * language pool (the existing weighted-mix behavior):
+ *
+ *   Americas — 2-3 full American, 1-2 full Brazilian; rest en/pt/es.
+ *   EMEA     — 2-3 full Turkish; rest mostly English-comms
+ *              internationals (the region SHOULD carry the most mixed
+ *              rosters — but they all share English) plus RU/FR cores.
+ *   Pacific  — 4-5 full Korean (Korea dominates the scene), 2 full
+ *              Thai, 1-2 full Japanese; rest en/SEA.
+ *   China    — 7-8 full Chinese; the residual zh clubs still come out
+ *              CN-dominated (4+1 / 3+2 with HK/TW).
+ *
+ * `min` is a hard guarantee, `max` adds save-to-save variety.
+ */
+export const REGION_IDENTITY_QUOTAS = {
+  americas: {
+    national: [
+      { nat: 'US', min: 2, max: 3 },
+      { nat: 'BR', min: 1, max: 2 },
+    ],
+    residual: ['en', 'en', 'en', 'en', 'pt', 'es'],
+  },
+  emea: {
+    national: [
+      { nat: 'TR', min: 2, max: 3 },
+    ],
+    residual: ['en', 'en', 'en', 'en', 'en', 'en', 'ru', 'ru', 'fr'],
+  },
+  pacific: {
+    national: [
+      { nat: 'KR', min: 4, max: 5 },
+      { nat: 'TH', min: 2, max: 2 },
+      { nat: 'JP', min: 1, max: 2 },
+    ],
+    residual: ['en', 'en', 'en', 'id', 'vi'],
+  },
+  china: {
+    national: [
+      { nat: 'CN', min: 7, max: 8 },
+    ],
+    residual: ['zh'],
+  },
+};
+
+/**
+ * Roll one identity per team for a fresh region: national quotas first
+ * (count rolled between min and max), residual language clubs for the
+ * remaining slots, then shuffled so WHICH org carries each identity
+ * differs save to save.
+ *
+ * Returns [{ language, nationality }] of length `count`; nationality is
+ * null for language clubs.
+ */
+export function rollTeamIdentities(regionKey, count) {
+  const quotas = REGION_IDENTITY_QUOTAS[regionKey];
+  const identities = [];
+
+  if (quotas) {
+    for (const { nat, min, max } of quotas.national) {
+      const n = min + Math.floor(Math.random() * (max - min + 1));
+      for (let i = 0; i < n && identities.length < count; i++) {
+        identities.push({ language: nativeLanguageOf(nat), nationality: nat });
+      }
+    }
+    const residual = quotas.residual?.length ? quotas.residual : ['en'];
+    while (identities.length < count) {
+      identities.push({
+        language: residual[Math.floor(Math.random() * residual.length)],
+        nationality: null,
+      });
+    }
+  } else {
+    while (identities.length < count) {
+      identities.push({ language: randomTeamLanguage(regionKey), nationality: null });
+    }
+  }
+
+  for (let i = identities.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [identities[i], identities[j]] = [identities[j], identities[i]];
+  }
+  return identities;
+}
+
 /** The languages a player speaks, tolerating objects that predate the field. */
 export function playerLanguages(player) {
   if (Array.isArray(player?.languages) && player.languages.length > 0) {
