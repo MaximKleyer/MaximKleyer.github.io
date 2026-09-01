@@ -122,12 +122,34 @@ export const EXTRA_LANGUAGE_CHANCES = {
 };
 
 /** Native language plus independently-rolled extras. Native is always first. */
-export function rollLanguages(nationality) {
+export function rollLanguages(nationality, rng = Math.random) {
   const langs = [nativeLanguageOf(nationality)];
   for (const [lang, chance] of EXTRA_LANGUAGE_CHANCES[nationality] || []) {
-    if (!langs.includes(lang) && Math.random() < chance) langs.push(lang);
+    if (!langs.includes(lang) && rng() < chance) langs.push(lang);
   }
   return langs;
+}
+
+/**
+ * A deterministic RNG seeded from a string (mulberry32 over an FNV-1a
+ * hash). The save-migration backfill rolls with this, seeded by player
+ * id: if the post-load autosave ever fails (quota), the next launch
+ * re-rolls the SAME languages instead of quietly reshuffling which
+ * rosters read as coherent between sessions.
+ */
+export function seededRng(seedStr) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    h ^= seedStr.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return function () {
+    h = (h + 0x6D2B79F5) >>> 0;
+    let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 /**
@@ -208,10 +230,16 @@ export function commLanguage(players) {
     const nat = nativeLanguageOf(p?.nationality);
     native.set(nat, (native.get(nat) || 0) + 1);
   }
+  // Final tiebreak is alphabetical on the language code: coverage maps
+  // iterate in player order, so without it an exact tie flips with a
+  // depth-chart drag — same five, different label.
   let best = null, bestCov = 0, bestNat = -1;
   for (const [lang, cov] of coverage) {
     const nat = native.get(lang) || 0;
-    if (cov > bestCov || (cov === bestCov && nat > bestNat)) {
+    if (
+      cov > bestCov ||
+      (cov === bestCov && (nat > bestNat || (nat === bestNat && (best === null || lang < best))))
+    ) {
       best = lang; bestCov = cov; bestNat = nat;
     }
   }

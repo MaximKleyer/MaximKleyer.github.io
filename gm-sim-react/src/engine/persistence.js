@@ -45,7 +45,7 @@ import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { inferRoleFromStats } from '../data/roles.js';
-import { rollLanguages, commLanguage, addLanguage } from '../data/languages.js';
+import { rollLanguages, seededRng, commLanguage, addLanguage } from '../data/languages.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -497,11 +497,17 @@ function rehydratePlayer(pd) {
   );
   player.id = pd.id;
   if (!Array.isArray(pd.languages) || pd.languages.length === 0) {
-    // Save predates languages. Roll the nationality's usual spread, and
+    // Save predates languages. Roll the nationality's usual spread —
+    // seeded by player id, so if the migrated state never makes it back
+    // to disk (autosave quota failure) the next load re-rolls the SAME
+    // spread instead of reshuffling coherence between sessions — and
     // mark the player so ensureTeamCommunication() can grandfather their
-    // team into coherence — these rosters have been playing together,
+    // team into coherence: these rosters have been playing together,
     // so whatever room they share, they already talk in it.
-    player.languages = rollLanguages(player.nationality);
+    player.languages = rollLanguages(
+      player.nationality,
+      seededRng(`${player.id}:${player.nationality}`),
+    );
     player._langBackfilled = true;
   }
   if (pd.stats) player.stats = { ...pd.stats };

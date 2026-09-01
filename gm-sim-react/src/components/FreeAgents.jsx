@@ -56,9 +56,12 @@ export default function FreeAgents({
   midseasonInfo = null,
   capRemaining = null, // Phase 7b: how much cap the human team has left
 }) {
-  // The language your roster talks in; free agents who can't speak it
-  // get flagged, since fielding them costs a communication penalty.
-  const comms = commLanguage(team?.roster || []);
+  // The language your fielded five talks in — the same anchor Roster
+  // and the match sim use. Free agents who can't speak it get flagged,
+  // since fielding them costs a communication penalty.
+  const comms = commLanguage(
+    team?.startingFive?.length ? team.startingFive : (team?.roster || [])
+  );
   const [sortKey, setSortKey] = useState('overall');
   const [signTarget, setSignTarget] = useState(null);   // player being negotiated with
   const [offerSalary, setOfferSalary] = useState(0);    // salary input ($K)

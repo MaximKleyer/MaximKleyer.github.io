@@ -102,10 +102,16 @@ export default function Roster({
     if (onUpdate) onUpdate();
   }
 
-  // Team communication state. The room's language is judged over the
-  // whole roster; the PENALTY is judged over the fielded five, because
-  // that is exactly what the match sim reads.
-  const comms = commLanguage(team.roster);
+  // Team communication state, anchored on the FIELDED five — that is
+  // exactly what the match sim reads, so the header, the per-player
+  // dots, and the warning banner can never disagree with each other or
+  // with the penalty actually applied. (Judging the header over the
+  // whole roster while the banner counted the five produced screens
+  // that contradicted themselves on split rosters.)
+  const comms = commLanguage(team.startingFive);
+  const rosterSpeakers = comms.lang
+    ? team.roster.filter(p => speaks(p, comms.lang)).length
+    : 0;
   const startersUncovered = commUncovered(team.startingFive);
 
   const usedSalary = computeTeamSalary(team);
@@ -156,7 +162,7 @@ export default function Roster({
         {comms.lang && (
           <>
             {' · '}Comms: {languageName(comms.lang)}
-            {' '}({comms.coverage}/{team.roster.length} speak it)
+            {' '}({rosterSpeakers}/{team.roster.length} speak it)
           </>
         )}
       </p>
