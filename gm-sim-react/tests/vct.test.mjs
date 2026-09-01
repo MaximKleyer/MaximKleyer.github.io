@@ -21,6 +21,8 @@ import { saveGameState, loadGameState } from '../src/engine/persistence.js';
 import {
   initVctCircuit, advanceVctSlot, runFullVctSeason, VCT_SLOTS, regionPointsTable,
 } from '../src/engine/vct/circuit.js';
+import { advanceVct, simVctSlot, simVctSeason, ensureVctSeason } from '../src/engine/vct/live.js';
+import { resolvePendingVeto, hasPendingVeto } from '../src/engine/activeSeries.js';
 import { PARTNERS_PER_REGION as PPR } from '../src/data/vct/partners.js';
 
 before(() => { installLocalStorage(); });
@@ -240,6 +242,116 @@ describe('circuit', () => {
     const raw = globalThis.localStorage.getItem('gm-sim-save-v2');
     assert.ok(raw.length / 1024 < 3500,
       `post-season save is ${Math.round(raw.length / 1024)}KB`);
+  });
+});
+
+describe('live season', () => {
+  const newOpenGame = () =>
+    initVctGame({ type: 'open', regionKey: 'americas', subKey: 'na', abbr: '__first__' });
+
+  test('an open-team human reaches a veto through the shared machinery', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    ensureVctSeason(gs);
+    const human = getVctHumanTeam(gs);
+    let guard = 0;
+    while (!hasPendingVeto(gs) && guard++ < 10) advanceVct(gs);
+    assert.ok(hasPendingVeto(gs), 'no veto ever appeared for the human qualifier match');
+    const pending = gs.season.pendingVeto;
+    assert.ok([pending.teamAAbbr, pending.teamBAbbr].includes(human.abbr),
+      'the pending veto is not the human\'s match');
+    assert.equal(gs.circuit.live?.type, 'quals');
+  });
+
+  test('sim-slot completes the qualifier and fills every sub-region', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    simVctSlot(gs);
+    const quals = gs.circuit.events.kickoffQuals;
+    for (const rk of REGION_KEYS) {
+      for (const [sk, def] of Object.entries(SUB_REGIONS[rk])) {
+        assert.equal(quals[rk][sk].qualified.length, def.slots, `${rk}/${sk}`);
+        for (const round of quals[rk][sk].rounds) {
+          assert.ok(round.every(m => m.winner), `${rk}/${sk} has an unresolved match`);
+        }
+      }
+    }
+    assert.equal(gs.circuit.live, null, 'cursor not closed after sim-slot');
+    assert.equal(gs.season.activeSeries.length, 0);
+  });
+
+  test('a full human season through the live path crowns a champion', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    simVctSeason(gs);
+    assert.equal(gs.circuit.status, 'season-complete');
+    assert.ok(gs.circuit.worldChampion, 'no world champion');
+    for (const slot of VCT_SLOTS) {
+      assert.ok(gs.circuit.events[slot.key], `slot ${slot.key} never produced an event`);
+    }
+    // The human's own qualifier really contains them.
+    const human = getVctHumanTeam(gs);
+    const q = gs.circuit.events.kickoffQuals.americas.na;
+    const appears = q.rounds[0].some(m => m.a === human || m.b === human);
+    assert.ok(appears, 'the human never appeared in their own qualifier');
+  });
+
+  test('a partner human plays events, not qualifiers', () => {
+    const gs = newVct({ type: 'partner', regionKey: 'emea', abbr: 'NAVI' });
+    initVctCircuit(gs);
+    ensureVctSeason(gs);
+    // First advance runs the entire kickoff quals in one go (partners skip).
+    const r1 = advanceVct(gs);
+    assert.equal(r1.openedSlot, 'kickoffQuals');
+    assert.equal(r1.live, false);
+    // Second advance opens Kickoff — live, because the human is in the field.
+    const r2 = advanceVct(gs);
+    assert.equal(r2.openedSlot, 'kickoff');
+    assert.equal(r2.live, true);
+    simVctSeason(gs);
+    assert.equal(gs.circuit.status, 'season-complete');
+  });
+
+  test('a mid-series save resumes and finishes cleanly', () => {
+    const gs = newOpenGame();
+    initVctCircuit(gs);
+    ensureVctSeason(gs);
+    let guard = 0;
+    while (!hasPendingVeto(gs) && guard++ < 10) advanceVct(gs);
+    resolvePendingVeto(gs, null);          // accept the auto plan
+    advanceVct(gs);                        // play map 1 — series now in flight
+    assert.ok(gs.season.activeSeries.length > 0, 'no series in flight to save');
+
+    saveGameState(gs);
+    const loaded = loadGameState();
+    assert.ok(loaded, 'load failed');
+    assert.equal(loaded.circuit.live?.type, 'quals');
+    assert.ok(loaded.season.activeSeries.length > 0, 'in-flight series lost');
+    // The entry's match must BE the cursor's object, not a copy.
+    const entry = loaded.season.activeSeries[0];
+    const cursorRound = loaded.circuit.live.quals.currentRound;
+    assert.ok(cursorRound.includes(entry.matchRef),
+      'active entry match detached from the qualifier cursor');
+
+    simVctSeason(loaded);
+    assert.equal(loaded.circuit.status, 'season-complete');
+    assert.ok(loaded.circuit.worldChampion);
+    const q = loaded.circuit.events.kickoffQuals.americas.na;
+    assert.ok(q.rounds.every(r => r.every(m => m.winner)), 'unresolved qualifier match after resume');
+  });
+
+  test('a hopeless human is eliminated and the world moves on without extra ceremony', () => {
+    const gs = newOpenGame();
+    const human = getVctHumanTeam(gs);
+    for (const p of human.roster) {
+      for (const k of Object.keys(p.ratings)) p.ratings[k] = 1;
+      p.overall = p.calcOverall();
+    }
+    initVctCircuit(gs);
+    simVctSeason(gs);
+    assert.equal(gs.circuit.status, 'season-complete');
+    const q = gs.circuit.events.kickoffQuals.americas.na;
+    assert.ok(!q.qualified.includes(human), 'a one-overall roster qualified');
   });
 });
 
