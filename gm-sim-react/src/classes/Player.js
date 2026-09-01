@@ -16,7 +16,7 @@
  */
 
 import { TAGS, getNamePool } from '../data/names.js';
-import { randomNationalityForRegion, REGION_NATIONALITY_POOL } from '../data/nationalities.js';
+import { REGION_NATIONALITY_POOL } from '../data/nationalities.js';
 import {
   rollLanguages, nativeLanguageOf, pickNationalityForLanguage,
 } from '../data/languages.js';
@@ -70,6 +70,22 @@ function makeId() {
 // ── Unique tag tracking ──
 const usedTags = new Set();
 
+// Synthetic tag fragments for when the curated pool runs out. The VCT
+// mode generates ~2,000 players against a 333-tag pool, and a league
+// where most handles read "Reaper2" is no league at all. Two fragments
+// give ~500 clean combinations; a trailing digit stretches that into
+// thousands before the last-resort numeric suffixes appear.
+const TAG_HEADS = [
+  'Zar', 'Kry', 'Vex', 'Nyx', 'Sol', 'Dra', 'Fen', 'Rho', 'Lux', 'Mor',
+  'Ash', 'Vor', 'Kai', 'Zeph', 'Nox', 'Cin', 'Bly', 'Qui', 'Tor', 'Hex',
+  'Sly', 'Gri', 'Pax', 'Rev',
+];
+const TAG_TAILS = [
+  'ex', 'on', 'ith', 'ar', 'us', 'io', 'en', 'yx', 'ova', 'ik',
+  'ade', 'ux', 'ern', 'ora', 'iz', 'eth', 'ant', 'elo', 'im', 'os',
+  'ury', 'ale',
+];
+
 function getUniqueTag() {
   const shuffled = [...TAGS].sort(() => Math.random() - 0.5);
   for (const tag of shuffled) {
@@ -78,7 +94,17 @@ function getUniqueTag() {
       return tag;
     }
   }
-  // Fallback: numeric suffix if all base tags exhausted
+  // Curated pool exhausted → synthetic handles, plain first, then with
+  // a trailing digit.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const digit = attempt < 60 ? '' : String(2 + Math.floor(Math.random() * 98));
+    const candidate = `${randomFrom(TAG_HEADS)}${randomFrom(TAG_TAILS)}${digit}`;
+    if (!usedTags.has(candidate)) {
+      usedTags.add(candidate);
+      return candidate;
+    }
+  }
+  // Last resort: numeric suffix on a curated tag.
   let suffix = 2;
   while (true) {
     const candidate = `${randomFrom(TAGS)}${suffix}`;
@@ -218,6 +244,10 @@ export class Player {
  *                   team identities — a full-Korean club generates
  *                   Koreans, not weighted-pool luck. Overrides the
  *                   region/language pick entirely.
+ *   nationalityPool — custom weighted nationality array to draw from
+ *                   instead of the region's. The VCT mode's sub-region
+ *                   qualifiers use this: a Brazil-qualifier club draws
+ *                   Brazilians, not the whole Americas pool.
  *   teamLanguage  — the comms language of the club this player is being
  *                   generated FOR. Weights the nationality pick toward
  *                   countries that speak it and guarantees the player
@@ -243,14 +273,13 @@ export function generatePlayer(options = {}) {
   // still finds a valid pool. A team language anchors the pick toward
   // countries that speak it — this is what makes a Portuguese-comms club
   // come out Brazilian instead of a five-country melting pot.
+  const natPool = options.nationalityPool
+    || (options.regionKey ? REGION_NATIONALITY_POOL[options.regionKey] : null);
   const nationality = options.nationality
-    || (options.regionKey
+    || (natPool
       ? (options.teamLanguage
-          ? pickNationalityForLanguage(
-              REGION_NATIONALITY_POOL[options.regionKey] || ['US'],
-              options.teamLanguage,
-            )
-          : randomNationalityForRegion(options.regionKey))
+          ? pickNationalityForLanguage(natPool, options.teamLanguage)
+          : natPool[Math.floor(Math.random() * natPool.length)])
       : 'US');
 
   // Native language plus rolled extras; the club's comms language is

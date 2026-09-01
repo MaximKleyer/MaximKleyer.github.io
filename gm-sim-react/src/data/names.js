@@ -524,6 +524,31 @@ export const NAME_POOLS = {
       'Koh', 'Teo', 'Chan', 'Yeo', 'Sim', 'Ho', 'Low',
     ],
   },
+
+  // ═══════════ SOUTH ASIA (VCT 2027 qualifier region) ═══════════
+
+  IN: {
+    first: [
+      'Aarav', 'Arjun', 'Aditya', 'Rohan', 'Karan', 'Vikram', 'Rahul', 'Siddharth',
+      'Aniket', 'Dhruv', 'Ishaan', 'Kunal', 'Nikhil', 'Pranav', 'Varun',
+    ],
+    last: [
+      'Sharma', 'Patel', 'Singh', 'Kumar', 'Gupta', 'Reddy', 'Nair', 'Mehta',
+      'Iyer', 'Chopra', 'Malhotra', 'Joshi', 'Desai', 'Rao', 'Verma',
+      'Kapoor', 'Bhat', 'Menon', 'Pillai', 'Saxena',
+    ],
+  },
+
+  PK: {
+    first: [
+      'Ahmed', 'Ali', 'Hassan', 'Usman', 'Bilal', 'Hamza', 'Zain', 'Faisal',
+      'Imran', 'Tariq',
+    ],
+    last: [
+      'Khan', 'Malik', 'Ahmed', 'Hussain', 'Sheikh', 'Butt', 'Qureshi', 'Chaudhry',
+      'Siddiqui', 'Baig', 'Raza', 'Shah', 'Javed', 'Akhtar', 'Mirza',
+    ],
+  },
 };
 
 /* ─────────────── Backward-compat flat exports ─────────────── */
