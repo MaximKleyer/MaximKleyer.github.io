@@ -228,7 +228,11 @@ export default function Tier2({
     : [...tier2.teams].sort((a, b) => b.overallRating - a.overallRating);
 
   // Scouting: form is only meaningful once a stage has been played.
-  const humanComms = humanTeam ? commLanguage(humanTeam.roster).lang : null;
+  // Comms fit is judged against the human's FIELDED five — the same
+  // anchor Roster and the match sim use.
+  const humanComms = humanTeam
+    ? commLanguage(humanTeam.startingFive?.length ? humanTeam.startingFive : humanTeam.roster).lang
+    : null;
   const scoutFor = {
     enabled: !!(canPoach && humanTeam && onPoach),
     for(player) {

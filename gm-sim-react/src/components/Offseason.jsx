@@ -210,6 +210,7 @@ export default function Offseason({
       <div style={{ marginTop: 20 }}>
         <FreeAgents
           freeAgents={humanRegionData.freeAgents}
+          team={humanTeam}
           canSign={canSign}
           onSign={onSign}
         />

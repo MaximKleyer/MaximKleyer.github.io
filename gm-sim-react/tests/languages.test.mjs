@@ -26,6 +26,7 @@ import {
 import { generatePlayer } from '../src/classes/Player.js';
 import { clearFreeAgentMarket } from '../src/engine/league.js';
 import { runOffseasonAISignings } from '../src/engine/offseason.js';
+import { runMidseasonReactiveSignings } from '../src/engine/midseason.js';
 import { runTier2AISignings } from '../src/engine/tier2.js';
 import { backfillTier2Team } from '../src/engine/poaching.js';
 import { runLanguageLearning } from '../src/engine/season.js';
@@ -163,6 +164,35 @@ describe('AI signing windows', () => {
     }
   });
 
+  test('midseason reactive signings refuse a player who can\'t talk to the room', () => {
+    // Regression: this path inlines its own loop instead of sharing
+    // attemptSigning, and shipped without the language filter — an
+    // 85-OVR release was signed by English-comms clubs ~35% of the time.
+    const gs = newGame();
+    const outsider = generatePlayer({ regionKey: 'pacific' });
+    outsider.nationality = 'KR';
+    outsider.languages = ['ko'];
+    outsider.overall = 90;
+    outsider.age = 20;
+    outsider.contract = null;
+    gs.regions.americas.freeAgents.push(outsider);
+
+    // No americas club runs Korean comms, so nobody may bite — however
+    // many times the 35% inner roll is offered.
+    assert.ok(ALL_TIER1(gs)
+      .filter(t => gs.regions.americas.teams.includes(t))
+      .every(t => commLanguage(t.roster).lang !== 'ko'), 'test setup broken');
+    for (let i = 0; i < 50; i++) {
+      for (const t of gs.regions.americas.teams) t._midseasonMoves = 0;
+      runMidseasonReactiveSignings(gs, outsider);
+    }
+    assert.ok(gs.regions.americas.freeAgents.includes(outsider),
+      'a club signed a player nobody on the roster can talk to');
+    for (const team of gs.regions.americas.teams) {
+      assert.equal(commUncovered(team.roster), 0, `${team.abbr} went incoherent`);
+    }
+  });
+
   test('a poach backfill speaks the bereaved club\'s language', () => {
     const gs = newGame();
     for (let i = 0; i < 10; i++) {
@@ -233,6 +263,19 @@ describe('communication multiplier', () => {
     assert.equal(communicationMultiplier(five), 1 - 2 * COMM_PENALTY_PER_UNCOVERED);
   });
 
+  test('an exact coverage tie resolves the same way in any roster order', () => {
+    // Regression: the tiebreak used to fall through to iteration order,
+    // so dragging the depth chart flipped the comms label on tied fives.
+    const five = [
+      { nationality: 'US', languages: ['en'] }, { nationality: 'US', languages: ['en'] },
+      { nationality: 'BR', languages: ['pt'] }, { nationality: 'BR', languages: ['pt'] },
+      { nationality: 'KR', languages: ['ko'] },
+    ];
+    const forward = commLanguage(five).lang;
+    const backward = commLanguage([...five].reverse()).lang;
+    assert.equal(forward, backward, 'tie flipped with roster order');
+  });
+
   test('an interpreter-free room still anchors on the largest group', () => {
     // 2 en / 2 ko / 1 ja: largest shared group is 2, so 3 are uncovered.
     const five = [
@@ -276,6 +319,15 @@ describe('persistence', () => {
     const { loadGameState } = await import('../src/engine/persistence.js');
     const migrated = loadGameState();
     assert.ok(migrated, 'doctored save failed to load');
+
+    // The backfill roll is seeded by player id: loading the same save
+    // again (autosave failed, say) must roll the exact same languages,
+    // never silently reshuffle which rosters read as coherent.
+    const langsOf = gs2 => REGION_KEYS.flatMap(rk =>
+      gs2.regions[rk].teams.flatMap(t => t.roster.map(p => `${p.id}:${p.languages.join('/')}`)));
+    const again = loadGameState();
+    assert.deepEqual(langsOf(again), langsOf(migrated),
+      'language backfill differs between loads of the same save');
     for (const rk of REGION_KEYS) {
       for (const team of [...migrated.regions[rk].teams, ...migrated.regions[rk].tier2.teams]) {
         for (const p of team.roster) {
