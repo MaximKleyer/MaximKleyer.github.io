@@ -1779,18 +1779,24 @@ function runOffseasonPhases3through7(gameState, offseasonSummary) {
 
         // Fallback: nothing fits → take the cheapest available so the
         // roster gets up to ROSTER_MIN. Team will start over cap; future
-        // offseasons can fix it as contracts decay.
+        // offseasons can fix it as contracts decay. Same two-pass shape
+        // as above: an over-cap club still prefers the cheapest player
+        // who can talk to the room — bending the cap is this path's job,
+        // bending the language rule is only for when no speaker exists.
         if (bestIdx === -1) {
-          let cheapestIdx = 0;
-          let cheapestCost = Infinity;
-          for (let i = 0; i < region.freeAgents.length; i++) {
-            const cost = calculateBaseSalary(region.freeAgents[i].overall);
-            if (cost < cheapestCost) {
-              cheapestCost = cost;
-              cheapestIdx = i;
+          for (const requireLanguage of [true, false]) {
+            let cheapestCost = Infinity;
+            for (let i = 0; i < region.freeAgents.length; i++) {
+              const fa = region.freeAgents[i];
+              if (requireLanguage && !fitsTeamLanguage(team.roster, fa)) continue;
+              const cost = calculateBaseSalary(fa.overall);
+              if (cost < cheapestCost) {
+                cheapestCost = cost;
+                bestIdx = i;
+              }
             }
+            if (bestIdx !== -1) break;
           }
-          bestIdx = cheapestIdx;
         }
 
         const signed = region.freeAgents.splice(bestIdx, 1)[0];
