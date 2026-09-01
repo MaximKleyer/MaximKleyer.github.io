@@ -89,6 +89,14 @@ export default function LiveMatch({ gameState, seriesId, onAdvanceMap, onSimSeri
     }
   }, [seriesOverNow, latestDone]);
 
+  // No series to show (stale id — the entry was never found this mount):
+  // close rather than render nothing. App now holds the stage-transition
+  // overlay back while a viewer is open, so an invisible zombie viewer
+  // would block that screen forever.
+  useEffect(() => {
+    if (!series) onClose?.();
+  }, [series]);
+
   // Round ticker — only runs while the user is actually watching the
   // animating map; browsing another tab pauses rather than finishes it.
   useEffect(() => {

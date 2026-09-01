@@ -1890,7 +1890,12 @@ export default function App() {
           ⚠ Saving failed — browser storage is full. Progress since the last save will be lost.
         </div>
       )}
-      {inTransition && (
+      {/* Held back while the live viewer is open: when the watched series
+          is the one that ends the stage, the engine flips to 'transition'
+          the moment the result exists — long before the reveal catches
+          up — and the champions/points screen was spoiling the map still
+          animating underneath. Closing the viewer releases it. */}
+      {inTransition && !watchingSeriesId && (
         <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
       )}
       {showSettings && (
