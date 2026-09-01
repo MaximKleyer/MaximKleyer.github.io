@@ -14,6 +14,7 @@ import { FREE_AGENT_POOL_SIZE, GROUP_SIZE } from '../data/constants.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 
 import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1_MAP_ANCHOR_FLOOR } from '../data/maps.js';
+import { randomTeamLanguage, commLanguage, fitsTeamLanguage } from '../data/languages.js';
 import { calculateBaseSalary, DEFAULT_SALARY_CAP, syncSalaryCap, computeTeamSalary, getSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
@@ -35,7 +36,9 @@ import { assignRosterRoles, swapKeepsSpread, FLEX } from '../data/roles.js';
  * Flex players are skipped: they are capped low by design, so re-rolling
  * one cannot lift a team and would just burn the guard.
  */
-function topUpRoster(team, regionKey) {
+function topUpRoster(team, regionKey, teamLanguage = null) {
+  // Replacements join the same locker room — they speak its language.
+  const lang = teamLanguage || commLanguage(team.roster).lang;
   let guard = 0;
   while (team.overallRating < TIER1_MIN_TEAM_OVR && guard < 6) {
     const candidates = team.roster
@@ -47,6 +50,7 @@ function topUpRoster(team, regionKey) {
     // Each attempt asks for a better player than the last.
     const replacement = generatePlayer({
       regionKey,
+      teamLanguage: lang,
       primaryRole: out.primaryRole,
       secondaryRole: out.secondaryRole,
       ratingFloor: 50 + guard * 4,
@@ -92,11 +96,16 @@ export function initGame(humanRegion, humanTeamIndex) {
     // a role entirely and permanently stuck with an off-role penalty.
     // assignRosterRoles guarantees one of each plus a duplicate.
     for (const team of teams) {
+      // Each club forms around a comms language (see data/languages.js):
+      // nationalities are drawn toward countries that speak it, so a
+      // Portuguese club comes out Brazilian and an English club mostly
+      // US/CA — instead of every roster being a five-country melting pot.
+      const teamLanguage = randomTeamLanguage(regionKey);
       const roles = assignRosterRoles(5);
       while (team.roster.length < 5) {
-        team.roster.push(generatePlayer({ regionKey, ...roles[team.roster.length] }));
+        team.roster.push(generatePlayer({ regionKey, teamLanguage, ...roles[team.roster.length] }));
       }
-      topUpRoster(team, regionKey);
+      topUpRoster(team, regionKey, teamLanguage);
     }
 
     // Auto-assign strategy
@@ -165,6 +174,16 @@ export function initGame(humanRegion, humanTeamIndex) {
   // Bring every tier-1 side up to a professional standard before the
   // save starts, using the free agents already generated.
   upgradeTeamsToFloor(regions, REGION_KEYS);
+
+  // The floor pass now refuses free agents who can't speak a club's
+  // language, so a club whose pool has no compatible upgrades could
+  // still be below the floor. Generation has no such shortage — top up
+  // directly, in the club's own language.
+  for (const regionKey of REGION_KEYS) {
+    for (const team of regions[regionKey].teams) {
+      if (team.overallRating < TIER1_MIN_TEAM_OVR) topUpRoster(team, regionKey);
+    }
+  }
 
   // Re-fit strategy after any roster churn from the upgrade pass.
   for (const regionKey of REGION_KEYS) {
@@ -378,6 +397,9 @@ export function upgradeTeamsToFloor(regions, regionKeys, floor = TIER1_MIN_TEAM_
             if (gain <= 0) continue;
             if (best && gain <= best.gain) continue;
             if (!swapKeepsSpread(team.roster, out, fa)) continue;
+            // No signing that can't talk to the room — the same rule
+            // every AI window follows, from day one.
+            if (!fitsTeamLanguage(team.roster, fa)) continue;
             best = { out, fa, gain };
           }
         }
@@ -469,6 +491,7 @@ export function clearFreeAgentMarket(gameState) {
           const gain = fa.overall - weakest.overall;
           if (gain < MARKET_UPGRADE_MARGIN) continue;
           if (!swapKeepsSpread(team.roster, weakest, fa)) continue;
+          if (!fitsTeamLanguage(team.roster, fa)) continue;
 
           const salary = marketContractFor(fa, season).salary;
           const after = computeTeamSalary(team) - (weakest.contract?.salary || 0) + salary;

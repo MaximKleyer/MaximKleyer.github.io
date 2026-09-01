@@ -16,7 +16,10 @@
  */
 
 import { TAGS, getNamePool } from '../data/names.js';
-import { randomNationalityForRegion } from '../data/nationalities.js';
+import { randomNationalityForRegion, REGION_NATIONALITY_POOL } from '../data/nationalities.js';
+import {
+  rollLanguages, nativeLanguageOf, pickNationalityForLanguage,
+} from '../data/languages.js';
 import { rollRole, ROLE_IQ_BIAS, FLEX, FLEX_RATING_CEILING } from '../data/roles.js';
 
 // ── Helpers ──
@@ -126,7 +129,7 @@ function calcNeutralOverall(ratings) {
 // ── Player class ──
 
 export class Player {
-  constructor(name, tag, ratings, { age, nationality, primaryRole, secondaryRole } = {}) {
+  constructor(name, tag, ratings, { age, nationality, languages, primaryRole, secondaryRole } = {}) {
     this.id = makeId();
     this.name = name;
     this.tag = tag;
@@ -134,6 +137,16 @@ export class Player {
     this.overall = calcNeutralOverall(ratings);
     this.age = age ?? 20;
     this.nationality = nationality || 'US';
+
+    // ── Languages ──
+    // Lowercase codes ('en', 'pt', …), native language always included —
+    // that invariant is what team communication is built on. See
+    // data/languages.js.
+    this.languages = Array.isArray(languages) && languages.length > 0
+      ? [...languages]
+      : [nativeLanguageOf(this.nationality)];
+    const native = nativeLanguageOf(this.nationality);
+    if (!this.languages.includes(native)) this.languages.unshift(native);
 
     // ── Role ──
     // Where this player actually belongs. Slotting them anywhere else
@@ -201,6 +214,11 @@ export class Player {
  *
  * Accepts an options object:
  *   regionKey     — used to pick a region-appropriate nationality
+ *   teamLanguage  — the comms language of the club this player is being
+ *                   generated FOR. Weights the nationality pick toward
+ *                   countries that speak it and guarantees the player
+ *                   does. Omit for free agents — they belong to no club,
+ *                   so they roll a plain region nationality.
  *   ageOverride   — explicit age (for rookies, set to 17 or 18)
  *   ratingFloor   — minimum rating on all 5 stats
  *   ratingCeiling — maximum rating on all 5 stats. Tier 2 uses this to
@@ -218,10 +236,24 @@ export function generatePlayer(options = {}) {
 
   // Pick nationality first, since the name pool depends on it.
   // If no region is provided, default to 'US' so the name pool lookup
-  // still finds a valid pool.
+  // still finds a valid pool. A team language anchors the pick toward
+  // countries that speak it — this is what makes a Portuguese-comms club
+  // come out Brazilian instead of a five-country melting pot.
   const nationality = options.regionKey
-    ? randomNationalityForRegion(options.regionKey)
+    ? (options.teamLanguage
+        ? pickNationalityForLanguage(
+            REGION_NATIONALITY_POOL[options.regionKey] || ['US'],
+            options.teamLanguage,
+          )
+        : randomNationalityForRegion(options.regionKey))
     : 'US';
+
+  // Native language plus rolled extras; the club's comms language is
+  // guaranteed on top (the rare import who learned it before arriving).
+  const languages = rollLanguages(nationality);
+  if (options.teamLanguage && !languages.includes(options.teamLanguage)) {
+    languages.push(options.teamLanguage);
+  }
 
   // Derive first + last name from the nationality-specific pool so the
   // name feels authentic to the player's country.
@@ -262,6 +294,6 @@ export function generatePlayer(options = {}) {
     `${firstName} ${lastName}`,
     tag,
     ratings,
-    { age, nationality, primaryRole, secondaryRole },
+    { age, nationality, languages, primaryRole, secondaryRole },
   );
 }

@@ -71,6 +71,10 @@ const PLAYER_FIELDS = {
   overall:       { persisted: true },
   age:           { persisted: true },
   nationality:   { persisted: true },
+  // Spoken languages ('en', 'pt', …) — native always included. Drives
+  // team communication; losing it would re-roll every player's languages
+  // on load and quietly reshuffle which lineups take the comms penalty.
+  languages:     { persisted: true },
   stats:         { persisted: true },
   stageStats:    { persisted: true },
   morale:        { persisted: true },
