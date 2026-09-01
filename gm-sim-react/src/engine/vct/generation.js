@@ -46,17 +46,44 @@ import {
 export const PARTNER_MIN_OVR = 70;
 
 // Open-scene strength bands. Seeded orgs draw from the top bands only;
-// generated clubs spread across all of them. Ceilings stay below a good
-// partner starter so partners usually — not always — survive the opens.
-const OPEN_BANDS = [
-  { key: 'contender',  weight: 4, floor: 58, ceiling: 70 },
-  { key: 'solid',      weight: 8, floor: 55, ceiling: 66 },
-  { key: 'mid',        weight: 12, floor: 51, ceiling: 62 },
-  { key: 'filler',     weight: 8, floor: 47, ceiling: 58 },
-];
-const OPEN_STANDOUT_CHANCE = 0.12;
-const OPEN_STANDOUT_FLOOR = 64;
-const OPEN_STANDOUT_CEILING = 78;
+// generated clubs spread across all of them. The contender band tops
+// out AT partner level deliberately: measured with a lower ceiling,
+// open teams took 8% of bracket seats and won nothing across eight full
+// seasons — the article's "a non-partner team can out-earn a bottom
+// partner" promise never fired. A handful of genuine threats per
+// qualifier keeps partners favored without making them safe.
+// Chosen by a six-config parallel sweep at 12 full seasons each, not by
+// feel. At these values (measured): open teams hold ~30% of regional
+// bracket seats, win ~7% of Kickoffs/Cups, take ~17% of Champions
+// points-top-4 seats, and produce roughly one open-team Masters title
+// and one world title PER TWELVE SEASONS — the article's "extraordinary
+// cases" made literal. The first cut (contender ceiling 70) gave opens
+// 8% of bracket seats and zero trophies of any kind across eight
+// seasons; the aggressive end of the sweep (a 67-79 elite pair) had
+// opens winning 31% of regional events, which stops being an upset.
+const DEFAULT_OPEN_TUNING = {
+  bands: [
+    { key: 'contender',  weight: 4, floor: 64, ceiling: 76 },
+    { key: 'solid',      weight: 8, floor: 56, ceiling: 68 },
+    { key: 'mid',        weight: 12, floor: 51, ceiling: 62 },
+    { key: 'filler',     weight: 8, floor: 47, ceiling: 58 },
+  ],
+  standoutChance: 0.22,
+  standoutFloor: 68,
+  standoutCeiling: 84,
+  seededBump: 3,
+};
+
+let openTuning = { ...DEFAULT_OPEN_TUNING };
+
+/**
+ * Balance-lab hook: override the open-scene tuning for measurement
+ * sweeps (pass null to restore defaults). Same mirror pattern as
+ * syncSalaryCap — production code never calls this with arguments.
+ */
+export function setOpenSceneTuning(overrides = null) {
+  openTuning = overrides ? { ...DEFAULT_OPEN_TUNING, ...overrides } : { ...DEFAULT_OPEN_TUNING };
+}
 
 const FREE_AGENTS_PER_REGION = 40;
 const FA_CEILING = 72;
@@ -89,9 +116,10 @@ function openContract(player, seasonNumber) {
 
 /** Expand weighted bands into one entry per club, shuffled. */
 function assignOpenBands(count) {
+  const src = openTuning.bands;
   const bands = [];
-  for (const b of OPEN_BANDS) for (let i = 0; i < b.weight; i++) bands.push(b);
-  while (bands.length < count) bands.push(OPEN_BANDS[2]);
+  for (const b of src) for (let i = 0; i < b.weight; i++) bands.push(b);
+  while (bands.length < count) bands.push(src[2]);
   bands.length = count;
   for (let i = bands.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -166,11 +194,11 @@ function buildOpenClub(def, regionKey, subKey, band, seeded, seasonNumber) {
   team.subRegion = subKey;
 
   const teamLanguage = randomFrom(sub.langPool);
-  const hasStandout = Math.random() < OPEN_STANDOUT_CHANCE;
+  const hasStandout = Math.random() < openTuning.standoutChance;
   const roles = assignRosterRoles(5);
   // Seeded orgs never draw the bottom band — an established name fields
   // an established roster.
-  const floorBump = seeded ? 3 : 0;
+  const floorBump = seeded ? openTuning.seededBump : 0;
 
   for (let i = 0; i < 5; i++) {
     const standout = hasStandout && i === 0;
@@ -180,8 +208,8 @@ function buildOpenClub(def, regionKey, subKey, band, seeded, seasonNumber) {
       teamLanguage,
       ...roles[i],
       ageOverride: openAge(),
-      ratingFloor:   standout ? OPEN_STANDOUT_FLOOR   : band.floor + floorBump,
-      ratingCeiling: standout ? OPEN_STANDOUT_CEILING : band.ceiling + floorBump,
+      ratingFloor:   standout ? openTuning.standoutFloor   : band.floor + floorBump,
+      ratingCeiling: standout ? openTuning.standoutCeiling : band.ceiling + floorBump,
     }));
   }
   team.roster.sort((a, b) => b.overall - a.overall);
