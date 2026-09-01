@@ -85,7 +85,7 @@ export function regionPointsTable(gameState, regionKey) {
       || b.team.overallRating - a.team.overallRating);
 }
 
-function awardEventPoints(circuit, regionKey, event, table) {
+export function awardEventPoints(circuit, regionKey, event, table) {
   const p = event.placements;
   addPoints(circuit, regionKey, p.champion, table.champion);
   addPoints(circuit, regionKey, p.runnerUp, table.runnerUp);
@@ -101,11 +101,19 @@ function awardEventPoints(circuit, regionKey, event, table) {
 
 /* ─────────────── Slot runners ─────────────── */
 
-function runQualsSlot(gameState, slot) {
-  const results = {};
+/**
+ * The runners below are exported (with options) so the live layer
+ * (live.js) can bulk-run everything EXCEPT the competition the human is
+ * playing through interactively, then splice the human's finished
+ * competition back in with the store/award helpers.
+ */
+
+export function runQualsSlot(gameState, slot, { skip = null } = {}) {
+  const results = gameState.circuit.events[slot.key] || {};
   for (const rk of REGION_KEYS) {
-    results[rk] = {};
+    results[rk] = results[rk] || {};
     for (const [sk, def] of Object.entries(SUB_REGIONS[rk])) {
+      if (skip && skip.regionKey === rk && skip.subKey === sk) continue;
       const teams = gameState.regions[rk].subRegions[sk].teams;
       results[rk][sk] = runOpenQualifier(teams, def.slots);
     }
@@ -113,31 +121,44 @@ function runQualsSlot(gameState, slot) {
   gameState.circuit.events[slot.key] = results;
 }
 
-function runRegionalSlot(gameState, slot) {
-  const circuit = gameState.circuit;
-  const quals = circuit.events[slot.qualsKey];
-  const results = {};
-  for (const rk of REGION_KEYS) {
-    const partners = gameState.regions[rk].teams;
-    const qualified = Object.values(quals?.[rk] || {}).flatMap(q => q.qualified);
-    const event = runSixteenTeamEvent([...partners, ...qualified]);
-    awardEventPoints(circuit, rk, event, CUP_POINTS);
-    results[rk] = event;
-  }
-  circuit.events[slot.key] = results;
+/** The 16-team field for one region's Kickoff/Cup. */
+export function regionalField(gameState, slot, regionKey) {
+  const quals = gameState.circuit.events[slot.qualsKey];
+  const partners = gameState.regions[regionKey].teams;
+  const qualified = Object.values(quals?.[regionKey] || {}).flatMap(q => q.qualified);
+  return [...partners, ...qualified];
 }
 
-function runMastersSlot(gameState, slot) {
+/** Store one region's finished Kickoff/Cup and pay its points. */
+export function storeRegionalEvent(gameState, slot, regionKey, event) {
   const circuit = gameState.circuit;
-  const source = circuit.events[slot.sourceKey];
+  circuit.events[slot.key] = circuit.events[slot.key] || {};
+  circuit.events[slot.key][regionKey] = event;
+  awardEventPoints(circuit, regionKey, event, CUP_POINTS);
+}
+
+export function runRegionalSlot(gameState, slot, { skipRegion = null } = {}) {
+  for (const rk of REGION_KEYS) {
+    if (rk === skipRegion) continue;
+    storeRegionalEvent(gameState, slot, rk, runSixteenTeamEvent(regionalField(gameState, slot, rk)));
+  }
+}
+
+/** The 8-team Masters field: each region's source-event top 2. */
+export function mastersField(gameState, slot) {
+  const source = gameState.circuit.events[slot.sourceKey];
   const field = [];
   for (const rk of REGION_KEYS) {
     const p = source?.[rk]?.placements;
     if (!p) continue;
     field.push(...[p.champion, p.runnerUp].filter(Boolean).slice(0, MASTERS_SLOTS_PER_REGION));
   }
-  const event = runMastersEvent(field);
-  // Masters points land on each team's HOME region table.
+  return field;
+}
+
+/** Store a finished Masters; points land on each team's HOME region. */
+export function storeMastersEvent(gameState, slot, event) {
+  const circuit = gameState.circuit;
   const p = event.placements;
   const award = (team, n) => addPoints(circuit, regionOfTeam(gameState, team), team, n);
   if (p.champion) award(p.champion, MASTERS_POINTS.champion);
@@ -148,18 +169,31 @@ function runMastersSlot(gameState, slot) {
   circuit.events[slot.key] = event;
 }
 
-function runChampionsSlot(gameState, slot) {
-  const circuit = gameState.circuit;
+function runMastersSlot(gameState, slot) {
+  storeMastersEvent(gameState, slot, runMastersEvent(mastersField(gameState, slot)));
+}
+
+/** The 16-team Champions field: each region's points top 4. */
+export function championsField(gameState) {
   const field = [];
   for (const rk of REGION_KEYS) {
     field.push(...regionPointsTable(gameState, rk)
       .slice(0, CHAMPIONS_SLOTS_PER_REGION)
       .map(r => r.team));
   }
-  const event = runSixteenTeamEvent(field, { bestOf: 3 });
+  return field;
+}
+
+/** Store the finished Champions and close the season. */
+export function storeChampionsEvent(gameState, slot, event) {
+  const circuit = gameState.circuit;
   circuit.events[slot.key] = event;
   circuit.worldChampion = event.placements.champion || null;
   circuit.status = 'season-complete';
+}
+
+function runChampionsSlot(gameState, slot) {
+  storeChampionsEvent(gameState, slot, runSixteenTeamEvent(championsField(gameState)));
 }
 
 /* ─────────────── Advance ─────────────── */
