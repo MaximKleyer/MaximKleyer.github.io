@@ -19,7 +19,9 @@ import TeamLogo from './TeamLogo.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
+import TeamFlag from './TeamFlag.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { commLanguage, commUncovered, speaks, languageName } from '../data/languages.js';
 import { mapName, getActivePool } from '../data/maps.js';
 import { RoleTag } from './RoleTag.jsx';
 import { ROSTER_MIN } from '../data/constants.js';
@@ -100,6 +102,12 @@ export default function Roster({
     if (onUpdate) onUpdate();
   }
 
+  // Team communication state. The room's language is judged over the
+  // whole roster; the PENALTY is judged over the fielded five, because
+  // that is exactly what the match sim reads.
+  const comms = commLanguage(team.roster);
+  const startersUncovered = commUncovered(team.startingFive);
+
   const usedSalary = computeTeamSalary(team);
   const capRemaining = computeCapRemaining(team);
   const utilization = Math.min(100, Math.round(100 * usedSalary / getSalaryCap()));
@@ -141,8 +149,26 @@ export default function Roster({
     <>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <TeamLogo team={team} size={30} />{team.name} Roster
+        <TeamFlag team={team} style={{ fontSize: '0.7em' }} />
       </h2>
-      <p className="muted">{team.roster.length} players · Team OVR: {team.overallRating}</p>
+      <p className="muted">
+        {team.roster.length} players · Team OVR: {team.overallRating}
+        {comms.lang && (
+          <>
+            {' · '}Comms: {languageName(comms.lang)}
+            {' '}({comms.coverage}/{team.roster.length} speak it)
+          </>
+        )}
+      </p>
+      {startersUncovered > 0 && (
+        <p style={{
+          margin: '-6px 0 12px', fontSize: '0.78rem', color: '#ffb070',
+        }}>
+          ⚠ {startersUncovered} starter{startersUncovered > 1 ? 's' : ''} can't speak the
+          team's comms language — the five take a communication penalty until they
+          learn it (checked at every development window).
+        </p>
+      )}
 
       {/* Cap meter strip */}
       <div style={{
@@ -295,6 +321,12 @@ export default function Roster({
                   editable={godMode}
                   onCommit={v => onEditPlayer(player, 'nationality', v)}
                 />
+                {comms.lang && !speaks(player, comms.lang) && (
+                  <span
+                    title={`Doesn't speak the team's comms language (${languageName(comms.lang)}) — they pick it up at development windows`}
+                    style={{ marginLeft: 4, color: '#ffb070', fontSize: '0.7rem', cursor: 'help' }}
+                  >●</span>
+                )}
               </td>
               <td>
                 <EditableCell

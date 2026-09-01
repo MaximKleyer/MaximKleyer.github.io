@@ -10,6 +10,7 @@
 import EditableCell from './EditableCell.jsx';
 import { RoleTag } from './RoleTag.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { playerLanguages, languageName, nativeLanguageOf } from '../data/languages.js';
 import { moraleTier, getSalaryCap } from '../data/salary.js';
 
 const ATTRS = [
@@ -93,6 +94,10 @@ export default function PlayerCard({ player, team, isIgl = false, godMode = fals
                 style={{ margin: '0 6px' }}
               />
               · {player.age} years · {team?.name || '—'}
+            </div>
+            <div style={{ fontSize: '0.72rem', opacity: 0.6, marginTop: 3 }}>
+              Speaks: {playerLanguages(player).map(l =>
+                `${languageName(l)}${l === nativeLanguageOf(player.nationality) ? ' (native)' : ''}`).join(', ')}
             </div>
           </div>
           <div style={{ textAlign: 'center', flex: 'none' }}>

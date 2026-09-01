@@ -9,7 +9,8 @@
  */
 
 import { SIM, ROUNDS_TO_WIN, HALF_LENGTH, REGULATION_ROUNDS } from '../data/constants.js';
-import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE, IGL_LEADERSHIP_PER_IQ } from '../data/strategy.js';
+import { SUBTYPES, IGL_BONUS_MULTIPLIER, IGL_BASELINE, IGL_LEADERSHIP_PER_IQ, COMM_PENALTY_PER_UNCOVERED } from '../data/strategy.js';
+import { commUncovered } from '../data/languages.js';
 import { moralePerformanceModifier } from '../data/salary.js';
 import { teamMapRating, getCurrentPool } from '../data/maps.js';
 import { roleFitMultiplier } from '../data/roles.js';
@@ -91,6 +92,17 @@ export function getIglBonus(team, lineup = null) {
 /** Duel multiplier the fielded IGL's leadership gives the whole five. */
 export function iglLeadershipMultiplier(team, lineup = null) {
   return 1 + fieldedIglIqAbove(team, lineup) * IGL_LEADERSHIP_PER_IQ;
+}
+
+/**
+ * Duel multiplier for how well the fielded five can actually talk to
+ * each other. 1.0 when some language covers all five; each player
+ * outside the largest shared-language group costs the whole team
+ * COMM_PENALTY_PER_UNCOVERED. Rides the same channel as leadership.
+ */
+export function communicationMultiplier(lineup) {
+  if (!lineup || lineup.length === 0) return 1;
+  return 1 - commUncovered(lineup) * COMM_PENALTY_PER_UNCOVERED;
 }
 
 function buildAssignmentMap(team) {
@@ -272,8 +284,10 @@ export function simulateMap(teamA, teamB, plan = null) {
   // Both IGL effects key off the FIELDED five, not the roster.
   const iglBonusA = getIglBonus(teamA, lineupA);
   const iglBonusB = getIglBonus(teamB, lineupB);
-  const leadA = iglLeadershipMultiplier(teamA, lineupA);
-  const leadB = iglLeadershipMultiplier(teamB, lineupB);
+  // Leadership and communication both shift every duel's mean; folding
+  // them into one factor keeps the per-round path a single multiply.
+  const leadA = iglLeadershipMultiplier(teamA, lineupA) * communicationMultiplier(lineupA);
+  const leadB = iglLeadershipMultiplier(teamB, lineupB) * communicationMultiplier(lineupB);
 
   const roundStats = {};
   for (const p of [...lineupA, ...lineupB]) {

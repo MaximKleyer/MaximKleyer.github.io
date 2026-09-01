@@ -21,6 +21,7 @@ import Settings from './components/Settings.jsx';
 import Tier2 from './components/Tier2.jsx';
 import { executePoach, evaluatePoach } from './engine/poaching.js';
 import { syncSalaryCap } from './data/salary.js';
+import { addLanguage, nativeLanguageOf } from './data/languages.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runReactiveAISignings } from './engine/offseason.js';
@@ -303,7 +304,13 @@ export default function App() {
       // generated options, so we just accept any non-empty string and
       // rely on the UI to only offer valid codes. The flag helpers fall
       // back to a placeholder emoji for unknown codes anyway.
-      if (code) player.nationality = code;
+      if (code) {
+        player.nationality = code;
+        // A player always speaks their nationality's language — the
+        // invariant survives god-mode edits too. Old languages are
+        // kept: changing a flag doesn't un-learn anything.
+        addLanguage(player, nativeLanguageOf(code));
+      }
     } else if (field === 'age') {
       const n = Math.max(16, Math.min(40, parseInt(value, 10) || player.age));
       player.age = n;
@@ -1776,6 +1783,7 @@ export default function App() {
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}
+          team={humanTeam}
           canSign={signingWindowOpen && !humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
           windowClosed={!signingWindowOpen}
           onSign={signPlayer}
