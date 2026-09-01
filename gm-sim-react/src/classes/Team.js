@@ -75,6 +75,12 @@ export class Team {
     // an academy side to its tier-1 org (null for independents).
     this.tier = 1;
     this.parentAbbr = null;
+
+    // ── VCT 2027 mode ──
+    // Which sub-region qualifier this open-scene club belongs to
+    // ('na', 'br', 'kr', …). Null for partners and for every team in
+    // franchise mode.
+    this.subRegion = null;
   }
 
   get overallRating() {

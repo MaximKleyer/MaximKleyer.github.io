@@ -61,6 +61,9 @@ const TEAM_FIELDS = {
   // 1 = franchised top flight, 2 = the open second division.
   tier:         { persisted: true },
   parentAbbr:   { persisted: true },
+  // VCT 2027: which sub-region qualifier an open club belongs to; null
+  // for partners and every franchise-mode team.
+  subRegion:    { persisted: true },
 };
 
 const PLAYER_FIELDS = {
