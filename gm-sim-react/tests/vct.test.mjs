@@ -18,6 +18,10 @@ import { REGION_KEYS } from '../src/data/regions.js';
 import { Team } from '../src/classes/Team.js';
 import { Player } from '../src/classes/Player.js';
 import { saveGameState, loadGameState } from '../src/engine/persistence.js';
+import {
+  initVctCircuit, advanceVctSlot, runFullVctSeason, VCT_SLOTS, regionPointsTable,
+} from '../src/engine/vct/circuit.js';
+import { PARTNERS_PER_REGION as PPR } from '../src/data/vct/partners.js';
 
 before(() => { installLocalStorage(); });
 
@@ -137,6 +141,105 @@ describe('human start', () => {
     assert.equal(human.subRegion, 'sas');
     assert.equal(gs.humanSubRegion, 'sas');
     assert.equal(gs.humanTeamAbbr, human.abbr);
+  });
+});
+
+describe('circuit', () => {
+  test('the full calendar runs: nine slots, a world champion, season-complete', () => {
+    const gs = newVct();
+    initVctCircuit(gs);
+    const played = [];
+    let slot;
+    while ((slot = advanceVctSlot(gs))) played.push(slot.key);
+    assert.deepEqual(played, VCT_SLOTS.map(s => s.key));
+    assert.equal(gs.circuit.status, 'season-complete');
+    assert.ok(gs.circuit.worldChampion, 'no world champion crowned');
+    assert.ok(advanceVctSlot(gs) === null, 'advance past season end must no-op');
+  });
+
+  test('each qualifier sends exactly its slots, all from its own sub-region', () => {
+    const gs = newVct();
+    initVctCircuit(gs);
+    advanceVctSlot(gs);   // kickoffQuals
+    const quals = gs.circuit.events.kickoffQuals;
+    for (const rk of REGION_KEYS) {
+      for (const [sk, def] of Object.entries(SUB_REGIONS[rk])) {
+        const q = quals[rk][sk];
+        assert.equal(q.qualified.length, def.slots, `${rk}/${sk} qualified count`);
+        for (const t of q.qualified) {
+          assert.equal(t.subRegion, sk, `${t.abbr} qualified out of the wrong bracket`);
+        }
+        // 32 → slots means log2(32/slots) rounds.
+        assert.equal(q.rounds.length, Math.log2(OPEN_TEAMS_PER_SUBREGION / def.slots),
+          `${rk}/${sk} round count`);
+      }
+    }
+  });
+
+  test('every regional event is 8 partners + 8 qualified opens', () => {
+    const gs = newVct();
+    initVctCircuit(gs);
+    advanceVctSlot(gs);   // kickoffQuals
+    advanceVctSlot(gs);   // kickoff
+    for (const rk of REGION_KEYS) {
+      const event = gs.circuit.events.kickoff[rk];
+      const field = event.swiss.entries.map(e => e.team);
+      assert.equal(field.length, PPR + 8, `${rk} field size`);
+      const partners = new Set(gs.regions[rk].teams);
+      assert.equal(field.filter(t => partners.has(t)).length, PPR, `${rk} partner count`);
+      assert.equal(field.filter(t => t.subRegion).length, 8, `${rk} open count`);
+      assert.ok(event.placements.champion, `${rk} kickoff has no champion`);
+    }
+  });
+
+  test('Masters fields the top 2 of each region, and points flow home', () => {
+    const gs = newVct();
+    initVctCircuit(gs);
+    advanceVctSlot(gs); advanceVctSlot(gs); advanceVctSlot(gs);   // → masters1
+    const m = gs.circuit.events.masters1;
+    assert.equal(m.seeds.length, 8, 'masters field size');
+    for (const rk of REGION_KEYS) {
+      const p = gs.circuit.events.kickoff[rk].placements;
+      assert.ok(m.seeds.includes(p.champion), `${rk} kickoff champion missing from Masters`);
+      assert.ok(m.seeds.includes(p.runnerUp), `${rk} kickoff runner-up missing from Masters`);
+    }
+    const totalPoints = Object.values(gs.circuit.points).reduce((s, n) => s + n, 0);
+    assert.ok(totalPoints > 0, 'no championship points awarded');
+  });
+
+  test('Champions seeds each region\'s points top 4', () => {
+    const gs = newVct();
+    runFullVctSeason(gs);
+    const field = gs.circuit.events.champions.swiss.entries.map(e => e.team);
+    assert.equal(field.length, 16);
+    for (const rk of REGION_KEYS) {
+      const top4 = regionPointsTable(gs, rk).slice(0, 4).map(r => r.team);
+      for (const t of top4) {
+        assert.ok(field.includes(t), `${rk} points-top-4 ${t.abbr} missing from Champions`);
+      }
+    }
+  });
+
+  test('a completed season survives a save round trip', () => {
+    const gs = newVct();
+    runFullVctSeason(gs);
+    const championAbbr = gs.circuit.worldChampion.abbr;
+    saveGameState(gs);
+    const loaded = loadGameState();
+    assert.ok(loaded, 'load failed');
+    assert.equal(loaded.circuit.status, 'season-complete');
+    assert.ok(loaded.circuit.worldChampion instanceof Team, 'world champion lost identity');
+    assert.equal(loaded.circuit.worldChampion.abbr, championAbbr);
+    // The champion reference must resolve to the SAME instance as the
+    // canonical team in its region, not a detached copy.
+    const rk = REGION_KEYS.find(k =>
+      loaded.regions[k].teams.includes(loaded.circuit.worldChampion)
+      || Object.values(loaded.regions[k].subRegions)
+        .some(s => s.teams.includes(loaded.circuit.worldChampion)));
+    assert.ok(rk, 'world champion is a detached copy, not the canonical team');
+    const raw = globalThis.localStorage.getItem('gm-sim-save-v2');
+    assert.ok(raw.length / 1024 < 3500,
+      `post-season save is ${Math.round(raw.length / 1024)}KB`);
   });
 });
 
