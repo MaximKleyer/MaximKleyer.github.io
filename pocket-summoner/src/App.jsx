@@ -1,3 +1,4 @@
+import { useState } from "react";
 import "./styles/theme.css";
 import useGameState from "./hooks/useGameState";
 import TitleScreen from "./components/TitleScreen";
@@ -9,18 +10,26 @@ import ChampionScreen from "./components/ChampionScreen";
 import BattleScreen from "./components/BattleScreen";
 import BattleResultScreen from "./components/BattleResultScreen";
 import ProfileScreen from "./components/ProfileScreen";
+import BattleHubScreen from "./components/BattleHubScreen";
+import PvpScreen from "./components/PvpScreen";
+import TeamBattleScreen from "./components/TeamBattleScreen";
+import SettingsScreen from "./components/SettingsScreen";
 
 export default function App() {
   const game = useGameState();
   const {
     player, screen, setScreen, message,
     battleResult, setBattleResult,
-    battleData,
+    battleData, pvpData,
     selectedGuardIdx, setSelectedGuardIdx,
     selectedZone, setSelectedZone,
   } = game;
 
-  // Route battle completion based on context
+  const [pvpMode, setPvpMode] = useState("pvp1v1");
+
+  // Get battle speed from settings
+  const battleSpeed = player?.settings?.battleSpeed || "normal";
+
   function handleBattleComplete() {
     if (battleData?.pendingRewards?.isChampion) {
       game.completeChampionFight();
@@ -29,12 +38,13 @@ export default function App() {
     }
   }
 
-  // Route battle result "Continue" based on where they came from
   function handleResultContinue() {
     const r = battleResult;
     setBattleResult(null);
-    if (r?.championCleared || r?.championFailed || r?.championAdvance) {
+    if (r?.raidCleared || r?.raidFailed) {
       setScreen("champion");
+    } else if (r?.isPvp) {
+      setScreen("battleHub");
     } else {
       setScreen("quests");
     }
@@ -75,6 +85,40 @@ export default function App() {
         />
       )}
 
+      {screen === "battleHub" && player && (
+        <BattleHubScreen
+          player={player}
+          onSelectMode={(mode) => {
+            if (mode === "pvp1v1" || mode === "pvp3v3") {
+              setPvpMode(mode);
+              setScreen("pvp");
+            }
+          }}
+          onBack={() => setScreen("main")}
+        />
+      )}
+
+      {screen === "pvp" && player && (
+        <PvpScreen
+          player={player}
+          mode={pvpMode}
+          onStartMatch={game.startPvpMatch}
+          onSaveSquad={game.saveSquad}
+          onDeleteSquad={game.deleteSquad}
+          onBack={() => setScreen("battleHub")}
+        />
+      )}
+
+      {screen === "pvpBattle" && pvpData && (
+        <TeamBattleScreen
+          playerTeam={pvpData.playerTeam}
+          enemyTeam={pvpData.enemyTeam}
+          battleLog={pvpData.log}
+          onComplete={game.completePvpMatch}
+          speed={battleSpeed}
+        />
+      )}
+
       {screen === "guards" && player && (
         <GuardsScreen
           player={player}
@@ -85,6 +129,7 @@ export default function App() {
           onLevelUp={game.levelUpGuard}
           onEvolve={game.evolveGuard}
           onSetActive={game.setActiveGuard}
+          onTogglePartyMember={game.togglePartyMember}
           onBack={() => setScreen("main")}
         />
       )}
@@ -103,6 +148,7 @@ export default function App() {
           enemyGuard={battleData.enemyGuard}
           battleLog={battleData.log}
           onComplete={handleBattleComplete}
+          speed={battleSpeed}
         />
       )}
 
@@ -118,6 +164,15 @@ export default function App() {
           player={player}
           onBack={() => setScreen("main")}
           onDeleteSave={game.deleteSave}
+        />
+      )}
+
+      {screen === "settings" && player && (
+        <SettingsScreen
+          player={player}
+          onUpdateSetting={game.updateSetting}
+          onDeleteSave={game.deleteSave}
+          onBack={() => setScreen("main")}
         />
       )}
     </>

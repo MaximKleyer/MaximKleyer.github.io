@@ -5,8 +5,8 @@ const QUEST_ZONES = {
   basalonTown: {
     id: "basalonTown", name: "Basalon Town", requiredLevel: 1,
     quests: [
-      { id: "bt_q1", name: "Patrol the Streets", type: "quest", energyRequired: 5, xp: 7500, gold: 15000, minLevel: 1, desc: "Walk the streets and keep the peace." },
-      { id: "bt_q2", name: "Assisting in the Laboratory", type: "quest", energyRequired: 5, xp: 100, gold: 200, minLevel: 2, desc: "Help the professor with his spirit research." },
+      { id: "bt_q1", name: "Patrol the Streets", type: "quest", energyRequired: 1, xp: 10000, gold: 150, minLevel: 1, desc: "Walk the streets and keep the peace." },
+      { id: "bt_q2", name: "Assisting in the Laboratory", type: "quest", energyRequired: 1, xp: 100, gold: 20000, minLevel: 2, desc: "Help the professor with his spirit research." },
       { id: "bt_q3", name: "Exploring the Mystic House", type: "quest", energyRequired: 5, xp: 150, gold: 300, minLevel: 4, desc: "Investigate the haunted house on the edge of town." },
       { id: "bt_q4", name: "Report of Dark Matter", type: "quest", energyRequired: 5, xp: 200, gold: 400, minLevel: 8, desc: "Dark energy detected. Investigate the source." },
     ],

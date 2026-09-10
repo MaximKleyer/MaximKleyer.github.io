@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import GUARD_DB from "../data/guards";
-import CHAMPION_TIERS from "../data/championChallenge";
+import RAID_BOSSES from "../data/championChallenge";
 import { xpForLevel, guardLevelUpCost, maxEnergy, ENERGY_REGEN_MS, STAT_POINTS_PER_LEVEL } from "../engine/formulas";
 import { runBattle, makeEnemyGuard } from "../engine/combat";
+import PVP_OPPONENTS from "../data/pvpOpponents";
+import { runTeamBattle, buildEnemyTeam } from "../engine/teamBattle";
 
 const SAVE_KEY = "pocket-summoner-save";
 
@@ -21,12 +23,24 @@ function loadSave() {
           localStorage.removeItem(SAVE_KEY);
           return null;
         }
-        // Ensure statBonuses field exists (for old saves from before bonuses)
         if (!g.statBonuses) {
           g.statBonuses = { ...GUARD_DB[g.id].statBonuses };
         }
       }
     }
+
+    // Migrate new fields
+    if (!save.partyIndices) {
+      // Old saves: put activeGuard + first 5 others into party
+      const indices = [save.activeGuard ?? 0];
+      for (let i = 0; i < (save.guards?.length || 0) && indices.length < 6; i++) {
+        if (!indices.includes(i)) indices.push(i);
+      }
+      save.partyIndices = indices;
+    }
+    if (!save.squads) save.squads = [];
+    if (!save.settings) save.settings = { battleSpeed: "normal" };
+    if (!save.raidsBeaten) save.raidsBeaten = {};
     return save;
   } catch (e) {
     console.warn("Failed to load save:", e);
@@ -52,6 +66,7 @@ export default function useGameState() {
   const [message, setMessage] = useState(null);
   const msgTimeout = useRef(null);
   const championCtx = useRef(null); // tracks { tierId, fightIdx } during champion battles
+  const [pvpData, setPvpData] = useState(null);
 
   // Auto-save
   useEffect(() => {
@@ -115,10 +130,14 @@ export default function useGameState() {
         },
       ],
       activeGuard: 0,
-      // Track quest progress: { questId: energySpent }
+      partyIndices: [0],   // up to 6 guards in active party (indices into guards[])
+      squads: [],           // saved 3v3 squads: [{ name, indices: [i,j,k] }]
+      settings: {
+        battleSpeed: "normal", // "fast" | "normal" | "slow"
+      },
       questProgress: {},
-      // Track encounter clears: { encounterId: true }
       encounterClears: {},
+      raidsBeaten: {},
     };
     setPlayer(newPlayer);
     setScreen("main");
@@ -275,19 +294,22 @@ export default function useGameState() {
   }
 
   /** Spend 1 stat point on a stat */
-  function allocateStat(guardIdx, stat) {
+  function allocateStat(guardIdx, stat, amount = 1) {
     if (!player) return;
     const guard = player.guards[guardIdx];
     if (!guard) return;
-    if ((guard.statPoints || 0) < 1) {
+    const available = guard.statPoints || 0;
+    if (available < 1) {
       showMsg("No stat points available! Level up your guard.");
       return;
     }
+    // Don't over-spend if requesting more than available
+    const spend = Math.min(amount, available);
     const newGuards = [...player.guards];
     newGuards[guardIdx] = {
       ...guard,
-      stats: { ...guard.stats, [stat]: guard.stats[stat] + 1 },
-      statPoints: guard.statPoints - 1,
+      stats: { ...guard.stats, [stat]: guard.stats[stat] + spend },
+      statPoints: available - spend,
     };
     setPlayer({ ...player, guards: newGuards });
   }
@@ -383,42 +405,40 @@ export default function useGameState() {
 
   // ─── CHAMPION CHALLENGE ───
 
-  /** Start the next fight in a champion tier */
-  function startChampionFight(tierId) {
+  /** Start a raid boss fight */
+  function startChampionFight(bossId) {
     if (!player) return;
-    if (player.energy < 1) { showMsg("Not enough Energy!"); return; }
+    if (player.energy < 2) { showMsg("Need 2 Energy for a raid!"); return; }
 
-    const tier = CHAMPION_TIERS.find(t => t.id === tierId);
-    if (!tier) return;
-    if (player.level < tier.requiredLevel) { showMsg(`Requires Lv.${tier.requiredLevel}!`); return; }
+    const boss = RAID_BOSSES.find(b => b.id === bossId);
+    if (!boss) return;
+    if (player.level < boss.requiredLevel) {
+      showMsg(`Requires Summoner Lv.${boss.requiredLevel}!`);
+      return;
+    }
+
+    // Check if previous boss was beaten (linear unlock)
+    const bossIdx = RAID_BOSSES.findIndex(b => b.id === bossId);
+    if (bossIdx > 0) {
+      const prevId = RAID_BOSSES[bossIdx - 1].id;
+      if (!player.raidsBeaten?.[prevId]) {
+        showMsg(`Defeat ${RAID_BOSSES[bossIdx - 1].name} first!`);
+        return;
+      }
+    }
 
     const guard = player.guards[player.activeGuard];
     if (!guard) { showMsg("No active guard!"); return; }
 
-    const prog = player.championProgress?.[tierId] || { currentFight: 0, cleared: false };
-    const fightIdx = prog.cleared ? 0 : prog.currentFight; // restart if re-challenging
-    const fight = tier.fights[fightIdx];
-    if (!fight) return;
-
-    const newPlayer = { ...player, energy: player.energy - 1 };
-
-    // If re-challenging, reset progress
-    if (prog.cleared) {
-      newPlayer.championProgress = {
-        ...newPlayer.championProgress,
-        [tierId]: { currentFight: 0, cleared: false },
-      };
-    }
-
+    const newPlayer = { ...player, energy: player.energy - 2 };
     setPlayer(newPlayer);
 
-    const enemy = makeEnemyGuard(fight.guardId, fight.level);
-    // Override enemy name with the challenge name
-    enemy.name = fight.name;
+    const enemy = makeEnemyGuard(boss.guardId, boss.bossLevel);
+    enemy.name = boss.name; // use boss display name
 
     const battle = runBattle(guard, enemy);
 
-    championCtx.current = { tierId, fightIdx };
+    championCtx.current = { bossId };
     setBattleData({
       playerGuard: guard,
       enemyGuard: enemy,
@@ -428,92 +448,60 @@ export default function useGameState() {
     setScreen("battle");
   }
 
-  /** Called after champion battle animation completes */
+  /** Called after raid boss battle animation completes */
   function completeChampionFight() {
     if (!championCtx.current || !battleData || !player) {
-      // Fallback — not a champion fight, use normal complete
       completeBattle();
       return;
     }
 
-    const { tierId, fightIdx } = championCtx.current;
-    const tier = CHAMPION_TIERS.find(t => t.id === tierId);
+    const { bossId } = championCtx.current;
+    const boss = RAID_BOSSES.find(b => b.id === bossId);
     const battle = battleData.pendingRewards.battle;
     championCtx.current = null;
 
     if (!battle.won) {
-      // Lost — reset tier progress
-      const newPlayer = { ...player };
-      newPlayer.championProgress = {
-        ...newPlayer.championProgress,
-        [tierId]: { currentFight: 0, cleared: false },
-      };
-      setPlayer(newPlayer);
       setBattleData(null);
       setBattleResult({
-        encounter: `${tier.name} Challenge — FAILED`,
+        encounter: `${boss.name} — DEFEATED`,
         battle,
-        championFailed: true,
-        tierName: tier.name,
+        raidFailed: true,
+        bossName: boss.name,
       });
       setScreen("battleResult");
       return;
     }
 
-    // Won this fight
+    // Won the raid
     const newPlayer = { ...player };
-    const nextFight = fightIdx + 1;
-    const tierCleared = nextFight >= tier.fights.length;
-    const wasAlreadyCleared = !!newPlayer.championProgress?.[tierId]?.cleared;
+    const wasAlreadyBeaten = !!newPlayer.raidsBeaten?.[bossId];
+    const mult = wasAlreadyBeaten ? 0.25 : 1;
 
-    if (tierCleared) {
-      // Tier complete — award rewards
-      const mult = wasAlreadyCleared ? 0.25 : 1;
-      newPlayer.xp += Math.floor(tier.rewards.xp * mult);
-      newPlayer.gold += Math.floor(tier.rewards.gold * mult);
+    newPlayer.xp += Math.floor(boss.rewards.xp * mult);
+    newPlayer.gold += Math.floor(boss.rewards.gold * mult);
 
-      // Award spirit essences
-      for (const sid of tier.rewards.spirits) {
-        newPlayer.spirits = { ...newPlayer.spirits, [sid]: (newPlayer.spirits[sid] || 0) + 1 };
-      }
-
-      newPlayer.championProgress = {
-        ...newPlayer.championProgress,
-        [tierId]: { currentFight: 0, cleared: true },
-      };
-
-      checkLevelUp(newPlayer);
-      setPlayer(newPlayer);
-      setBattleData(null);
-      setBattleResult({
-        encounter: `${tier.name} Challenge — COMPLETE!`,
-        battle,
-        championCleared: true,
-        tierName: tier.name,
-        xp: Math.floor(tier.rewards.xp * mult),
-        gold: Math.floor(tier.rewards.gold * mult),
-        spiritsAwarded: tier.rewards.spirits.map(s => GUARD_DB[s]?.name || s),
-        reduced: wasAlreadyCleared,
-      });
-      setScreen("battleResult");
-    } else {
-      // Advance to next fight
-      newPlayer.championProgress = {
-        ...newPlayer.championProgress,
-        [tierId]: { currentFight: nextFight, cleared: false },
-      };
-      setPlayer(newPlayer);
-      setBattleData(null);
-      setBattleResult({
-        encounter: `${tier.name} — Fight ${fightIdx + 1}/${tier.fights.length} WON`,
-        battle,
-        championAdvance: true,
-        tierName: tier.name,
-        nextFight: nextFight + 1,
-        totalFights: tier.fights.length,
-      });
-      setScreen("battleResult");
+    // Award boss spirit essence on first clear only
+    if (!wasAlreadyBeaten && boss.rewards.spiritId) {
+      const sid = boss.rewards.spiritId;
+      newPlayer.spirits = { ...newPlayer.spirits, [sid]: (newPlayer.spirits[sid] || 0) + 1 };
     }
+
+    newPlayer.raidsBeaten = { ...(newPlayer.raidsBeaten || {}), [bossId]: true };
+
+    checkLevelUp(newPlayer);
+    setPlayer(newPlayer);
+    setBattleData(null);
+    setBattleResult({
+      encounter: `${boss.name} — DEFEATED!`,
+      battle,
+      raidCleared: true,
+      bossName: boss.name,
+      xp: Math.floor(boss.rewards.xp * mult),
+      gold: Math.floor(boss.rewards.gold * mult),
+      spiritFound: !wasAlreadyBeaten ? GUARD_DB[boss.rewards.spiritId]?.name : null,
+      reduced: wasAlreadyBeaten,
+    });
+    setScreen("battleResult");
   }
 
   function setActiveGuard(idx) {
@@ -521,10 +509,151 @@ export default function useGameState() {
     setPlayer({ ...player, activeGuard: idx });
   }
 
+  // ─── PARTY MANAGEMENT (active 6 guards) ───
+  function togglePartyMember(idx) {
+    if (!player) return;
+    const party = [...(player.partyIndices || [])];
+    const pos = party.indexOf(idx);
+    if (pos !== -1) {
+      // remove unless it's the last one
+      if (party.length === 1) {
+        showMsg("Party can't be empty!");
+        return;
+      }
+      party.splice(pos, 1);
+      // If active guard was removed, fall back to first in party
+      let newActive = player.activeGuard;
+      if (newActive === idx) newActive = party[0];
+      setPlayer({ ...player, partyIndices: party, activeGuard: newActive });
+    } else {
+      if (party.length >= 6) {
+        showMsg("Party full (max 6) — remove one first");
+        return;
+      }
+      party.push(idx);
+      setPlayer({ ...player, partyIndices: party });
+    }
+  }
+
+  // ─── SQUADS (saved 3v3 teams) ───
+  function saveSquad(name, indices) {
+    if (!player) return;
+    if (indices.length !== 3) {
+      showMsg("Squad must have exactly 3 guards");
+      return;
+    }
+    const squads = [...(player.squads || [])];
+    if (squads.length >= 5) {
+      showMsg("Max 5 squads. Delete one first.");
+      return;
+    }
+    squads.push({ name: name || `Squad ${squads.length + 1}`, indices });
+    setPlayer({ ...player, squads });
+    showMsg(`Squad "${name}" saved!`);
+  }
+
+  function deleteSquad(squadIdx) {
+    if (!player) return;
+    const squads = [...(player.squads || [])];
+    squads.splice(squadIdx, 1);
+    setPlayer({ ...player, squads });
+  }
+
+  // ─── SETTINGS ───
+  function updateSetting(key, value) {
+    if (!player) return;
+    setPlayer({
+      ...player,
+      settings: { ...(player.settings || {}), [key]: value },
+    });
+  }
+
   function deleteSave() {
     localStorage.removeItem(SAVE_KEY);
     setPlayer(null);
     setScreen("title");
+  }
+
+  /** Start a PVP match (1v1 or 3v3) */
+  function startPvpMatch({ opponentId, teamIndices, mode }) {
+    if (!player) return;
+
+    // Find opponent across all tiers
+    let opponent = null;
+    for (const tier of Object.values(PVP_OPPONENTS)) {
+      const found = tier.find(o => o.id === opponentId);
+      if (found) { opponent = found; break; }
+    }
+    if (!opponent) { showMsg("Opponent not found"); return; }
+
+    const energyCost = mode === "pvp3v3" ? 4 : 2;
+    if (player.energy < energyCost) { showMsg("Not enough Energy!"); return; }
+
+    // Build teams
+    const playerTeam = teamIndices.map(i => player.guards[i]).filter(Boolean);
+    const enemyRoster = mode === "pvp3v3" ? opponent.roster.slice(0, 3) : [opponent.roster[0]];
+    const enemyTeam = buildEnemyTeam(enemyRoster);
+
+    if (playerTeam.length === 0 || enemyTeam.length === 0) {
+      showMsg("Invalid team setup");
+      return;
+    }
+
+    // Spend energy and run battle
+    const newPlayer = { ...player, energy: player.energy - energyCost };
+    const battle = runTeamBattle(playerTeam, enemyTeam);
+
+    // Pre-compute rewards
+    const won = battle.won;
+    const repChange = won ? opponent.reputation : -Math.floor(opponent.reputation / 3);
+    const goldGain = won ? opponent.gold : 0;
+    const xpGain = won ? opponent.xp : Math.floor(opponent.xp / 4);
+
+    setPlayer(newPlayer);
+    setPvpData({
+      playerTeam,
+      enemyTeam,
+      log: battle.log,
+      opponent,
+      mode,
+      pendingRewards: {
+        won, repChange, goldGain, xpGain,
+        playerSurvivors: battle.playerSurvivors,
+        enemySurvivors: battle.enemySurvivors,
+      },
+    });
+    setScreen("pvpBattle");
+  }
+
+  /** Apply PVP rewards after the battle animation completes */
+  function completePvpMatch() {
+    if (!pvpData || !player) return;
+    const { pendingRewards, opponent, mode } = pvpData;
+
+    const newPlayer = { ...player };
+    newPlayer.reputation = Math.max(0, (newPlayer.reputation || 0) + pendingRewards.repChange);
+    newPlayer.gold += pendingRewards.goldGain;
+    newPlayer.xp += pendingRewards.xpGain;
+
+    // Track wins
+    newPlayer.pvpStats = newPlayer.pvpStats || { wins: 0, losses: 0 };
+    if (pendingRewards.won) newPlayer.pvpStats.wins++;
+    else newPlayer.pvpStats.losses++;
+
+    checkLevelUp(newPlayer);
+    setPlayer(newPlayer);
+
+    setBattleResult({
+      encounter: `${opponent.name} (${mode === "pvp3v3" ? "3v3" : "1v1"})`,
+      battle: { won: pendingRewards.won, log: pvpData.log },
+      xp: pendingRewards.xpGain,
+      gold: pendingRewards.goldGain,
+      isPvp: true,
+      repChange: pendingRewards.repChange,
+      survivors: pendingRewards.playerSurvivors,
+    });
+    setPvpData(null);
+    setScreen("battleResult");
   }
 
   return {
@@ -552,6 +681,13 @@ export default function useGameState() {
     startChampionFight,
     completeChampionFight,
     setActiveGuard,
+    togglePartyMember,
+    saveSquad,
+    deleteSquad,
+    updateSetting,
     deleteSave,
+    pvpData,
+    startPvpMatch,
+    completePvpMatch,
   };
 }
