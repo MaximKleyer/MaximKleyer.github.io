@@ -1,809 +1,328 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Maxim Kleyer | AI Engineer &amp; Data Analyst</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0a0a0f;
-            --bg-card: #12121a;
-            --bg-card-hover: #1a1a26;
-            --border: #1e1e2e;
-            --border-hover: #2a2a3e;
-            --text: #e0e0e8;
-            --text-muted: #8888a0;
-            --accent: #4af0c0;
-            --accent-dim: rgba(74, 240, 192, 0.08);
-            --accent-glow: rgba(74, 240, 192, 0.15);
-            --white: #f5f5f8;
-            --tag-bg: rgba(74, 240, 192, 0.06);
-            --tag-border: rgba(74, 240, 192, 0.15);
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'DM Sans', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
-
-        body::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-            pointer-events: none;
-            z-index: 9999;
-        }
-
-        .ambient-glow {
-            position: fixed;
-            width: 600px;
-            height: 600px;
-            border-radius: 50%;
-            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
-            top: -200px;
-            right: -200px;
-            pointer-events: none;
-            z-index: 0;
-            animation: drift 20s ease-in-out infinite alternate;
-        }
-
-        @keyframes drift {
-            0% { transform: translate(0, 0); }
-            100% { transform: translate(-100px, 80px); }
-        }
-
-        .container {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 0 24px;
-            position: relative;
-            z-index: 1;
-        }
-
-        nav {
-            padding: 24px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .nav-logo {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            color: var(--accent);
-            letter-spacing: 0.05em;
-            text-decoration: none;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 28px;
-            list-style: none;
-            align-items: center;
-        }
-
-        .nav-links a {
-            color: var(--text-muted);
-            text-decoration: none;
-            font-size: 0.9rem;
-            font-weight: 500;
-            transition: color 0.25s;
-            position: relative;
-        }
-
-        .nav-links a::after {
-            content: '';
-            position: absolute;
-            bottom: -4px;
-            left: 0;
-            width: 0;
-            height: 1px;
-            background: var(--accent);
-            transition: width 0.3s;
-        }
-
-        .nav-links a:hover { color: var(--white); }
-        .nav-links a:hover::after { width: 100%; }
-
-        .nav-links .demo-link {
-            color: var(--accent);
-            border: 1px solid var(--accent);
-            padding: 6px 14px;
-            border-radius: 6px;
-            transition: all 0.25s;
-        }
-
-        .nav-links .demo-link::after { display: none; }
-        .nav-links .demo-link:hover {
-            background: var(--accent);
-            color: var(--bg);
-        }
-
-        .hero { padding: 100px 0 80px; }
-
-        .hero-label {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.78rem;
-            color: var(--accent);
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            margin-bottom: 20px;
-        }
-
-        .hero h1 {
-            font-family: 'Sora', sans-serif;
-            font-size: clamp(2.5rem, 6vw, 3.8rem);
-            font-weight: 700;
-            color: var(--white);
-            line-height: 1.15;
-            margin-bottom: 24px;
-        }
-
-        .hero h1 span {
-            background: linear-gradient(135deg, var(--accent), #80f0d0);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .hero-desc {
-            font-size: 1.1rem;
-            color: var(--text-muted);
-            max-width: 580px;
-            line-height: 1.7;
-            margin-bottom: 36px;
-        }
-
-        .hero-links {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-
-        .hero-links a {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 22px;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            text-decoration: none;
-            transition: all 0.25s;
-        }
-
-        .btn-primary-custom {
-            background: var(--accent);
-            color: var(--bg);
-        }
-
-        .btn-primary-custom:hover {
-            box-shadow: 0 0 24px var(--accent-glow);
-            transform: translateY(-1px);
-        }
-
-        .btn-outline-custom {
-            border: 1px solid var(--border);
-            color: var(--text);
-            background: transparent;
-        }
-
-        .btn-outline-custom:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        section { padding: 60px 0; }
-
-        .section-title {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            color: var(--accent);
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            margin-bottom: 32px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .section-title::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: var(--border);
-        }
-
-        .exp-item {
-            display: grid;
-            grid-template-columns: 180px 1fr;
-            gap: 32px;
-            padding: 28px 0;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .exp-item:last-child { border-bottom: none; }
-
-        .exp-date {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            padding-top: 4px;
-        }
-
-        .exp-role {
-            font-family: 'Sora', sans-serif;
-            font-weight: 600;
-            font-size: 1.05rem;
-            color: var(--white);
-            margin-bottom: 4px;
-        }
-
-        .exp-company {
-            font-size: 0.9rem;
-            color: var(--accent);
-            margin-bottom: 12px;
-        }
-
-        .exp-desc {
-            font-size: 0.9rem;
-            color: var(--text-muted);
-            line-height: 1.65;
-        }
-
-        .skills-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-        }
-
-        .skill-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            transition: all 0.3s;
-        }
-
-        .skill-card:hover {
-            border-color: var(--border-hover);
-            background: var(--bg-card-hover);
-            transform: translateY(-2px);
-        }
-
-        .skill-card h3 {
-            font-family: 'Sora', sans-serif;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--white);
-            margin-bottom: 14px;
-        }
-
-        .skill-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
-        .skill-tag {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            padding: 5px 12px;
-            border-radius: 6px;
-            background: var(--tag-bg);
-            border: 1px solid var(--tag-border);
-            color: var(--accent);
-        }
-
-        .projects-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 16px;
-        }
-
-        .project-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 28px;
-            transition: all 0.3s;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .project-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, var(--accent), transparent);
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-
-        .project-card:hover {
-            border-color: var(--border-hover);
-            background: var(--bg-card-hover);
-            transform: translateY(-2px);
-        }
-
-        .project-card:hover::before { opacity: 1; }
-
-        .project-card h3 {
-            font-family: 'Sora', sans-serif;
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--white);
-            margin-bottom: 10px;
-        }
-
-        .project-year {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-bottom: 12px;
-        }
-
-        .project-card p {
-            font-size: 0.88rem;
-            color: var(--text-muted);
-            line-height: 1.6;
-            margin-bottom: 16px;
-        }
-
-        .project-links {
-            display: flex;
-            gap: 10px;
-            margin-top: 16px;
-        }
-
-        .project-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            text-decoration: none;
-            transition: all 0.25s;
-        }
-
-        .project-link.primary {
-            background: var(--accent);
-            color: var(--bg);
-        }
-
-        .project-link.primary:hover {
-            box-shadow: 0 0 16px var(--accent-glow);
-        }
-
-        .project-link.secondary {
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-        }
-
-        .project-link.secondary:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        .cert-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-        }
-
-        .cert-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            transition: all 0.3s;
-        }
-
-        .cert-card:hover {
-            border-color: var(--border-hover);
-            background: var(--bg-card-hover);
-            transform: translateY(-2px);
-        }
-
-        .cert-icon {
-            width: 48px;
-            height: 48px;
-            border-radius: 10px;
-            background: var(--accent-dim);
-            border: 1px solid var(--tag-border);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-        }
-
-        .cert-icon svg {
-            width: 24px;
-            height: 24px;
-            stroke: var(--accent);
-        }
-
-        .cert-info h3 {
-            font-family: 'Sora', sans-serif;
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--white);
-            margin-bottom: 4px;
-        }
-
-        .cert-info span {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.72rem;
-            color: var(--text-muted);
-        }
-
-        .cert-status {
-            font-size: 0.7rem;
-            padding: 3px 8px;
-            border-radius: 4px;
-            margin-left: 8px;
-        }
-
-        .cert-status.complete {
-            background: rgba(74, 240, 192, 0.15);
-            color: var(--accent);
-        }
-
-        .cert-status.progress {
-            background: rgba(255, 193, 7, 0.15);
-            color: #ffc107;
-        }
-
-        .edu-block {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 28px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 16px;
-        }
-
-        .edu-degree {
-            font-family: 'Sora', sans-serif;
-            font-weight: 600;
-            font-size: 1.05rem;
-            color: var(--white);
-            margin-bottom: 4px;
-        }
-
-        .edu-school {
-            font-size: 0.9rem;
-            color: var(--accent);
-        }
-
-        .edu-year {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.82rem;
-            color: var(--text-muted);
-        }
-
-        .contact-grid {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-
-        .contact-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 14px 22px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            text-decoration: none;
-            color: var(--text);
-            font-size: 0.9rem;
-            transition: all 0.25s;
-        }
-
-        .contact-item:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-            background: var(--accent-dim);
-        }
-
-        .contact-icon {
-            width: 18px;
-            height: 18px;
-            opacity: 0.7;
-        }
-
-        footer {
-            padding: 48px 0;
-            border-top: 1px solid var(--border);
-            margin-top: 40px;
-        }
-
-        footer p {
-            font-size: 0.82rem;
-            color: var(--text-muted);
-            text-align: center;
-        }
-
-        @media (max-width: 768px) {
-            .exp-item { grid-template-columns: 1fr; gap: 8px; }
-            .projects-grid, .cert-grid { grid-template-columns: 1fr; }
-            .hero { padding: 60px 0 50px; }
-            .nav-links { gap: 16px; }
-        }
-
-        @media (max-width: 480px) {
-            .nav-links { gap: 12px; font-size: 0.8rem; }
-            .hero-links { flex-direction: column; }
-            .hero-links a { text-align: center; justify-content: center; }
-            .contact-grid { flex-direction: column; }
-            .contact-item { justify-content: center; }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maxim Kleyer — GenAI / AI Engineer</title>
+  <meta name="description" content="Generative AI engineer in NYC: RAG/LLM applications, evaluation-first ML (7,401-game backtested projection system), CI/CD delivery. CS + Math, Macaulay Honors.">
+  <link rel="canonical" href="https://maximkleyer.github.io/">
+  <!-- OpenGraph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Maxim Kleyer — GenAI / AI Engineer">
+  <meta property="og:description" content="Generative AI engineer in NYC: RAG/LLM applications, evaluation-first ML, CI/CD delivery. CS + Math, Macaulay Honors.">
+  <meta property="og:url" content="https://maximkleyer.github.io/">
+  <meta property="og:image" content="https://maximkleyer.github.io/assets/og.png">
+  <!-- Twitter card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Maxim Kleyer — GenAI / AI Engineer">
+  <meta name="twitter:description" content="Generative AI engineer in NYC: RAG/LLM applications, evaluation-first ML, CI/CD delivery.">
+  <meta name="twitter:image" content="https://maximkleyer.github.io/assets/og.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
+  <div class="ambient-glow" aria-hidden="true"></div>
 
-<div class="ambient-glow"></div>
-
-<div class="container">
-    <nav>
-        <a href="#" class="nav-logo">maxim.kleyer</a>
-        <ul class="nav-links">
-            <li><a href="#experience">Experience</a></li>
-            <li><a href="#projects">Projects</a></li>
-            <li><a href="#skills">Skills</a></li>
-            <li><a href="#contact">Contact</a></li>
-            <li><a href="heartrate.html" class="demo-link">RGB Heartrate</a></li>
-            <li><a href="gm-sim/" class="demo-link" style="border-color:#ff4655;color:#ff4655;">Valorant GM Sim</a></li>
-        </ul>
+  <div class="container">
+    <nav aria-label="Main">
+      <a class="nav-logo" href="/">maxim.kleyer</a>
+      <ul class="nav-links">
+        <li><a href="#flagship">Flagship</a></li>
+        <li><a href="#projects">Projects</a></li>
+        <li><a href="#experience">Experience</a></li>
+        <li><a href="#skills">Skills</a></li>
+        <li><a class="nav-cta" href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a></li>
+      </ul>
     </nav>
 
-    <section class="hero">
-        <div class="hero-label">AI Engineer &amp; Data Analyst &mdash; New York, NY</div>
-        <h1>Hi, I'm <span>Maxim Kleyer</span></h1>
-        <p class="hero-desc">
-            Computer Science &amp; Mathematics graduate from Macaulay Honors College with hands-on experience building Python data pipelines, AI applications using Llama-Index, and statistical prediction models. Strong mathematical foundation paired with practical software development across data processing, real-time systems, and cloud platforms.
+    <!-- ── Hero ── -->
+    <header class="hero">
+      <p class="meta-line">Maxim Kleyer<span class="dot">·</span>Staten Island, NY<span class="dot">·</span>GenAI / AI Engineer</p>
+      <h1>I build AI systems — and the <em>harnesses that prove they work</em>.</h1>
+      <p class="sub">
+        Generative AI engineer (CS&nbsp;+&nbsp;Math, Macaulay Honors) with professional RAG experience
+        and a habit of validating everything: my college football projection system is backtested
+        over <strong>7,401 games</strong> with calibrated win probabilities — landing within a point
+        of Vegas closing lines.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="#flagship">View Projects</a>
+        <a class="btn" href="assets/Maxim_Kleyer_Resume.pdf" download>Download Resume</a>
+        <a class="btn" href="https://github.com/MaximKleyer" rel="me">GitHub</a>
+        <a class="btn" href="https://www.linkedin.com/in/maximkleyer" rel="me">LinkedIn</a>
+      </div>
+    </header>
+
+    <!-- ── Flagship ── -->
+    <section id="flagship">
+      <p class="kicker">Flagship project</p>
+      <h2 class="section-title">College Football Projection System</h2>
+      <p class="section-sub">
+        Weekly game projections for all FBS college football: set a week, run one command, get every
+        game with projected scores, spread, total, win probability, and comparison against market lines.
+        Python · LightGBM · pandas · Parquet · 17-endpoint REST ingestion · automated test suite.
+      </p>
+
+      <div class="stat-grid">
+        <div class="stat"><span class="num">7,401</span><span class="lbl">FBS games, walk-forward validated (2017–2025)</span></div>
+        <div class="stat"><span class="num">75.5%</span><span class="lbl">straight-up accuracy — Vegas closing lines: 76.3%</span></div>
+        <div class="stat"><span class="num">16.37</span><span class="lbl">margin RMSE — vs 23.06 always-pick-home, 18.75 SP+ differential</span></div>
+        <div class="stat"><span class="num">0.162</span><span class="lbl">Brier score, isotonic-calibrated, reported out-of-fold</span></div>
+      </div>
+
+      <div class="flagship">
+        <h3>Built like software, judged like a hypothesis</h3>
+        <p style="color: var(--text); margin: 10px 0 16px; max-width: 700px;">
+          A ridge-regression rating layer anchored on preseason priors, two LightGBM models over
+          ~28 features, a 10,000-run Monte Carlo season simulator with empirically measured
+          correlated team-strength uncertainty, and an experiment lab where a candidate idea must
+          beat the baseline on <strong style="color: var(--white);">both</strong> fixed walk-forward
+          folds to be adopted. A weekly loop projects the slate, grades the results, and measures
+          drift against a matched baseline — drift is a number rather than a feeling.
         </p>
-        <div class="hero-links">
-            <a href="/cdn-cgi/l/email-protection#3954584152555c405c4b0801795e54585055175a5654" class="btn-primary-custom">Get in Touch</a>
-            <a href="https://linkedin.com/in/maxim-kleyer-58b3aa26b" target="_blank" class="btn-outline-custom">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>
-                LinkedIn
-            </a>
-            <a href="https://github.com/MaximKleyer" target="_blank" class="btn-outline-custom">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-                GitHub
-            </a>
+
+        <div class="pullquote">
+          <p class="pq-title">What the model can’t do, measured</p>
+          <p>
+            Across seven spread buckets and seven total buckets, no betting edge is statistically
+            significant. Hit rates run 48.6%–55.5% against the 52.4% break-even, non-monotonically —
+            exactly what chance produces across seven looks. The system says so on its own report card.
+          </p>
+          <p class="pq-kicker">
+            Building the significance test that kills your own headline is the point: a model you
+            can’t trust to admit failure can’t be trusted to claim success.
+          </p>
         </div>
+
+        <div class="proj-links">
+          <a href="cfb-projection-model.html">Read the full case study →</a>
+          <span class="quiet" style="font-size: 0.85rem;">GitHub repo: being published — <a href="https://github.com/MaximKleyer" style="font-weight:600;">github.com/MaximKleyer</a></span>
+        </div>
+      </div>
     </section>
 
-    <section id="experience">
-        <div class="section-title">Experience</div>
-
-        <div class="exp-item">
-            <div class="exp-date">Mar 2025 &mdash; Present</div>
-            <div>
-                <div class="exp-role">Technical Support Consultant</div>
-                <div class="exp-company">C&amp;P Management &middot; New York, NY</div>
-                <div class="exp-desc">
-                    Manage technical support tickets in ServiceNow for FDNY network infrastructure, triaging issues by business impact and applying systematic root cause analysis. Analyze application logs and system state in real time via remote access tooling to identify and resolve software, hardware, and network connectivity issues across distributed endpoints. Serve as primary client contact during incidents, translating technical root causes into clear status updates for non-technical stakeholders.
-                </div>
-            </div>
-        </div>
-
-        <div class="exp-item">
-            <div class="exp-date">Feb 2024 &mdash; Jan 2025</div>
-            <div>
-                <div class="exp-role">DevOps Engineer &amp; QA Automation</div>
-                <div class="exp-company">NuArch &middot; New York, NY</div>
-                <div class="exp-desc">
-                    Built and maintained automated testing pipelines using Selenium WebDriver and Cucumber, ensuring production readiness through systematic validation across environments. Developed Python and Bash scripts to automate repetitive QA tasks, reducing manual testing overhead and improving deployment confidence. Collaborated with development teams to troubleshoot build failures and environment issues, documenting solutions in runbooks for future reference.
-                </div>
-            </div>
-        </div>
-
-        <div class="exp-item">
-            <div class="exp-date">Jun 2023 &mdash; Aug 2023</div>
-            <div>
-                <div class="exp-role">AI Development Intern</div>
-                <div class="exp-company">SpruceTech &middot; Clifton, NJ</div>
-                <div class="exp-desc">
-                    Developed a Python-based data processing pipeline using Llama-Index for real-time calculations, optimizing system performance and accuracy.
-                </div>
-            </div>
-        </div>
-    </section>
-
+    <!-- ── Second-tier projects ── -->
     <section id="projects">
-        <div class="section-title">Projects</div>
-        <div class="projects-grid">
-            <div class="project-card">
-                <h3>RGB Heart Rate Monitor</h3>
-                <div class="project-year">Jan &mdash; Jun 2024</div>
-                <p>Non-contact heart rate detection using photoplethysmography (PPG). Analyzes RGB color variations from facial skin via webcam, applies bandpass filtering, and uses FFT to extract pulse frequency.</p>
-                <div class="skill-tags">
-                    <span class="skill-tag">Python</span>
-                    <span class="skill-tag">FFT</span>
-                    <span class="skill-tag">Signal Processing</span>
-                    <span class="skill-tag">OpenCV</span>
-                </div>
-                <div class="project-links">
-                    <a href="heartrate.html" class="project-link primary">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        Live Demo
-                    </a>
-                    <a href="https://github.com/MaximKleyer/RBGHeartbeatSensor" target="_blank" class="project-link secondary">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-                        Code
-                    </a>
-                </div>
-            </div>
+      <p class="kicker">More work</p>
+      <h2 class="section-title">Projects &amp; professional GenAI</h2>
 
-            <div class="project-card">
-                <h3>Live Soccer Score Dashboard</h3>
-                <div class="project-year">Apr &mdash; Jun 2024</div>
-                <p>Real-time web application consuming streaming external APIs, handling continuous data ingestion, state synchronization, and live UI updates &mdash; demonstrating real-time data pipeline architecture and dashboarding skills.</p>
-                <div class="skill-tags">
-                    <span class="skill-tag">JavaScript</span>
-                    <span class="skill-tag">REST APIs</span>
-                    <span class="skill-tag">Real-time Data</span>
-                    <span class="skill-tag">Data Pipelines</span>
-                </div>
-            </div>
-        </div>
+      <div class="grid-3" style="margin-top: 26px;">
+        <article class="card proj">
+          <h3>NFL Game Projection Model</h3>
+          <p class="proj-stack">Python · pandas · NumPy</p>
+          <p>
+            Bottom-up NFL projections built from snap-share rosters with per-team calibration, plus a
+            walk-forward evaluation harness across <strong>816 games (2023–2025)</strong>:
+            <strong>63.8% straight-up accuracy, 10.40 margin MAE</strong>, with error analysis used to
+            calibrate systematic bias to approximately zero. The methodological predecessor to the CFB
+            system — where the evaluation-first habit started.
+          </p>
+          <div class="proj-links">
+            <a href="https://github.com/MaximKleyer/nfl-projector">Code →</a>
+          </div>
+        </article>
+
+        <article class="card proj">
+          <h3>RGB Heart Rate Monitor</h3>
+          <p class="proj-stack">Python · FFT · Signal processing — Undergraduate thesis</p>
+          <p>
+            Measures heart rate from live camera input alone: isolates the heartbeat signal from red,
+            green, and blue channel variation using Fast Fourier Transform and noise-reduction
+            filtering. Carried solo from problem definition through working system, written thesis,
+            and defense at Macaulay Honors College.
+          </p>
+          <div class="proj-links">
+            <a href="heartrate.html">Live demo →</a>
+            <a href="https://github.com/MaximKleyer/RBGHeartbeatSensor">Code →</a>
+          </div>
+        </article>
+
+        <article class="card proj">
+          <h3>RAG Pipeline — SpruceTech</h3>
+          <p class="proj-stack">Python · LlamaIndex — AI development internship</p>
+          <p>
+            Built a retrieval-augmented generation pipeline that grounded LLM output in retrieved
+            source material to score free-text student answers consistently — prompt iteration and
+            retrieval grounding turning unreliable generative output into repeatable, reviewable
+            results behind a user-facing UI.
+          </p>
+          <div class="proj-links">
+            <span class="quiet">Employer work — no public repo</span>
+          </div>
+        </article>
+      </div>
+
+      <!-- Deliberately secondary: full-stack shipping, hobby-flavored -->
+      <div class="grid-2" style="margin-top: 18px;">
+        <article class="mini-card">
+          <h3>Pocket Summoner</h3>
+          <p>React/Vite SPA live on GitHub Pages: combat and quest engine over a 191-entity database,
+             with Python scripts generating and validating the dataset.</p>
+          <a href="pocket-summoner/">Play →</a>
+        </article>
+        <article class="mini-card">
+          <h3>Valorant GM Simulator</h3>
+          <p>React/Vite simulation: season/offseason engine, player development, age-based retirement,
+             and a multi-phase competitive calendar, iterated across releases.</p>
+          <a href="gm-sim/">Play →</a>
+        </article>
+      </div>
+      <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: 10px;">
+        Both built with AI-assisted development used with discipline: tested, reviewed, shipped.
+      </p>
     </section>
 
+    <!-- ── Experience ── -->
+    <section id="experience">
+      <p class="kicker">Experience</p>
+      <h2 class="section-title">Where the delivery muscle comes from</h2>
+      <p class="section-sub">
+        A year of professional DevOps/QA engineering means models get treated like software:
+        tested, deployed, monitored.
+      </p>
+
+      <div class="xp">
+        <div class="xp-item">
+          <p class="dates">Mar 2025 — Present</p>
+          <h3>Technical Support Consultant</h3>
+          <p class="org">C&amp;P Management · New York, NY</p>
+          <ul>
+            <li>Diagnoses and resolves application and network failures across 1,000+ FDNY workstations, analyzing logs and live system state in real time</li>
+            <li>Triages a continuous ServiceNow queue by business impact with systematic root-cause analysis</li>
+            <li>Primary stakeholder contact during incidents — translating technical root causes into clear updates for non-technical audiences</li>
+          </ul>
+        </div>
+
+        <div class="xp-item">
+          <p class="dates">Feb 2024 — Jan 2025</p>
+          <h3>DevOps Engineer &amp; QA Automation</h3>
+          <p class="org">NuArch · New York, NY</p>
+          <ul>
+            <li>Designed and maintained Jenkins/Git CI/CD pipelines automating build, test, and deployment across dev, QA, test, and UAT environments</li>
+            <li>Built automated test suites (Selenium, Cucumber) gating releases on unit, integration, and regression checks; wrote Cucumber (Gherkin) scenarios translating business requirements into testable acceptance criteria</li>
+            <li>Python and Bash automation eliminating repetitive manual work; documented runbooks</li>
+          </ul>
+        </div>
+
+        <div class="xp-item">
+          <p class="dates">Jun 2023 — Aug 2023</p>
+          <h3>AI Development Intern</h3>
+          <p class="org">SpruceTech · Clifton, NJ</p>
+          <ul>
+            <li>Built the Python + LlamaIndex retrieval-augmented generation pipeline described above — retrieval grounding and prompt iteration making generative scoring consistent, repeatable, and reviewable</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Skills ── -->
     <section id="skills">
-        <div class="section-title">Technical Skills</div>
-        <div class="skills-grid">
-            <div class="skill-card">
-                <h3>Languages</h3>
-                <div class="skill-tags">
-                    <span class="skill-tag">Python</span>
-                    <span class="skill-tag">SQL</span>
-                    <span class="skill-tag">JavaScript</span>
-                    <span class="skill-tag">Bash</span>
-                    <span class="skill-tag">PowerShell</span>
-                </div>
-            </div>
-            <div class="skill-card">
-                <h3>Data &amp; AI</h3>
-                <div class="skill-tags">
-                    <span class="skill-tag">Pandas</span>
-                    <span class="skill-tag">NumPy</span>
-                    <span class="skill-tag">Jupyter</span>
-                    <span class="skill-tag">Llama-Index</span>
-                    <span class="skill-tag">Machine Learning</span>
-                    <span class="skill-tag">Statistical Modeling</span>
-                </div>
-            </div>
-            <div class="skill-card">
-                <h3>Cloud &amp; Tools</h3>
-                <div class="skill-tags">
-                    <span class="skill-tag">AWS</span>
-                    <span class="skill-tag">Microsoft Azure</span>
-                    <span class="skill-tag">Git</span>
-                    <span class="skill-tag">Jenkins</span>
-                    <span class="skill-tag">ServiceNow</span>
-                    <span class="skill-tag">Selenium</span>
-                </div>
-            </div>
-            <div class="skill-card">
-                <h3>Concepts</h3>
-                <div class="skill-tags">
-                    <span class="skill-tag">Data Analysis</span>
-                    <span class="skill-tag">Data Visualization</span>
-                    <span class="skill-tag">Real-time Processing</span>
-                    <span class="skill-tag">REST APIs</span>
-                </div>
-            </div>
+      <p class="kicker">Skills</p>
+      <h2 class="section-title">Tools that get used, not listed</h2>
+
+      <div style="margin-top: 26px;">
+        <div class="skill-group">
+          <h3>GenAI / LLM</h3>
+          <div class="tags">
+            <span class="tag">RAG</span><span class="tag">LlamaIndex</span><span class="tag">Retrieval grounding</span>
+            <span class="tag">Prompt engineering</span><span class="tag">Structured outputs</span><span class="tag">NLP</span>
+            <span class="tag">AI-assisted development (Claude Code)</span>
+          </div>
         </div>
+        <div class="skill-group">
+          <h3>ML</h3>
+          <div class="tags">
+            <span class="tag">Python</span><span class="tag">LightGBM</span><span class="tag">scikit-learn</span>
+            <span class="tag">PyTorch</span><span class="tag">Ridge regression</span><span class="tag">Isotonic calibration</span>
+            <span class="tag">Monte Carlo simulation</span><span class="tag">Walk-forward validation</span>
+            <span class="tag">Drift measurement</span><span class="tag">Model evaluation</span>
+            <span class="tag">pandas</span><span class="tag">NumPy</span>
+          </div>
+        </div>
+        <div class="skill-group">
+          <h3>Delivery</h3>
+          <div class="tags">
+            <span class="tag neutral">Jenkins</span><span class="tag neutral">GitHub Actions</span><span class="tag neutral">Git</span>
+            <span class="tag neutral">CI/CD design</span><span class="tag neutral">Selenium</span><span class="tag neutral">Cucumber</span>
+            <span class="tag neutral">Automated quality gates</span><span class="tag neutral">Monitoring &amp; log analysis</span>
+          </div>
+        </div>
+        <div class="skill-group">
+          <h3>Data / Engineering</h3>
+          <div class="tags">
+            <span class="tag neutral">REST API ingestion</span><span class="tag neutral">Parquet caching</span>
+            <span class="tag neutral">Data validation &amp; reconciliation</span><span class="tag neutral">SQL</span>
+            <span class="tag neutral">JSON</span><span class="tag neutral">Linux CLI</span>
+          </div>
+        </div>
+        <div class="skill-group">
+          <h3>Cloud / Web</h3>
+          <div class="tags">
+            <span class="tag neutral">AWS</span><span class="tag neutral">Microsoft Azure</span>
+            <span class="tag neutral">React</span><span class="tag neutral">Vite</span>
+          </div>
+        </div>
+        <div class="skill-group">
+          <h3>Languages</h3>
+          <div class="tags">
+            <span class="tag neutral">Python</span><span class="tag neutral">SQL</span><span class="tag neutral">JavaScript</span>
+            <span class="tag neutral">Java</span><span class="tag neutral">Bash</span><span class="tag neutral">PowerShell</span>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section id="certifications">
-        <div class="section-title">Certifications</div>
-        <div class="cert-grid">
-            <div class="cert-card">
-                <div class="cert-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                </div>
-                <div class="cert-info">
-                    <h3>Microsoft Azure AI<span class="cert-status progress">In Progress</span></h3>
-                    <span>Simplilearn</span>
-                </div>
-            </div>
-            <div class="cert-card">
-                <div class="cert-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                        <line x1="12" y1="22.08" x2="12" y2="12"/>
-                    </svg>
-                </div>
-                <div class="cert-info">
-                    <h3>AWS Cloud Practitioner<span class="cert-status progress">In Progress</span></h3>
-                    <span>Amazon Web Services</span>
-                </div>
-            </div>
-            <div class="cert-card">
-                <div class="cert-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                </div>
-                <div class="cert-info">
-                    <h3>Generative AI Fundamentals<span class="cert-status complete">2025</span></h3>
-                    <span>Completed</span>
-                </div>
-            </div>
-        </div>
-    </section>
-
+    <!-- ── Education ── -->
     <section id="education">
-        <div class="section-title">Education</div>
-        <div class="edu-block">
-            <div>
-                <div class="edu-degree">B.A. Computer Science &amp; Mathematics</div>
-                <div class="edu-school">Macaulay Honors College at CUNY</div>
-            </div>
-            <div class="edu-year">May 2024</div>
+      <p class="kicker">Education &amp; certifications</p>
+      <h2 class="section-title">Foundation</h2>
+      <div class="grid-2" style="margin-top: 26px;">
+        <div class="card">
+          <h3 style="font-size: 1.05rem;">B.A., Computer Science &amp; Mathematics <span style="color: var(--text-muted); font-weight: 400;">(dual major)</span></h3>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 6px;">
+            Macaulay Honors College at CUNY · New York, NY · May 2024 · <strong style="color: var(--accent);">GPA 3.7</strong>
+          </p>
         </div>
+        <div class="card">
+          <h3 style="font-size: 1.05rem;">Certifications</h3>
+          <ul style="list-style: none; margin-top: 8px; color: var(--text-muted); font-size: 0.9rem;">
+            <li style="margin-bottom: 6px;"><strong style="color: var(--text);">Generative AI Fundamentals</strong> — Databricks Academy (2025)</li>
+            <li>Applied Generative AI Specialization — Simplilearn / Microsoft Azure AI <em>(in progress)</em></li>
+          </ul>
+        </div>
+      </div>
     </section>
 
-    <section id="contact">
-        <div class="section-title">Get in Touch</div>
-        <div class="contact-grid">
-            <a href="/cdn-cgi/l/email-protection#711c10091a1d14081403404931161c10181d5f121e1c" class="contact-item">
-                <svg class="contact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                <span class="__cf_email__" data-cfemail="107d71687b7c75697562212850777d71797c3e737f7d">[email&#160;protected]</span>
-            </a>
-            <a href="tel:917-717-3223" class="contact-item">
-                <svg class="contact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-                917-717-3223
-            </a>
-            <a href="https://linkedin.com/in/maxim-kleyer-58b3aa26b" target="_blank" class="contact-item">
-                <svg class="contact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>
-                LinkedIn
-            </a>
-            <a href="https://github.com/MaximKleyer" target="_blank" class="contact-item">
-                <svg class="contact-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-                GitHub
-            </a>
+    <!-- ── Footer ── -->
+    <footer id="contact">
+      <div class="footer-row">
+        <div>
+          <p style="font-family: var(--display); color: var(--white); font-weight: 600;">Maxim Kleyer</p>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">GenAI / AI Engineer · New York City area</p>
         </div>
-    </section>
-
-    <footer>
-        <p>&copy; 2026 Maxim Kleyer. Built with care in New York.</p>
+        <div class="footer-links">
+          <a href="#" data-email data-label="text">email</a>
+          <a href="https://github.com/MaximKleyer" rel="me">GitHub</a>
+          <a href="https://www.linkedin.com/in/maximkleyer" rel="me">LinkedIn</a>
+          <a href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a>
+        </div>
+      </div>
+      <p class="footer-note">Built with AI assistance, reviewed by a human.</p>
     </footer>
-</div>
+  </div>
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script>
+  <script>
+    // Email assembled at runtime to stay off scrapers while remaining a
+    // working mailto for people.
+    (function () {
+      var u = 'maxkleyer18', d = 'gmail.com', addr = u + '@' + d;
+      document.querySelectorAll('a[data-email]').forEach(function (a) {
+        a.href = 'mailto:' + addr;
+        if (a.dataset.label === 'text') a.textContent = addr;
+      });
+    })();
+  </script>
 </body>
 </html>
