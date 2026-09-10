@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import TeamLogo from './TeamLogo.jsx';
 import { REGIONS, REGION_KEYS } from '../data/regions.js';
 
 export default function TeamSelect({ onSelect }) {
@@ -65,6 +66,9 @@ export default function TeamSelect({ onSelect }) {
                 onDoubleClick={() => onSelect(selectedRegion, index)}
               >
                 <div className="team-select-color-bar" style={{ background: team.color }} />
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '10px 0 2px' }}>
+                  <TeamLogo team={team} size={40} />
+                </div>
                 <div className="team-select-info">
                   <span className="team-select-abbr">{team.abbr}</span>
                   <span className="team-select-name">{team.name}</span>

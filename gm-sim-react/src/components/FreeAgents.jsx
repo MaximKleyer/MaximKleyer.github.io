@@ -19,6 +19,7 @@ import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { commLanguage, speaks, languageName, playerLanguages } from '../data/languages.js';
 import {
   calculateBaseSalary,
 } from '../data/salary.js';
@@ -49,11 +50,19 @@ const GAP_HINT = {
 
 export default function FreeAgents({
   freeAgents, canSign, onSign,
+  team = null,         // the human team — used for comms-fit indicators
   windowClosed = false,
+  closedNote = null,   // override the closed-window banner text (VCT mode)
   godMode = false, onEditPlayer,
   midseasonInfo = null,
   capRemaining = null, // Phase 7b: how much cap the human team has left
 }) {
+  // The language your fielded five talks in — the same anchor Roster
+  // and the match sim use. Free agents who can't speak it get flagged,
+  // since fielding them costs a communication penalty.
+  const comms = commLanguage(
+    team?.startingFive?.length ? team.startingFive : (team?.roster || [])
+  );
   const [sortKey, setSortKey] = useState('overall');
   const [signTarget, setSignTarget] = useState(null);   // player being negotiated with
   const [offerSalary, setOfferSalary] = useState(0);    // salary input ($K)
@@ -156,8 +165,8 @@ export default function FreeAgents({
           background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)',
           opacity: 0.75,
         }}>
-          The signing window is closed. Free agents can be signed during the preseason,
-          the mid-season windows between stages, and the offseason.
+          {closedNote || 'The signing window is closed. Free agents can be signed during '
+            + 'the preseason, the mid-season windows between stages, and the offseason.'}
         </p>
       )}
       {midseasonInfo && (
@@ -210,7 +219,9 @@ export default function FreeAgents({
       <table>
         <thead>
           <tr>
-            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th>Tag</th><th>Name</th><th>Nat</th>
+            <th title="Languages spoken. An orange dot means they can't speak your team's comms language — fielding them costs a communication penalty until they learn it.">Langs</th>
+            <th>Age</th><th>OVR</th>
             <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
             <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
             <th>Morale</th>
@@ -240,6 +251,18 @@ export default function FreeAgents({
                   editable={godMode}
                   onCommit={v => onEditPlayer(player, 'nationality', v)}
                 />
+              </td>
+              <td
+                title={playerLanguages(player).map(languageName).join(', ')}
+                style={{ fontSize: '0.68rem', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}
+              >
+                {playerLanguages(player).map(l => l.toUpperCase()).join(' ')}
+                {comms.lang && !speaks(player, comms.lang) && (
+                  <span
+                    title={`Can't speak your comms language (${languageName(comms.lang)})`}
+                    style={{ marginLeft: 4, color: '#ffb070', cursor: 'help' }}
+                  >●</span>
+                )}
               </td>
               <td>
                 <EditableCell value={player.age} type="number" editable={godMode} min={16} max={40}

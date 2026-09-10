@@ -41,10 +41,11 @@
 import { Team } from '../classes/Team.js';
 import { Player, registerTag } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
-import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor } from '../data/maps.js';
+import { initMapPool, generateMapRatings, syncCurrentPool, tier1MapAnchor, TIER1_MAP_ANCHOR_FLOOR } from '../data/maps.js';
 import { DEFAULT_SALARY_CAP, syncSalaryCap } from '../data/salary.js';
 import { initTier2Region } from './tier2.js';
 import { inferRoleFromStats } from '../data/roles.js';
+import { rollLanguages, seededRng, commLanguage, addLanguage } from '../data/languages.js';
 import { ensureContracts } from './league.js';
 
 const SAVE_KEY = 'gm-sim-save-v2';
@@ -133,6 +134,14 @@ function serialize(gameState) {
     for (const t of region.tier2?.teams || []) {
       teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
     }
+    // VCT 2027 open-scene clubs (regions[rk].subRegions[k].teams). Keyed
+    // at tier 2 — a VCT save has no tier-2 division, and club abbrs are
+    // unique region-wide, so the key space cannot collide.
+    for (const sub of Object.values(region.subRegions || {})) {
+      for (const t of sub.teams || []) {
+        teamIdMap.set(t, { region: rk, abbr: t.abbr, tier: 2 });
+      }
+    }
   }
 
   // Match identity map. In-flight series entries hold DIRECT references
@@ -180,6 +189,15 @@ function serialize(gameState) {
     // The toggle promises it survives refresh; the explicit field list
     // was silently dropping it.
     godMode: gameState.godMode === true,
+    // ── VCT 2027 mode ──
+    // `mode` is the switch every loader branch keys on; absent (older
+    // saves and franchise games) means franchise. The VCT circuit state
+    // and human identity ride along; undefined fields drop out of JSON,
+    // so none of these four appear in a franchise save.
+    mode: gameState.mode,
+    circuit: gameState.circuit,
+    humanTeamAbbr: gameState.humanTeamAbbr,
+    humanSubRegion: gameState.humanSubRegion,
   };
 
   return JSON.stringify(ordered, (key, value) => {
@@ -211,6 +229,12 @@ function serialize(gameState) {
         region: ident.region,
         tier: ident.tier,
         parentAbbr: value.parentAbbr,
+        // VCT 2027: which sub-region qualifier an open club belongs to.
+        // Emitted only when set — every franchise team (and every VCT
+        // partner) carries null, and writing `"subRegion":null` into
+        // each of a franchise save's ~170 team bodies would be pure
+        // weight. The loader defaults a missing field to null.
+        ...(value.subRegion != null ? { subRegion: value.subRegion } : {}),
         name: value.name,
         abbr: value.abbr,
         color: value.color,
@@ -245,6 +269,7 @@ function serialize(gameState) {
         tag: value.tag,
         age: value.age,
         nationality: value.nationality,
+        languages: value.languages,
         ratings: value.ratings,
         overall: value.overall,
         stats: value.stats,
@@ -291,6 +316,13 @@ function deserialize(json) {
       region.tier2.teams = region.tier2.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
     }
 
+    // VCT 2027 open-scene clubs.
+    for (const sub of Object.values(region.subRegions || {})) {
+      if (Array.isArray(sub.teams)) {
+        sub.teams = sub.teams.map(td => rehydrateTeam(td, rk, teamMap, 2));
+      }
+    }
+
     if (Array.isArray(region.freeAgents)) {
       region.freeAgents = region.freeAgents.map(pd => rehydratePlayer(pd));
     }
@@ -317,6 +349,9 @@ function deserialize(json) {
     if (!region) continue;
     for (const t of region.teams || []) for (const pl of t.roster) registerTag(pl.tag);
     for (const t of region.tier2?.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    for (const sub of Object.values(region.subRegions || {})) {
+      for (const t of sub.teams || []) for (const pl of t.roster) registerTag(pl.tag);
+    }
     for (const pl of region.freeAgents || []) registerTag(pl.tag);
   }
 
@@ -353,29 +388,37 @@ function deserialize(json) {
 
   // Saves written before tier 2 existed have no second division. Generate
   // one rather than leaving the region permanently empty — without this
-  // an existing save can never see the tier-2 scene at all.
-  for (const rk of REGION_KEYS) {
-    const region = data.regions?.[rk];
-    if (!region) continue;
-    if (!region.tier2?.teams?.length) {
-      region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+  // an existing save can never see the tier-2 scene at all. VCT 2027
+  // saves are exempt: that mode has no tier-2 division by design (one
+  // unified competition), and inventing one here would bolt 64 phantom
+  // teams onto every VCT save.
+  if (data.mode !== 'vct2027') {
+    for (const rk of REGION_KEYS) {
+      const region = data.regions?.[rk];
+      if (!region) continue;
+      if (!region.tier2?.teams?.length) {
+        region.tier2 = initTier2Region(rk, data.seasonNumber || 2025);
+      }
     }
   }
+  // Saves written before the 75 anchor carry ratings centred on the old
+  // anchor (raw team overall). Re-centre them ONCE: shift every side by
+  // the same amount, so the team's relative spread — its standout maps,
+  // its problem maps, everything training earned — is preserved exactly,
+  // and only ever upward. The settings marker makes this genuinely
+  // one-time: without it the lift re-fired on fresh saves whose
+  // generation noise sat a hair under the anchor.
+  const needsAnchorLift = (data.settings.mapAnchorFloor || 0) < TIER1_MAP_ANCHOR_FLOOR;
   for (const rk of REGION_KEYS) {
     for (const team of data.regions?.[rk]?.teams || []) {
       if (!team.mapRatings || Object.keys(team.mapRatings).length === 0) {
         team.mapRatings = generateMapRatings(tier1MapAnchor(team.overallRating));
         continue;
       }
-      // Saves written before the 75 anchor carry ratings centred on the
-      // old anchor (raw team overall). Re-centre them ONCE: shift every
-      // side by the same amount, so the team's relative spread — its
-      // standout maps, its problem maps, everything training earned —
-      // is preserved exactly. Only ever shifts UP (a mean above target
-      // is left alone), and the 2-point tolerance makes reloads no-ops.
-      liftMapRatingsToAnchor(team);
+      if (needsAnchorLift) liftMapRatingsToAnchor(team);
     }
   }
+  data.settings.mapAnchorFloor = TIER1_MAP_ANCHOR_FLOOR;
   // Legacy status migration: very old saves used 'complete' for end-of-season,
   // Phase 6c renamed it to 'season-complete'. Translate so the new flow works.
   if (data.season?.status === 'complete') {
@@ -388,7 +431,47 @@ function deserialize(json) {
   // deadCapHits arrays. Free agents get morale but no contract.
   ensureContracts(data);
 
+  // Pass 5: language migration for saves that predate languages. Every
+  // backfilled roster is grandfathered into coherence.
+  ensureTeamCommunication(data);
+
   return data;
+}
+
+/**
+ * Saves written before languages existed hold rosters that were rolled
+ * as nationality melting pots. Those teams have been playing together
+ * all along, so the fiction is that they already share a room language:
+ * whichever language the backfilled roster covers best is taught to
+ * every backfilled player who lacks it. Applied ONLY to players marked
+ * `_langBackfilled` by rehydratePlayer — players signed after languages
+ * shipped keep exactly what they speak, so a human's future incoherent
+ * signings are never quietly repaired on reload.
+ */
+function ensureTeamCommunication(data) {
+  for (const rk of REGION_KEYS) {
+    const region = data.regions?.[rk];
+    if (!region) continue;
+
+    const allTeams = [
+      ...(region.teams || []),
+      ...(region.tier2?.teams || []),
+      ...Object.values(region.subRegions || {}).flatMap(s => s.teams || []),
+    ];
+    for (const team of allTeams) {
+      const roster = team?.roster || [];
+      if (roster.some(p => p?._langBackfilled)) {
+        const { lang } = commLanguage(roster);
+        if (lang) {
+          for (const p of roster) {
+            if (p?._langBackfilled) addLanguage(p, lang);
+          }
+        }
+      }
+      for (const p of roster) if (p) delete p._langBackfilled;
+    }
+    for (const p of region.freeAgents || []) if (p) delete p._langBackfilled;
+  }
 }
 
 /**
@@ -427,6 +510,7 @@ function rehydrateTeam(td, regionKey, teamMap, tier = 1) {
 
   team.tier = td.tier ?? tier;
   team.parentAbbr = td.parentAbbr ?? null;
+  team.subRegion = td.subRegion ?? null;
   // Key by tier as well as abbr: a tier-2 academy could otherwise be
   // confused with its tier-1 parent when refs are resolved.
   teamMap.set(`${regionKey}:${team.tier}:${team.abbr}`, team);
@@ -447,9 +531,25 @@ function rehydratePlayer(pd) {
     pd.name,
     pd.tag,
     pd.ratings || {},
-    { age: pd.age, nationality: pd.nationality }
+    // The constructor re-asserts the native-language invariant on
+    // whatever language list the save carries.
+    { age: pd.age, nationality: pd.nationality, languages: pd.languages }
   );
   player.id = pd.id;
+  if (!Array.isArray(pd.languages) || pd.languages.length === 0) {
+    // Save predates languages. Roll the nationality's usual spread —
+    // seeded by player id, so if the migrated state never makes it back
+    // to disk (autosave quota failure) the next load re-rolls the SAME
+    // spread instead of reshuffling coherence between sessions — and
+    // mark the player so ensureTeamCommunication() can grandfather their
+    // team into coherence: these rosters have been playing together,
+    // so whatever room they share, they already talk in it.
+    player.languages = rollLanguages(
+      player.nationality,
+      seededRng(`${player.id}:${player.nationality}`),
+    );
+    player._langBackfilled = true;
+  }
   if (pd.stats) player.stats = { ...pd.stats };
   if (pd.stageStats) player.stageStats = { ...pd.stageStats };
 

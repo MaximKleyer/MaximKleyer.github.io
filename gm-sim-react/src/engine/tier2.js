@@ -27,6 +27,7 @@ import { generatePlayer } from '../classes/Player.js';
 import { getTier2TeamDefs, TIER2_TEAM_COUNT } from '../data/tier2Teams.js';
 import { generateMapRatings } from '../data/maps.js';
 import { assignRosterRoles, swapKeepsSpread } from '../data/roles.js';
+import { randomTeamLanguage, commLanguage, fitsTeamLanguage } from '../data/languages.js';
 import { COMPOSITIONS } from '../data/strategy.js';
 import { calculateBaseSalary, adjustMorale } from '../data/salary.js';
 import { expectedAcs } from './poaching.js';
@@ -97,13 +98,17 @@ function assignBands(count) {
 function buildRoster(regionKey, band, academy) {
   const roster = [];
   const hasStandout = Math.random() < STANDOUT_CHANCE;
-  // Same guarantee as tier 1: one of each role plus a duplicate.
+  // Same guarantee as tier 1: one of each role plus a duplicate — and
+  // the same comms-language anchor, so second-division clubs read as
+  // real local sides rather than five-country mixes.
+  const teamLanguage = randomTeamLanguage(regionKey);
   const roles = assignRosterRoles(TIER2_ROSTER_SIZE);
 
   for (let i = 0; i < TIER2_ROSTER_SIZE; i++) {
     const standout = hasStandout && i === 0;
     roster.push(generatePlayer({
       regionKey,
+      teamLanguage,
       ...roles[i],
       ageOverride: tier2Age(academy),
       ratingFloor:   standout ? STANDOUT_FLOOR   : band.floor + (academy ? 3 : 0),
@@ -301,7 +306,7 @@ function stripTier2PlayerStats(bracket) {
   for (const value of Object.values(bracket)) {
     const matches = Array.isArray(value) ? value : [value];
     for (const m of matches) {
-      for (const map of m?.result?.maps || []) delete map.playerStats;
+      for (const map of m?.result?.maps || []) { delete map.playerStats; delete map.roundLog; }
     }
   }
 }
@@ -491,6 +496,7 @@ export function runTier2AISignings(gameState, regionKey) {
         .filter(fa => fa.overall <= reach)
         .filter(fa => fa.overall >= weakest.overall + TIER2_MIN_GAIN)
         .filter(fa => swapKeepsSpread(team.roster, weakest, fa))
+        .filter(fa => fitsTeamLanguage(team.roster, fa))
         .sort((a, b) => b.overall - a.overall)[0];
 
       if (!target) break;
@@ -569,6 +575,8 @@ export function runTier2Offseason(gameState, regionKeys, { developPlayer, should
           .find(r => !covered.has(r));
         const rookie = generatePlayer({
           regionKey: rk,
+          // Youth joins the room the club already runs.
+          teamLanguage: commLanguage(team.roster).lang,
           ...(missing ? { primaryRole: missing, secondaryRole: null } : {}),
           ageOverride: 17 + Math.floor(Math.random() * 4),
           ratingFloor: 53,

@@ -4,7 +4,7 @@
  *   - Bracket stage: advances all regions' brackets one stage
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // Flag-icons provides offline SVG country flags via CSS sprites.
 // Imported once here so every component can use <span className="fi fi-xx" />
@@ -14,12 +14,18 @@ import 'flag-icons/css/flag-icons.min.css';
 import { initGame, getHumanTeam, ensureContracts, clearFreeAgentMarket } from './engine/league.js';
 import { saveGameState, loadGameState, clearSave, hasSave } from './engine/persistence.js';
 import MapVeto from './components/MapVeto.jsx';
+import LiveMatch from './components/LiveMatch.jsx';
 import { hasPendingVeto, resolvePendingVeto } from './engine/activeSeries.js';
 import { trainMap, mapName } from './data/maps.js';
 import Settings from './components/Settings.jsx';
 import Tier2 from './components/Tier2.jsx';
 import { executePoach, evaluatePoach } from './engine/poaching.js';
 import { syncSalaryCap } from './data/salary.js';
+import { applyPlayerEdit } from './engine/editPlayer.js';
+import VctApp from './components/vct/VctApp.jsx';
+import VctSetup from './components/vct/VctSetup.jsx';
+import { initVctCircuit } from './engine/vct/circuit.js';
+import { ensureVctSeason } from './engine/vct/live.js';
 import { generatePlayer } from './classes/Player.js';
 import { simulateSeries } from './classes/Match.js';
 import { runReactiveAISignings } from './engine/offseason.js';
@@ -162,8 +168,14 @@ export default function App() {
   const [gameState, setGameState] = useState(() => loadGameState());
   const [started, setStarted] = useState(() => gameState !== null);
   const [currentView, setCurrentView] = useState('dashboard');
+  // Which game the next save will be: null = mode-select screen.
+  const [newGameMode, setNewGameMode] = useState(null);
   const [toast, setToast] = useState(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  // Series id the live viewer is following, or null.
+  const [watchingSeriesId, setWatchingSeriesId] = useState(null);
+  // A match toast held back while its series is being watched live.
+  const pendingToastRef = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [, forceRender] = useState(0);
   const [viewRegion, setViewRegion] = useState(() =>
@@ -202,9 +214,16 @@ export default function App() {
       const tag = el?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
       if (!gameState || !started) return;
-      // Never let a keypress skip a modal.
+      // The VCT 2027 app registers its own shortcuts; the franchise
+      // handlers below would corrupt a VCT save.
+      if (gameState.mode === 'vct2027') return;
+      // Never let a keypress skip a modal — the veto, a stage
+      // transition, or the live viewer, whose own buttons are the only
+      // sanctioned way to advance while it is open (a stray Space here
+      // played maps behind the overlay mid-animation).
       if (gameState.season?.pendingVeto) return;
       if (gameState.season?.status === 'transition') return;
+      if (watchingSeriesId) return;
 
       switch (e.key) {
         case ' ':
@@ -249,6 +268,7 @@ export default function App() {
     setStarted(false);
     setViewRegion(null);
     setCurrentView('dashboard');
+    setNewGameMode(null);
   }
 
   // ── God Mode ──
@@ -276,64 +296,84 @@ export default function App() {
     setGameState(prev => ({ ...prev }));
   }
 
-  // Single entry point for all player edits from the UI. Mutates the
-  // player in-place, recomputes overall from ratings, triggers re-render.
-  //
-  // field: 'name' | 'tag' | 'age' | 'aim' | 'positioning' | 'utility' | 'gamesense' | 'clutch'
-  // value: string or number (caller ensures correct type)
+  // Single entry point for all player edits from the UI. The rules live
+  // in engine/editPlayer.js, shared with the VCT 2027 app.
   function handleEditPlayer(player, field, value) {
-    if (!gameState.godMode) return; // defensive guard
-
-    if (field === 'name' || field === 'tag') {
-      player[field] = String(value);
-    } else if (field === 'nationality') {
-      // Validate against the known nationality map so bad codes don't
-      // break the flag rendering. If invalid, silently drop the edit.
-      const code = String(value).toUpperCase();
-      // Lazy import avoided — we already have the map via the dropdown's
-      // generated options, so we just accept any non-empty string and
-      // rely on the UI to only offer valid codes. The flag helpers fall
-      // back to a placeholder emoji for unknown codes anyway.
-      if (code) player.nationality = code;
-    } else if (field === 'age') {
-      const n = Math.max(16, Math.min(40, parseInt(value, 10) || player.age));
-      player.age = n;
-    } else if (['aim', 'positioning', 'utility', 'gamesense', 'clutch'].includes(field)) {
-      const n = Math.max(1, Math.min(99, parseInt(value, 10) || 0));
-      player.ratings[field] = n;
-      player.overall = player.calcOverall();
-    } else if (field === 'salary') {
-      // Phase 7b: God Mode contract salary editing. Stored in dollars
-      // (the editable cell already converts $K → $).
-      const n = Math.max(0, Math.round(parseInt(value, 10) || 0));
-      if (player.contract) {
-        player.contract.salary = n;
-      } else if (n > 0) {
-        // Edge case: if a player has no contract and god-mode adds a
-        // salary, infer a 1-year contract.
-        player.contract = {
-          salary: n,
-          yearsRemaining: 1,
-          signedYear: gameState.seasonNumber || 2025,
-        };
-      }
-    } else if (field === 'yearsRemaining') {
-      // Phase 7b: God Mode contract length editing. 0-3 inclusive; 0
-      // means contract expires this offseason (will go to UFA).
-      const n = Math.max(0, Math.min(3, parseInt(value, 10) || 0));
-      if (player.contract) {
-        player.contract.yearsRemaining = n;
-      }
-      // No defaulting — if the player has no contract, we ignore the
-      // edit. They have to be on a roster to have a contract.
-    } else {
-      return; // unknown field, ignore
+    if (applyPlayerEdit(gameState, player, field, value)) {
+      setGameState(prev => ({ ...prev }));
     }
-    setGameState(prev => ({ ...prev }));
+  }
+
+  // ── VCT 2027 new-game path ──
+  function handleVctStart(world) {
+    initVctCircuit(world);
+    ensureVctSeason(world);
+    setGameState(world);
+    setStarted(true);
+    setNewGameMode(null);
   }
 
   if (!started || !gameState) {
-    return <TeamSelect onSelect={handleTeamSelect} />;
+    if (newGameMode === 'franchise') {
+      return (
+        <div>
+          <button onClick={() => setNewGameMode(null)} style={{
+            position: 'fixed', top: 14, left: 14, zIndex: 10,
+            padding: '6px 12px', cursor: 'pointer', borderRadius: 4,
+            background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.2)',
+            color: 'inherit',
+          }}>← Mode select</button>
+          <TeamSelect onSelect={handleTeamSelect} />
+        </div>
+      );
+    }
+    if (newGameMode === 'vct2027') {
+      return <VctSetup onStart={handleVctStart} onBack={() => setNewGameMode(null)} />;
+    }
+    // Mode select: two very different games share this save slot.
+    const modeCard = {
+      flex: 1, padding: '22px 20px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.14)',
+      color: 'inherit',
+    };
+    return (
+      <div style={{ maxWidth: 860, margin: '80px auto', padding: '0 20px' }}>
+        <h1 style={{ letterSpacing: '0.06em' }}>VALORANT GM</h1>
+        <p className="muted">Two eras. One save slot. Pick your league.</p>
+        <div style={{ display: 'flex', gap: 14, marginTop: 20, flexWrap: 'wrap' }}>
+          <button onClick={() => setNewGameMode('franchise')} style={modeCard}>
+            <h2 style={{ margin: '0 0 6px' }}>Franchise League</h2>
+            <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: 0 }}>
+              The classic circuit: 12 partnered teams per region, group stages into
+              brackets, tier-2 scouting and poaching, internationals and Worlds.
+            </p>
+          </button>
+          <button onClick={() => setNewGameMode('vct2027')} style={modeCard}>
+            <h2 style={{ margin: '0 0 6px' }}>VCT 2027 <span style={{
+              fontSize: '0.6rem', verticalAlign: 'middle', letterSpacing: '0.1em',
+              padding: '2px 7px', borderRadius: 3, marginLeft: 6,
+              background: 'rgba(255,70,85,0.18)', color: '#ff8c95',
+            }}>NEW</span></h2>
+            <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: 0 }}>
+              Everything is a tournament: 8 partners per region, open qualifiers for
+              everyone, Kickoff → Masters → Cups → Champions. Start as a partner —
+              or grind up from a 32-team open bracket.
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── VCT 2027 mode: a different app entirely ──
+  if (gameState.mode === 'vct2027') {
+    return (
+      <VctApp
+        gameState={gameState}
+        setGameState={setGameState}
+        onDeleteSave={handleDeleteSave}
+      />
+    );
   }
 
   const humanTeam = getHumanTeam(gameState);
@@ -372,6 +412,19 @@ export default function App() {
   }
 
   function showMatchToast(result, team) {
+    // While the live viewer is open, the engine finishes the series the
+    // moment the last map is APPENDED — but the user is still watching
+    // that map's replay. Popping the result toast then spoils the ending
+    // in the corner. Hold it, and flush when the reveal completes (or
+    // the viewer closes).
+    if (watchingSeriesId) {
+      pendingToastRef.current = { result, team };
+      return;
+    }
+    displayMatchToast(result, team);
+  }
+
+  function displayMatchToast(result, team) {
     const won = result.winner === team;
     const opponent = result.teamA === team ? result.teamB : result.teamA;
     const score = result.score;
@@ -382,6 +435,13 @@ export default function App() {
       type: won ? 'win' : 'loss',
       mapScores: getMapScoreStrings(result),
     });
+  }
+
+  function flushPendingToast() {
+    const held = pendingToastRef.current;
+    if (!held) return;
+    pendingToastRef.current = null;
+    displayMatchToast(held.result, held.team);
   }
 
   // ── Fast-forward availability ──
@@ -509,16 +569,49 @@ export default function App() {
     return { human, opponent };
   })();
 
-  function handleVetoResolve(plan) {
+  function handleVetoResolve(plan, { watchLive = false } = {}) {
+    const pending = gameState.season?.pendingVeto;
+    const entry = pending != null
+      ? gameState.season.activeSeries?.[pending.entryIndex]
+      : null;
     resolvePendingVeto(gameState, plan);
+    if (watchLive && entry) setWatchingSeriesId(entry.seriesId);
     setGameState(prev => ({ ...prev }));
   }
 
-  function handleVetoSkipSeason() {
+  // ── Live viewer ──
+  // The overlay drives the SAME advance tick as the sidebar button, so
+  // watching changes nothing about how the league progresses — it only
+  // changes what you see. One user click can land on the seeding tick
+  // (which deliberately plays no maps), so push through it.
+  function watchAdvance() {
+    const entry = (gameState.season.activeSeries || [])
+      .find(e => e.seriesId === watchingSeriesId);
+    const before = entry?.series?.maps?.length ?? -1;
+    advanceAll();
+    const after = entry?.series?.maps?.length ?? -1;
+    if (entry && !entry.series.winner && after === before) advanceAll();
+  }
+
+  function watchSimSeries() {
+    handleSimSeries();
+  }
+
+  const humanLiveEntry = (gameState.season.activeSeries || [])
+    .find(e => (e.teamA?.isHuman || e.teamB?.isHuman) && !e.series?.winner) || null;
+
+  function handleVetoSkipSeason({ watchLive = false } = {}) {
     // Keep the auto plan for the current series and stop prompting for
     // the rest of the season. Cleared again on the next new season.
+    const pending = gameState.season?.pendingVeto;
+    const entry = pending != null
+      ? gameState.season.activeSeries?.[pending.entryIndex]
+      : null;
     gameState.season.skipVetoThisSeason = true;
     resolvePendingVeto(gameState, null);
+    // A checked "watch live" box must survive this exit too — dropping
+    // it silently made one checkbox void the other.
+    if (watchLive && entry) setWatchingSeriesId(entry.seriesId);
     setGameState(prev => ({ ...prev }));
   }
 
@@ -1714,6 +1807,7 @@ export default function App() {
       case 'freeagents':
         return <FreeAgents
           freeAgents={humanRegionData.freeAgents}
+          team={humanTeam}
           canSign={signingWindowOpen && !humanTeam.rosterFull && !(midseasonActive && (humanTeam._midseasonMoves || 0) >= MAX_MIDSEASON_MOVES_PER_SEASON)}
           windowClosed={!signingWindowOpen}
           onSign={signPlayer}
@@ -1820,7 +1914,12 @@ export default function App() {
           ⚠ Saving failed — browser storage is full. Progress since the last save will be lost.
         </div>
       )}
-      {inTransition && (
+      {/* Held back while the live viewer is open: when the watched series
+          is the one that ends the stage, the engine flips to 'transition'
+          the moment the result exists — long before the reveal catches
+          up — and the champions/points screen was spoiling the map still
+          animating underneath. Closing the viewer releases it. */}
+      {inTransition && !watchingSeriesId && (
         <StageTransition gameState={gameState} onContinue={handleTransitionContinue} />
       )}
       {showSettings && (
@@ -1838,6 +1937,33 @@ export default function App() {
           onResolve={handleVetoResolve}
           onSkipSeason={handleVetoSkipSeason}
         />
+      )}
+      {watchingSeriesId && (
+        <LiveMatch
+          key={watchingSeriesId}
+          gameState={gameState}
+          seriesId={watchingSeriesId}
+          onAdvanceMap={watchAdvance}
+          onSimSeries={watchSimSeries}
+          onSeriesRevealed={flushPendingToast}
+          onClose={() => { setWatchingSeriesId(null); flushPendingToast(); }}
+        />
+      )}
+      {humanLiveEntry && !watchingSeriesId && !gameState.season?.pendingVeto && !inTransition && (
+        <button
+          onClick={() => setWatchingSeriesId(humanLiveEntry.seriesId)}
+          title="Open the live round-by-round view of your series"
+          style={{
+            position: 'fixed', right: 18, bottom: 18, zIndex: 800,
+            padding: '10px 18px', cursor: 'pointer', fontWeight: 700,
+            letterSpacing: '0.06em', fontSize: '0.8rem',
+            background: '#ff4655', color: '#fff',
+            border: '1px solid #ff4655', borderRadius: 6,
+            boxShadow: '0 4px 18px rgba(255,70,85,0.4)',
+          }}
+        >
+          ● WATCH LIVE
+        </button>
       )}
     </div>
   );

@@ -14,10 +14,14 @@
 
 import { useState, useRef, Fragment } from 'react';
 import Strategy from './Strategy.jsx';
+import PlayerCard from './PlayerCard.jsx';
+import TeamLogo from './TeamLogo.jsx';
 import DeltaIndicator from './DeltaIndicator.jsx';
 import EditableCell from './EditableCell.jsx';
 import NationalitySelect from './NationalitySelect.jsx';
+import TeamFlag from './TeamFlag.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { commLanguage, commUncovered, speaks, languageName } from '../data/languages.js';
 import { mapName, getActivePool } from '../data/maps.js';
 import { RoleTag } from './RoleTag.jsx';
 import { ROSTER_MIN } from '../data/constants.js';
@@ -53,6 +57,7 @@ export default function Roster({
 }) {
   const [, forceUpdate] = useState(0);
   const [confirmingRelease, setConfirmingRelease] = useState(null); // player or null
+  const [viewingPlayer, setViewingPlayer] = useState(null);           // player card modal
   // Depth-chart drag state. Row order IS the depth chart: the top
   // STARTER_COUNT rows start, everything under the line is a sub.
   //
@@ -97,7 +102,17 @@ export default function Roster({
     if (onUpdate) onUpdate();
   }
 
-  const editStat = (player, stat) => (v) => onEditPlayer?.(player, stat, v);
+  // Team communication state, anchored on the FIELDED five — that is
+  // exactly what the match sim reads, so the header, the per-player
+  // dots, and the warning banner can never disagree with each other or
+  // with the penalty actually applied. (Judging the header over the
+  // whole roster while the banner counted the five produced screens
+  // that contradicted themselves on split rosters.)
+  const comms = commLanguage(team.startingFive);
+  const rosterSpeakers = comms.lang
+    ? team.roster.filter(p => speaks(p, comms.lang)).length
+    : 0;
+  const startersUncovered = commUncovered(team.startingFive);
 
   const usedSalary = computeTeamSalary(team);
   const capRemaining = computeCapRemaining(team);
@@ -138,8 +153,28 @@ export default function Roster({
 
   return (
     <>
-      <h2>{team.name} Roster</h2>
-      <p className="muted">{team.roster.length} players · Team OVR: {team.overallRating}</p>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <TeamLogo team={team} size={30} />{team.name} Roster
+        <TeamFlag team={team} style={{ fontSize: '0.7em' }} />
+      </h2>
+      <p className="muted">
+        {team.roster.length} players · Team OVR: {team.overallRating}
+        {comms.lang && (
+          <>
+            {' · '}Comms: {languageName(comms.lang)}
+            {' '}({rosterSpeakers}/{team.roster.length} speak it)
+          </>
+        )}
+      </p>
+      {startersUncovered > 0 && (
+        <p style={{
+          margin: '-6px 0 12px', fontSize: '0.78rem', color: '#ffb070',
+        }}>
+          ⚠ {startersUncovered} starter{startersUncovered > 1 ? 's' : ''} can't speak the
+          team's comms language — the five take a communication penalty until they
+          learn it (checked at every development window).
+        </p>
+      )}
 
       {/* Cap meter strip */}
       <div style={{
@@ -193,11 +228,11 @@ export default function Roster({
         <thead>
           <tr>
             <th style={{ width: 24 }}></th>
-            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th><th>OVR</th>
+            <th>Tag</th><th>Name</th><th>Nat</th><th>Age</th>
+            <th title="Click a player's name or OVR to open their full card — attributes, stats, contract.">OVR</th>
             <th title="Primary role, and secondary if they have one. Playing off-role costs about 10 overall.">Role</th>
-            <th>AIM</th><th>POS</th><th>UTL</th><th>IQ</th><th>CLT</th>
+            <th>Maps</th><th>K</th><th>D</th><th>A</th><th>K/D</th><th>ACS</th>
             <th>Salary</th><th>Yrs</th><th>Morale</th>
-            <th>K/D</th><th>ACS</th>
             <th></th>
           </tr>
         </thead>
@@ -210,7 +245,7 @@ export default function Roster({
             <Fragment key={player.id}>
             {idx === STARTER_COUNT && (
               <tr className="starter-divider">
-                <td colSpan={18} style={{
+                <td colSpan={17} style={{
                   padding: 0, height: 0, borderTop: '2px solid #ff4655',
                   position: 'relative',
                 }}>
@@ -243,24 +278,48 @@ export default function Roster({
               <td style={{ textAlign: 'center', opacity: 0.35, cursor: 'grab', userSelect: 'none' }}>⠿</td>
               <td>
                 {godMode ? (
-                  <EditableCell
-                    value={player.tag}
-                    editable
-                    width={80}
-                    onCommit={v => onEditPlayer(player, 'tag', v)}
-                  />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <EditableCell
+                      value={player.tag}
+                      editable
+                      width={80}
+                      onCommit={v => onEditPlayer(player, 'tag', v)}
+                    />
+                    {/* In god mode the tag and name are EDITORS, so they
+                        can't double as the card link — without this the
+                        card was only reachable through the unmarked OVR
+                        cell, which nobody found. */}
+                    <button
+                      className="btn-small"
+                      onClick={() => setViewingPlayer(player)}
+                      title="Open player card (attributes are edited there)"
+                      style={{ padding: '1px 7px', fontSize: '0.72rem', lineHeight: 1.4 }}
+                    >👁</button>
+                  </span>
                 ) : (
-                  <strong>{player.tag}</strong>
+                  <strong
+                    onClick={() => setViewingPlayer(player)}
+                    style={{ cursor: 'pointer', textDecoration: 'underline dotted rgba(255,255,255,0.35)', textUnderlineOffset: 3 }}
+                    title="View player card"
+                  >{player.tag}</strong>
                 )}
                 {player.id === team.strategy.iglId && <span className="igl-badge">IGL</span>}
               </td>
               <td>
-                <EditableCell
-                  value={player.name}
-                  editable={godMode}
-                  width={130}
-                  onCommit={v => onEditPlayer(player, 'name', v)}
-                />
+                {godMode ? (
+                  <EditableCell
+                    value={player.name}
+                    editable
+                    width={130}
+                    onCommit={v => onEditPlayer(player, 'name', v)}
+                  />
+                ) : (
+                  <span
+                    onClick={() => setViewingPlayer(player)}
+                    style={{ cursor: 'pointer' }}
+                    title="View player card"
+                  >{player.name}</span>
+                )}
               </td>
               <td title={nationalityName(player.nationality)}>
                 <NationalitySelect
@@ -268,6 +327,12 @@ export default function Roster({
                   editable={godMode}
                   onCommit={v => onEditPlayer(player, 'nationality', v)}
                 />
+                {comms.lang && !speaks(player, comms.lang) && (
+                  <span
+                    title={`Doesn't speak the team's comms language (${languageName(comms.lang)}) — they pick it up at development windows`}
+                    style={{ marginLeft: 4, color: '#ffb070', fontSize: '0.7rem', cursor: 'help' }}
+                  >●</span>
+                )}
               </td>
               <td>
                 <EditableCell
@@ -278,33 +343,24 @@ export default function Roster({
                   onCommit={v => onEditPlayer(player, 'age', v)}
                 />
               </td>
-              <td>
-                {player.overall}
+              <td
+                onClick={() => setViewingPlayer(player)}
+                style={{ cursor: 'pointer' }}
+                title="View player card"
+              >
+                <strong>{player.overall}</strong>
                 <DeltaIndicator delta={d?.overall} />
               </td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 <RoleTag player={player} />
               </td>
-              <td>
-                <EditableCell value={player.ratings.aim} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'aim')} />
-                <DeltaIndicator delta={d?.aim} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.positioning} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'positioning')} />
-                <DeltaIndicator delta={d?.positioning} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.utility} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'utility')} />
-                <DeltaIndicator delta={d?.utility} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.gamesense} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'gamesense')} />
-                <DeltaIndicator delta={d?.gamesense} size="small" />
-              </td>
-              <td>
-                <EditableCell value={player.ratings.clutch} type="number" editable={godMode} min={1} max={99} onCommit={editStat(player, 'clutch')} />
-                <DeltaIndicator delta={d?.clutch} size="small" />
-              </td>
+              {/* Game stats — attributes live on the player card now. */}
+              <td style={{ opacity: 0.85 }}>{player.stats?.maps || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.kills || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.deaths || 0}</td>
+              <td style={{ opacity: 0.85 }}>{player.stats?.assists || 0}</td>
+              <td>{player.kd}</td>
+              <td>{player.avgAcs}</td>
 
               {/* ── Phase 7: contract + morale columns ── */}
               <td>
@@ -368,8 +424,6 @@ export default function Roster({
                 </span>
               </td>
 
-              <td>{player.kd}</td>
-              <td>{player.avgAcs}</td>
               <td>
                 <button
                   className="btn-small btn-danger"
@@ -388,6 +442,17 @@ export default function Roster({
           })}
         </tbody>
       </table>
+
+      {viewingPlayer && (
+        <PlayerCard
+          player={viewingPlayer}
+          team={team}
+          isIgl={viewingPlayer.id === team.strategy.iglId}
+          godMode={godMode}
+          onEditPlayer={onEditPlayer}
+          onClose={() => setViewingPlayer(null)}
+        />
+      )}
 
       {/* Buyout confirmation modal */}
       {confirmingRelease && (

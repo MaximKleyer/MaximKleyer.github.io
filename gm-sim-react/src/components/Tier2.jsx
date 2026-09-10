@@ -12,8 +12,11 @@
  */
 
 import { useState } from 'react';
+import TeamLogo from './TeamLogo.jsx';
+import TeamFlag from './TeamFlag.jsx';
 import RegionSelector from './RegionSelector.jsx';
 import { flagClass, nationalityName } from '../data/nationalities.js';
+import { commLanguage, speaks, languageName } from '../data/languages.js';
 import { evaluatePoach, refusalChance, REFUSAL_MORALE, expectedAcs } from '../engine/poaching.js';
 import { getSwissStandings } from '../engine/swissFormat.js';
 import { RoleTag } from './RoleTag.jsx';
@@ -57,6 +60,12 @@ function RosterRow({ player, scouting }) {
       <td>
         <span className={flagClass(player.nationality)}
               title={nationalityName(player.nationality)} />
+        {scouting?.humanComms && !speaks(player, scouting.humanComms) && (
+          <span
+            title={`Can't speak your comms language (${languageName(scouting.humanComms)}) — they'd play at a penalty until they learn it`}
+            style={{ marginLeft: 4, color: '#ffb070', fontSize: '0.7rem', cursor: 'help' }}
+          >●</span>
+        )}
       </td>
       <td>{player.age}</td>
       <td style={{ fontWeight: 700, color: ovrColor(player.overall) }}>{player.overall}</td>
@@ -129,9 +138,11 @@ function TeamCard({ team, rank, expanded, onToggle, scoutFor, standing }) {
         }}
       >
         <span style={{ width: 22, opacity: 0.45, fontSize: '0.8em' }}>{rank}</span>
+        <TeamLogo team={team} size={20} />
         <strong style={{ minWidth: 58 }}>{team.abbr}</strong>
         <span style={{ flex: 1, opacity: 0.85 }}>
           {team.name}
+          {' '}<TeamFlag team={team} style={{ fontSize: '0.8em' }} />
           {team.parentAbbr && (
             <span style={{
               marginLeft: 8, fontSize: '0.68em', opacity: 0.55,
@@ -217,6 +228,11 @@ export default function Tier2({
     : [...tier2.teams].sort((a, b) => b.overallRating - a.overallRating);
 
   // Scouting: form is only meaningful once a stage has been played.
+  // Comms fit is judged against the human's FIELDED five — the same
+  // anchor Roster and the match sim use.
+  const humanComms = humanTeam
+    ? commLanguage(humanTeam.startingFive?.length ? humanTeam.startingFive : humanTeam.roster).lang
+    : null;
   const scoutFor = {
     enabled: !!(canPoach && humanTeam && onPoach),
     for(player) {
@@ -225,6 +241,7 @@ export default function Tier2({
       const base = {
         acs,
         form: acs > 0 ? Math.round(acs - expected) : 0,
+        humanComms,
       };
       if (!this.enabled) return base;
       const evaluation = evaluatePoach(gameState, humanTeam, player, { movesRemaining });

@@ -30,6 +30,7 @@
 
 import { ARCHETYPES, archetypeFor } from '../data/archetypes.js';
 import { REGION_KEYS } from '../data/regions.js';
+import { fitsTeamLanguage } from '../data/languages.js';
 import {
   calculateBaseSalary, calculateBuyout, computeTeamSalary, adjustMorale, getSalaryCap,
 } from '../data/salary.js';
@@ -122,7 +123,9 @@ export function runReactiveAISignings(gameState, releasedPlayer) {
         team.roster[0]
       );
 
-      // Does this team's archetype even want this specific player?
+      // Does this team's archetype even want this specific player —
+      // and could the player talk to the room?
+      if (!fitsTeamLanguage(team.roster, releasedPlayer)) continue;
       if (!matchesCriteria(releasedPlayer, weakest, team.archetype)) continue;
 
       // 35/65 inner roll — same probability as the normal offseason pass
@@ -211,6 +214,10 @@ function attemptSigning(team, region, gameState, logKey = 'aiOffseasonLog') {
     .sort((a, b) => b.score - a.score);
 
   for (const { fa } of scoredFAs) {
+    // Language first: however good the player, an AI club never signs
+    // someone who can't speak its comms language. This is the rule that
+    // keeps rosters from drifting back into melting pots as they churn.
+    if (!fitsTeamLanguage(team.roster, fa)) continue;
     if (!matchesCriteria(fa, weakest, archetype)) continue;
 
     // 35/65 inner roll

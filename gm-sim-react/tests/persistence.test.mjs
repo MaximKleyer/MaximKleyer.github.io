@@ -61,6 +61,9 @@ const TEAM_FIELDS = {
   // 1 = franchised top flight, 2 = the open second division.
   tier:         { persisted: true },
   parentAbbr:   { persisted: true },
+  // VCT 2027: which sub-region qualifier an open club belongs to; null
+  // for partners and every franchise-mode team.
+  subRegion:    { persisted: true },
 };
 
 const PLAYER_FIELDS = {
@@ -71,6 +74,10 @@ const PLAYER_FIELDS = {
   overall:       { persisted: true },
   age:           { persisted: true },
   nationality:   { persisted: true },
+  // Spoken languages ('en', 'pt', …) — native always included. Drives
+  // team communication; losing it would re-roll every player's languages
+  // on load and quietly reshuffle which lineups take the comms penalty.
+  languages:     { persisted: true },
   stats:         { persisted: true },
   stageStats:    { persisted: true },
   morale:        { persisted: true },
@@ -548,6 +555,7 @@ describe('match identity across save/load', () => {
 describe('map ratings re-centre onto the 75 anchor on load', () => {
   test('an old save is lifted, spread and best-map order intact', () => {
     const gs = newGame();
+    delete gs.settings.mapAnchorFloor;   // saves from before the anchor lack the marker
     const team = gs.regions[gs.humanRegion].teams.find(t => !t.isHuman);
     // Simulate a pre-anchor save: ratings centred well below 75.
     for (const r of Object.values(team.mapRatings)) {
@@ -578,6 +586,7 @@ describe('map ratings re-centre onto the 75 anchor on load', () => {
 
   test('the migration is one-time and never pulls a strong team down', () => {
     const gs = newGame();
+    delete gs.settings.mapAnchorFloor;
     const team = gs.regions[gs.humanRegion].teams.find(t => !t.isHuman);
     // A trained-up team sitting ABOVE its anchor must be left alone.
     for (const r of Object.values(team.mapRatings)) { r.attack += 8; r.defense += 8; }
@@ -587,17 +596,23 @@ describe('map ratings re-centre onto the 75 anchor on load', () => {
     let migrated = loaded.regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
     assert.equal(JSON.stringify(migrated.mapRatings), snapshot,
       'a team above the anchor must not be shifted');
+    assert.ok(loaded.settings.mapAnchorFloor >= 75, 'the load stamps the marker');
 
-    // And a second load after a lift shifts nothing further.
+    // The marker makes any later load a strict no-op, even for a team
+    // whose ratings have sunk far below the anchor since.
     for (const r of Object.values(migrated.mapRatings)) { r.attack -= 20; r.defense -= 20; }
-    loaded = roundTrip(loaded);
-    const once = loaded.regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
-    const meanOnce = Object.values(once.mapRatings)
-      .reduce((s, r) => s + (r.attack + r.defense) / 2, 0) / Object.keys(once.mapRatings).length;
+    const sunk = JSON.stringify(migrated.mapRatings);
     const again = roundTrip(loaded).regions[loaded.humanRegion].teams.find(t => t.abbr === team.abbr);
-    const meanAgain = Object.values(again.mapRatings)
-      .reduce((s, r) => s + (r.attack + r.defense) / 2, 0) / Object.keys(again.mapRatings).length;
-    assert.ok(Math.abs(meanAgain - meanOnce) <= 2.5,
-      `reloads must be no-ops, drifted ${meanOnce.toFixed(1)} -> ${meanAgain.toFixed(1)}`);
+    assert.equal(JSON.stringify(again.mapRatings), sunk,
+      'a marked save must never be lifted again');
+  });
+
+  test('a fresh save is never touched by the lift, even with dirtied values', () => {
+    const gs = newGame();   // carries the marker from generation
+    const team = humanTeam(gs);
+    team.mapRatings.ascent = { attack: 91, defense: 44 };
+    const loaded = humanTeam(roundTrip(gs));
+    assert.deepEqual(loaded.mapRatings.ascent, { attack: 91, defense: 44 },
+      'marked saves round-trip map ratings verbatim');
   });
 });

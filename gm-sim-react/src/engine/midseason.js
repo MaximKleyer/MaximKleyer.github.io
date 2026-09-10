@@ -34,6 +34,7 @@
 
 import { REGION_KEYS } from '../data/regions.js';
 import { archetypeFor } from '../data/archetypes.js';
+import { fitsTeamLanguage } from '../data/languages.js';
 import {
   _OUTER_ROLL,
   _INNER_SIGN_CHANCE,
@@ -123,6 +124,12 @@ export function runMidseasonReactiveSignings(gameState, releasedPlayer) {
         (w, p) => (p.overall < w.overall ? p : w),
         team.roster[0]
       );
+
+      // Same language rule as every other AI window: however good the
+      // player, no club signs someone who can't talk to the room. This
+      // path missed the filter when it landed and was the one hole
+      // through which AI rosters could go incoherent again.
+      if (!fitsTeamLanguage(team.roster, releasedPlayer)) continue;
 
       const archetype = archetypeFor(team);
       if (!_matchesCriteria(releasedPlayer, weakest, archetype)) continue;

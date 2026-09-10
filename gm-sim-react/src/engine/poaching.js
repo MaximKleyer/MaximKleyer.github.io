@@ -39,6 +39,7 @@ import { ROSTER_MIN, ROSTER_MAX } from '../data/constants.js';
 import { computeTeamSalary, getSalaryCap, adjustMorale } from '../data/salary.js';
 import { generatePlayer } from '../classes/Player.js';
 import { REGION_KEYS } from '../data/regions.js';
+import { commLanguage } from '../data/languages.js';
 
 /**
  * Expected combat score for a player of a given rating.
@@ -140,12 +141,18 @@ export function evaluatePoach(gameState, team, player, { movesRemaining = null }
  */
 export function backfillTier2Team(gameState, regionKey, team, departed) {
   // Held below whoever left: a club that loses a player must end up
-  // worse, otherwise poaching is free for everyone involved.
-  const ceiling = Math.min(BACKFILL_CEILING, (departed.overall || 65) - 1);
+  // worse, otherwise poaching is free for everyone involved. The margin
+  // is 3, not 1, because generation adds a role IQ bias AFTER the
+  // stat-range roll (+6 game sense for initiators ≈ +1 overall), which
+  // let a "one below" replacement land at exact parity.
+  const ceiling = Math.min(BACKFILL_CEILING, (departed.overall || 65) - 3);
   const floor = Math.min(BACKFILL_FLOOR, ceiling - 4);
 
   const replacement = generatePlayer({
     regionKey,
+    // The replacement joins the room the departed player left — the
+    // remaining four define what language it runs in.
+    teamLanguage: commLanguage(team.roster).lang,
     // Same roles as whoever left: tier-2 squads guarantee one of each
     // role, so three of five players are sole holders — a random-role
     // replacement broke the club's coverage about half the time and

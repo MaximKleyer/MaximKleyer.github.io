@@ -22,6 +22,8 @@
  *   not-yet-played and finalized matches.
  */
 
+import TeamLogo from './TeamLogo.jsx';
+
 export default function MatchCard({
   match, bestOf = 'bo3', clickable, onClick,
   inProgressSeries = null,
@@ -90,7 +92,7 @@ export default function MatchCard({
     >
       {/* Team A row */}
       <div className={`mc-row ${aWon === true ? 'mc-winner' : ''} ${aWon === false ? 'mc-loser' : ''}`}>
-        <span className="mc-color" style={{ background: teamA?.color || '#333' }} />
+        {teamA ? <TeamLogo team={teamA} size={16} /> : <span className="mc-color" style={{ background: '#333' }} />}
         <span className="mc-name">{teamA?.abbr || 'TBD'}</span>
         <span className="mc-series">{seriesA}</span>
         {mapScoresA.map((score, i) => (
@@ -102,7 +104,7 @@ export default function MatchCard({
 
       {/* Team B row */}
       <div className={`mc-row ${aWon === false ? 'mc-winner' : ''} ${aWon === true ? 'mc-loser' : ''}`}>
-        <span className="mc-color" style={{ background: teamB?.color || '#333' }} />
+        {teamB ? <TeamLogo team={teamB} size={16} /> : <span className="mc-color" style={{ background: '#333' }} />}
         <span className="mc-name">{teamB?.abbr || 'TBD'}</span>
         <span className="mc-series">{seriesB}</span>
         {mapScoresB.map((score, i) => (
