@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "http-server", "-p", "5178", "-c-1", "--silent"],
+      "port": 5178
+    },
+    {
       "name": "gm-sim",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "gm-sim-react", "run", "dev", "--", "--port", "5173", "--strictPort"],

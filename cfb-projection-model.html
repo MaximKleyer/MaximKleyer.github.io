@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>College Football Projection System — Maxim Kleyer</title>
+  <meta name="description" content="Case study: a walk-forward-validated college football projection system — 7,401 games, 75.5% straight-up vs 76.3% for Vegas closing lines, calibrated win probabilities, and a significance test that kills its own headline.">
+  <link rel="canonical" href="https://maximkleyer.github.io/cfb-projection-model.html">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="College Football Projection System — case study">
+  <meta property="og:description" content="7,401 games backtested walk-forward. 75.5% straight-up vs Vegas 76.3%. Calibrated probabilities, measured drift, and an honesty section with numbers.">
+  <meta property="og:url" content="https://maximkleyer.github.io/cfb-projection-model.html">
+  <meta property="og:image" content="https://maximkleyer.github.io/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="College Football Projection System — case study">
+  <meta name="twitter:description" content="7,401 games backtested walk-forward. 75.5% straight-up vs Vegas 76.3%. Calibrated probabilities, measured drift.">
+  <meta name="twitter:image" content="https://maximkleyer.github.io/assets/og.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <div class="ambient-glow" aria-hidden="true"></div>
+
+  <div class="container">
+    <nav aria-label="Main">
+      <a class="nav-logo" href="/">maxim.kleyer</a>
+      <ul class="nav-links">
+        <li><a href="/#projects">Projects</a></li>
+        <li><a href="/#experience">Experience</a></li>
+        <li><a href="/#contact">Contact</a></li>
+        <li><a class="nav-cta" href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a></li>
+      </ul>
+    </nav>
+
+    <p class="crumb"><a href="/">← Back to portfolio</a></p>
+
+    <header class="hero" style="padding-top: 40px; padding-bottom: 12px;">
+      <p class="kicker">Case study — flagship project</p>
+      <h1 style="font-size: clamp(1.7rem, 4.6vw, 2.6rem);">College Football Projection System</h1>
+      <p class="sub" style="margin-bottom: 20px;">
+        Weekly game projections for all FBS college football: set a week, run one command, get every
+        game with projected scores, spread, total, win probability, and comparison against market
+        lines. The interesting part isn’t the predictions — it’s the harness that decides whether
+        to believe them.
+      </p>
+      <div class="tags" style="margin-bottom: 8px;">
+        <span class="tag">Python</span><span class="tag">LightGBM</span><span class="tag">pandas</span>
+        <span class="tag">Parquet</span><span class="tag">REST API ingestion</span><span class="tag">pytest-style test suite</span>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 14px;">
+        Repo: being published to <a href="https://github.com/MaximKleyer" style="color: var(--accent); font-weight: 600;">github.com/MaximKleyer</a>
+      </p>
+    </header>
+
+    <div class="cs-body">
+
+      <h2>The numbers first</h2>
+      <p>
+        Everything below is from a walk-forward backtest over <strong>7,401 FBS games, 2017–2025</strong>,
+        training only on prior seasons — the model never sees a game before predicting it.
+      </p>
+
+      <div class="table-wrap">
+        <table class="results">
+          <caption style="text-align:left; font-family: var(--mono); font-size: 0.72rem; color: var(--text-muted); padding-bottom: 8px;">Walk-forward results vs. baselines</caption>
+          <thead>
+            <tr><th scope="col">Metric</th><th scope="col">This model</th><th scope="col">Benchmark</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Straight-up accuracy</td><td class="num hl">75.5%</td><td class="num">Vegas closing lines: 76.3%</td></tr>
+            <tr><td>Margin RMSE</td><td class="num hl">16.37</td><td class="num">Always-pick-home: 23.06 · SP+ differential: 18.75</td></tr>
+            <tr><td>Brier score</td><td class="num hl">0.162</td><td class="num">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Win probabilities are kernel-smoothed and <strong>isotonic-calibrated</strong>, with calibration
+        reported <strong>out-of-fold</strong> so the reliability table isn’t perfect by construction.
+        Across ten calibration buckets the worst deviation is 1.1 standard errors: when the model says
+        65%, teams win about 65% of the time. Landing within a point of the closing line — a benchmark
+        that aggregates enormous amounts of information — is the headline for a from-scratch system.
+      </p>
+
+      <h2>What the model can’t do, measured</h2>
+      <div class="pullquote">
+        <p class="pq-title">The honesty section</p>
+        <p>
+          Across seven spread buckets and seven total buckets, <strong>no betting edge is statistically
+          significant</strong>. Hit rates run 48.6%–55.5% against the 52.4% break-even, non-monotonically —
+          exactly what chance produces across seven looks. The system says so on its own report card:
+          the backtest prints a z-score and a “Real?” flag per bucket, and the weekly projection repeats
+          the verdict so it can’t be forgotten between runs.
+        </p>
+        <p class="pq-kicker">
+          Building the significance test that kills your own headline is the point: a model you can’t
+          trust to admit failure can’t be trusted to claim success.
+        </p>
+      </div>
+
+      <h2>Architecture</h2>
+      <ul>
+        <li>
+          <strong>Data layer:</strong> 17-endpoint REST API ingestion (collegefootballdata.com) into a
+          local <strong>Parquet cache</strong>, with API-budget awareness built in — the free tier allows
+          ~1,000 calls/month, a full historical backfill costs 200–400, and the client hard-stops before
+          exceeding the budget.
+        </li>
+        <li>
+          <strong>Ratings:</strong> a <strong>ridge-regression team rating layer</strong> — offense and
+          defense per team, solved as one penalized regression per season, shrinking each team toward the
+          mean in proportion to how little evidence supports it. Anchored on preseason priors: published
+          SP+ blended with an in-house regression on returning production, recruiting, and prior ratings,
+          so the cold start is handled without double-shrinkage.
+        </li>
+        <li>
+          <strong>Models:</strong> two <strong>LightGBM models</strong> (margin and total) over ~28
+          features — deliberately <em>not</em> a neural network. About 10,000 rows against 28 features is
+          squarely boosted-tree territory; a network with enough capacity to be interesting just
+          memorizes the data.
+        </li>
+        <li>
+          <strong>Season simulation:</strong> a <strong>10,000-run Monte Carlo simulator</strong> with
+          empirically measured correlated team-strength uncertainty (sd 3.4 points, measured three
+          independent ways). Projected records are exact by linearity of expectation — the simulation
+          supplies the spread around them.
+        </li>
+        <li>
+          <strong>The lab:</strong> an isolated experiment harness. Candidate model ideas run against two
+          fixed walk-forward folds and must beat the baseline on <strong>both</strong> to be adopted.
+          Several plausible ideas split the folds and died as noise — which is the harness working.
+        </li>
+        <li>
+          <strong>Weekly operational loop:</strong> project the slate before kickoff, grade the saved
+          projections after — against a backtest baseline matched to the same weeks — so
+          <strong>drift is a number rather than a feeling</strong>. Grading the file saved before kickoff
+          matters: a re-derived backtest can quietly benefit from information that didn’t exist that week.
+        </li>
+        <li>
+          <strong>Tests:</strong> an automated suite covering the data layer, ratings, pipeline, grading,
+          and season simulation — run against synthetic leagues with known ground truth, including leakage
+          guards (rewriting a week’s results must move <strong>zero</strong> features, and the model must
+          <em>not</em> beat a market built from ground truth — if it does, that’s leakage, not skill).
+        </li>
+      </ul>
+
+      <h2>Why calibrated probabilities, not a normal curve</h2>
+      <p>
+        College football margins are fat-tailed and cluster on key numbers (3, 7, 10, 14), so a normal
+        CDF is overconfident in the middle and underconfident in the tails. Instead, the empirical
+        distribution of out-of-sample margin errors is kernel-smoothed, then calibrated with isotonic
+        regression — and evaluated out-of-fold, so the calibration claim is earned rather than assumed.
+      </p>
+
+      <h2>A research finding worth keeping</h2>
+      <p>
+        Games involving a first-year head coach carry RMSE <strong>15.53 vs 14.99</strong> for all other
+        games, on essentially identical outcome variance — they’re harder to <em>predict</em>, not wilder.
+        That points toward wider uncertainty on those games rather than different point predictions:
+        the features identify the problem without fixing it, and honest measurement says what the next
+        step should be.
+      </p>
+
+      <h2>What this project is evidence of</h2>
+      <ul>
+        <li>Evaluation-first ML: walk-forward validation, calibrated probabilities, drift measurement, and negative results reported as prominently as wins.</li>
+        <li>Production habits applied to a model: cached ingestion with budget guards, an experiment gauntlet, a graded weekly loop, and a test suite that catches lookahead bugs before they become quietly wrong projections.</li>
+        <li>Judgment about tools: boosted trees over a neural network for 10,000 rows, ridge shrinkage where 130+ teams play 12 games each, exact expectations where simulation would only add noise.</li>
+      </ul>
+
+      <p class="crumb" style="margin-top: 48px;">
+        <a href="/">← Back to portfolio</a>
+      </p>
+    </div>
+
+    <footer id="contact">
+      <div class="footer-row">
+        <div>
+          <p style="font-family: var(--display); color: var(--white); font-weight: 600;">Maxim Kleyer</p>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">GenAI / AI Engineer · New York City area</p>
+        </div>
+        <div class="footer-links">
+          <a href="#" data-email data-label="text">email</a>
+          <a href="https://github.com/MaximKleyer" rel="me">GitHub</a>
+          <a href="https://www.linkedin.com/in/maximkleyer" rel="me">LinkedIn</a>
+          <a href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a>
+        </div>
+      </div>
+      <p class="footer-note">Built with AI assistance, reviewed by a human.</p>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var u = 'maxkleyer18', d = 'gmail.com', addr = u + '@' + d;
+      document.querySelectorAll('a[data-email]').forEach(function (a) {
+        a.href = 'mailto:' + addr;
+        if (a.dataset.label === 'text') a.textContent = addr;
+      });
+    })();
+  </script>
+</body>
+</html>
