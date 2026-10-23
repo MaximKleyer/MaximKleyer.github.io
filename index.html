@@ -33,7 +33,7 @@
         <li><a href="#projects">Projects</a></li>
         <li><a href="#experience">Experience</a></li>
         <li><a href="#skills">Skills</a></li>
-        <li><a class="nav-cta" href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a></li>
+        <li><a class="nav-cta" href="https://maximkleyer.github.io/WebSportsLiveProjections/">Live Projections</a></li>
       </ul>
     </nav>
 
@@ -49,7 +49,7 @@
       </p>
       <div class="btn-row">
         <a class="btn btn-primary" href="#flagship">View Projects</a>
-        <a class="btn" href="assets/Maxim_Kleyer_Resume.pdf" download>Download Resume</a>
+        <a class="btn" href="https://maximkleyer.github.io/WebSportsLiveProjections/">Live Projections</a>
         <a class="btn" href="https://github.com/MaximKleyer" rel="me">GitHub</a>
         <a class="btn" href="https://www.linkedin.com/in/maximkleyer" rel="me">LinkedIn</a>
       </div>
@@ -108,7 +108,24 @@
       <p class="kicker">More work</p>
       <h2 class="section-title">Projects &amp; professional GenAI</h2>
 
-      <div class="grid-3" style="margin-top: 26px;">
+      <article class="card proj" style="margin-top: 26px;">
+        <h3>Web Sports Live Projections</h3>
+        <p class="proj-stack">React · Vite · Python · GitHub Pages · CI data validation</p>
+        <p>
+          A live site publishing projections across <strong>NFL, NBA, MLB, NHL, college football, and
+          college basketball</strong>. Each model stays pure and writes its own outputs; thin per-sport
+          adapters turn them into the site's data through a shared export toolkit, and CI validates
+          every data file before deploying. A <strong>kickoff freeze</strong> keeps a game's projection
+          locked once it starts, and a Results tab grades published predictions against final
+          scores — so the public record stays honest.
+        </p>
+        <div class="proj-links">
+          <a href="https://maximkleyer.github.io/WebSportsLiveProjections/">Live site →</a>
+          <a href="https://github.com/MaximKleyer/WebSportsLiveProjections">Code →</a>
+        </div>
+      </article>
+
+      <div class="grid-3" style="margin-top: 18px;">
         <article class="card proj">
           <h3>NFL Game Projection Model</h3>
           <p class="proj-stack">Python · pandas · NumPy</p>
@@ -306,10 +323,8 @@
           <a href="#" data-email data-label="text">email</a>
           <a href="https://github.com/MaximKleyer" rel="me">GitHub</a>
           <a href="https://www.linkedin.com/in/maximkleyer" rel="me">LinkedIn</a>
-          <a href="assets/Maxim_Kleyer_Resume.pdf" download>Resume</a>
         </div>
       </div>
-      <p class="footer-note">Built with AI assistance, reviewed by a human.</p>
     </footer>
   </div>
 
